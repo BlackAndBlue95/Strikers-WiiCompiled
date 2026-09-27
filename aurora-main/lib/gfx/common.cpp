@@ -1259,11 +1259,6 @@ void split_staging_batch() {
         retained[i].assign(buffers[i]->data(), buffers[i]->data() + g_suspendedEfbBytes[i]);
     }
   }
-  // GXCopyTex can capture the ordinary EFB as well as an explicit offscreen
-  // target. Its command may arrive in the next batch, after this prefix has
-  // already been submitted. Preserve every prefix; target kind cannot tell
-  // us whether the guest will later retain these pixels in a texture.
-  for (auto& pass : g_renderPasses) pass.requireReadyPipelines = true;
   auto encoder = g_device.CreateCommandEncoder();
   end_batch(encoder);
   render(encoder);
@@ -1614,8 +1609,8 @@ bool bind_pipeline(PipelineRef ref, const wgpu::RenderPassEncoder& pass, Pipelin
   if (!skip_unready_pipelines()) {
     pipelineReady = wait_pipeline(ref, pipeline);
   } else if (requireReady) {
-    // Texture copies and capacity prefixes must retain complete draw results.
-    // A future display frame cannot repair a texture that already captured them.
+    // The pass resolves into a persistent texture (a one-shot bake such as MKW's minimap), so a
+    // skipped draw would never be re-issued. These run behind loads, not mid-race.
     pipelineReady = wait_pipeline_for_persistent_pass(ref, pipeline);
   } else {
     pipelineReady = try_pipeline(ref, pipeline);

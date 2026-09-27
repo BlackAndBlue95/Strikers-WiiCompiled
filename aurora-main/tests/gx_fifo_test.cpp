@@ -4267,7 +4267,7 @@ TEST_F(GXFifoTest, CopyTexColorFormatMarksResolvePersistent) {
   EXPECT_TRUE(records.front().persistentCopy);
 }
 
-TEST_F(GXFifoTest, RecurringColorCopyPreservesEveryResolve) {
+TEST_F(GXFifoTest, RecurringColorCopyKeepsLaterResolveSkippable) {
   std::array<u8, 152 * 114 * 4> image{};
   gxState().pixelFmt = GX_PF_RGBA6_Z24;
 
@@ -4281,7 +4281,7 @@ TEST_F(GXFifoTest, RecurringColorCopyPreservesEveryResolve) {
   const auto& records = aurora::gfx::testing::resolve_pass_records();
   ASSERT_EQ(records.size(), 2u);
   EXPECT_TRUE(records[0].persistentCopy);
-  EXPECT_TRUE(records[1].persistentCopy);
+  EXPECT_FALSE(records[1].persistentCopy);
 }
 
 TEST_F(GXFifoTest, ColorCopyAfterFrameGapRegainsPersistentProtection) {
@@ -4301,7 +4301,7 @@ TEST_F(GXFifoTest, ColorCopyAfterFrameGapRegainsPersistentProtection) {
   EXPECT_TRUE(records[1].persistentCopy);
 }
 
-TEST_F(GXFifoTest, CopyTexDepthFormatPreservesResolve) {
+TEST_F(GXFifoTest, CopyTexDepthFormatKeepsResolveSkippable) {
   std::array<u8, 4 * 4 * 4> image{};
   gxState().pixelFmt = GX_PF_RGBA6_Z24;
 
@@ -4311,7 +4311,7 @@ TEST_F(GXFifoTest, CopyTexDepthFormatPreservesResolve) {
 
   const auto& records = aurora::gfx::testing::resolve_pass_records();
   ASSERT_EQ(records.size(), 1u);
-  EXPECT_TRUE(records.front().persistentCopy);
+  EXPECT_FALSE(records.front().persistentCopy);
 }
 
 TEST_F(GXFifoTest, CopyDispResolveIsNotPersistent) {
