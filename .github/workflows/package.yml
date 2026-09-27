@@ -107,7 +107,7 @@ jobs:
           persist-credentials: false
 
       # Wheel Wizard runs the downloaded setup with --version and refuses it when the reported
-      # version differs from the release tag, so a tag that was pushed without bumping every pinned
+      # version differs from the release tag, so a tag that was pushed without bumping the pinned
       # version would ship an update nobody can install. Catch that before anything is published.
       - name: Verify the tag matches the pinned setup version
         env:
@@ -122,9 +122,7 @@ jobs:
               status=1
             fi
           }
-          check Launcher/WiiCompiled.Setup.Windows/Program.cs "public const string Version = \"$version\";"
-          check Launcher/WiiCompiled.Setup.Windows/WiiCompiled.Setup.Windows.csproj "<Version>$version</Version>"
-          check Launcher/Build-Installer.ps1 "ProductVersion = '$version'"
+          check Launcher/Directory.Build.props "<Version>$version</Version>"
           exit $status
 
       # The build jobs upload with `archive: false`, which stores each installer as a raw file
