@@ -21,6 +21,13 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
     message(FATAL_ERROR "WiiCompiled only supports Release builds")
 endif()
 
+# Ninja writes Windows-quoted response files; the GNU clang driver otherwise reads them POSIX-style.
+if(CMAKE_HOST_WIN32)
+    foreach(_mkw_lang C CXX)
+        set(CMAKE_${_mkw_lang}_RESPONSE_FILE_LINK_FLAG "--rsp-quoting=windows @")
+    endforeach()
+endif()
+
 option(MKW_BUILD_PRODUCTS "Build translated WiiCompiled product targets" ON)
 
 # Preprocessor definitions that belong to this project's own code (the runtime,

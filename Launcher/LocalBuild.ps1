@@ -103,7 +103,7 @@ function Write-MkwBuildStep([string]$StepId, [string]$Message) {
 function Reset-LocalDirectory([string]$Path) {
     $full = [IO.Path]::GetFullPath($Path)
     $root = [IO.Path]::GetFullPath($Workspace).TrimEnd('\') + '\'
-    $installRoot = [IO.Path]::GetFullPath((Split-Path -Parent $Workspace)).TrimEnd('\') + '\'
+    $installRoot = [IO.Path]::GetFullPath((Split-Path -Parent $realWorkspace)).TrimEnd('\') + '\'
     # The caller-supplied output destinations are legitimate reset targets by
     # definition, wherever the caller placed them: a fresh install's operation
     # scratch lives beside the installation directory rather than inside it.
@@ -150,8 +150,15 @@ if ($Profile -eq 'both' -and [string]::IsNullOrWhiteSpace($BaseOutputDirectory))
 if ($Profile -ne 'both' -and -not [string]::IsNullOrWhiteSpace($BaseOutputDirectory)) {
     throw '-BaseOutputDirectory is valid only with -Profile both.'
 }
+$realWorkspace = $Workspace.TrimEnd('\')
+$Workspace = Get-MkwBuildSafePath $realWorkspace 'workspace' 'runtime\CMakeLists.txt'
+# One spelling of the workspace, so the staged Code.pul check below can't copy a file onto itself.
+if (-not [string]::IsNullOrWhiteSpace($RetroRewindPackageDirectory) -and
+    $RetroRewindPackageDirectory.StartsWith($realWorkspace + '\', [StringComparison]::OrdinalIgnoreCase)) {
+    $RetroRewindPackageDirectory = $Workspace + $RetroRewindPackageDirectory.Substring($realWorkspace.Length)
+}
 $translator = Join-Path $Toolkit 'Translator\Translator.Cli.exe'
-$toolchain = Get-MkwShellSafeToolchainRoot $Toolkit
+$toolchain = Get-MkwBuildSafePath $Toolkit 'toolchain' 'CMake\bin\cmake.exe'
 $cmake = Join-Path $toolchain 'CMake\bin\cmake.exe'
 $ninja = Join-Path $toolchain 'Ninja\ninja.exe'
 $toolchainBin = Join-Path $toolchain 'llvm-mingw\bin'
