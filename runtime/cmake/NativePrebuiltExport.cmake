@@ -88,12 +88,21 @@ mkw_collect_buildsystem_targets("${_mkw_np_aurora_dir}" _mkw_np_all_targets)
 # checks below still apply to it.
 list(APPEND _mkw_np_all_targets "mkw_cryptopp")
 if(NOT MKW_PLATFORM_WINDOWS)
-    list(APPEND _mkw_np_all_targets mbedtls mbedx509 mbedcrypto)
-    # Keep the TLS archives separate from aurora's aggregate link interface.
-    string(CONCAT _mkw_np_mbedtls_lines
-        "mbedtls|$<TARGET_LINKER_FILE:MbedTLS::mbedtls>\n"
-        "mbedx509|$<TARGET_LINKER_FILE:MbedTLS::mbedx509>\n"
-        "mbedcrypto|$<TARGET_LINKER_FILE:MbedTLS::mbedcrypto>\n")
+    set(_mkw_np_mbedtls_targets mbedtls mbedx509 mbedcrypto)
+    # mbedcrypto links these third-party archives when upstream defines them.
+    # Keep dependencies after mbedcrypto for static linking on the consumer side.
+    foreach(_t everest p256m)
+        if(TARGET ${_t})
+            list(APPEND _mkw_np_mbedtls_targets ${_t})
+        endif()
+    endforeach()
+    list(APPEND _mkw_np_all_targets ${_mkw_np_mbedtls_targets})
+    # Keep the complete TLS archive set separate from aurora's aggregate link interface.
+    set(_mkw_np_mbedtls_lines "")
+    foreach(_t IN LISTS _mkw_np_mbedtls_targets)
+        string(APPEND _mkw_np_mbedtls_lines
+            "${_t}|$<TARGET_LINKER_FILE:${_t}>\n")
+    endforeach()
     file(GENERATE OUTPUT "${MKW_NATIVE_PREBUILT_EXPORT_DIR}/mbedtls.txt"
         CONTENT "${_mkw_np_mbedtls_lines}")
 endif()
