@@ -1193,7 +1193,7 @@ void DrawStartupScreen() {
                                         ImGuiWindowFlags_NoBringToFrontOnFocus;
     if (ImGui::Begin("Wiicompiled Startup", nullptr, kFlags)) {
         ImGui::SetWindowFontScale(1.25f);
-        constexpr const char* kTitle = "WiiCompiled";
+        constexpr const char* kTitle = "Strikers-WiiCompiled";
         const ImVec2 titleSize = ImGui::CalcTextSize(kTitle);
         const float titleX = std::max(0.0f, (viewport->Size.x - titleSize.x) * 0.5f);
         const float startY = std::max(0.0f, (viewport->Size.y - titleSize.y) * 0.5f);
@@ -1268,7 +1268,7 @@ void DrawTopBar() {
     ImGui::End();
     if (!ImGui::BeginMainMenuBar()) return;
 
-    ImGui::TextUnformatted("WiiCompiled");
+    ImGui::TextUnformatted("Strikers-WiiCompiled");
     ImGui::Separator();
     const auto resolutionIt = std::find_if(kResolutions.begin(), kResolutions.end(), [](const ResolutionItem& item) {
         return std::fabs(item.scale - g_resolutionScale) < 0.001f;

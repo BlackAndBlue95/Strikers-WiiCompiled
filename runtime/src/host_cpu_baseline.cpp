@@ -192,7 +192,7 @@ void WriteStdErrEarly(const char* text) {
     WriteStdErrEarly("\n");
 
 #if defined(_WIN32)
-    ::MessageBoxA(nullptr, message.data, "WiiCompiled - Unsupported Processor",
+    ::MessageBoxA(nullptr, message.data, "Strikers-WiiCompiled - Unsupported Processor",
                   MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TASKMODAL);
     // Leave through the OS rather than exit(): the C++ dynamic initializers
     // have not run yet, so there is no constructed program state to unwind and

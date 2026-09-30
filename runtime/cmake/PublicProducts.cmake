@@ -305,6 +305,7 @@ endfunction()
 
 add_executable(WiiCompiled "${MKW_BASE_PRODUCT_SOURCE}" ${MKW_BASE_REGISTRATION_SOURCES})
 mkw_configure_product(WiiCompiled)
+set_target_properties(WiiCompiled PROPERTIES OUTPUT_NAME "Strikers-WiiCompiled")
 target_precompile_headers(WiiCompiled PRIVATE
     "${MKW_RUNTIME_SOURCE_DIR}/include/mkw_pch.h")
 if(TARGET mkw_base_sensitive)

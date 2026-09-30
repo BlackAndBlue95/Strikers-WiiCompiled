@@ -1,6 +1,8 @@
 # Strikers-WiiCompiled
 
 <p align="center">
+  <img alt="Windows 10 / 11, x64" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20%C2%B7%20x64-0078D4">
+  <img alt="Linux, x64 / ARM64" src="https://img.shields.io/badge/Linux-x64%20%2F%20ARM64-FCC624?logo=linux&amp;logoColor=white">
   <img alt="macOS 14+, Apple Silicon" src="https://img.shields.io/badge/macOS-14%2B%20%C2%B7%20Apple%20Silicon-0A84FF?logo=apple&amp;logoColor=white">
   <img alt="PowerPC static recompilation" src="https://img.shields.io/badge/PowerPC-static%20recompilation-FF9F0A">
   <a href="LICENSE"><img alt="License: GPLv3" src="https://img.shields.io/badge/license-GPLv3-2EA44F?logo=gnu&amp;logoColor=white"></a>
@@ -19,9 +21,10 @@ PowerPC anywhere at runtime.
 > copy, and its output is never committed or uploaded.
 
 > [!WARNING]
-> This is an early, work-in-progress port, and it's only been tested on macOS (Apple Silicon).
-> There are no prebuilt releases, and the WiiCompiled setup tool / Wheel Wizard integration is
-> Mario Kart Wii only. Building from source is the only way to play.
+> This is an early, work-in-progress port. It's developed and tested on macOS (Apple Silicon);
+> Windows and Linux builds use the same upstream WiiCompiled toolchain but are untested with this
+> port so far, so expect rough edges there. There are no prebuilt releases, and the WiiCompiled
+> setup tool / Wheel Wizard integration is Mario Kart Wii only.
 
 ---
 
@@ -61,56 +64,105 @@ bindings. Settings are saved to `Config.toml` straight away.
 
 ## Requirements
 
-- macOS 14 (Sonoma) or later on Apple Silicon
-- Xcode Command Line Tools, CMake, Ninja, Python 3, and the .NET 8 SDK
-- Your own dump of **Mario Strikers Charged (USA) (Rev 1)**, `R4QE01`, extracted to a folder
-  (for example with Dolphin: right-click the game > Properties > Filesystem > Extract Entire Disc)
+- **Your own copy of Mario Strikers Charged (USA) (Rev 1)**, `R4QE01`, extracted to a folder.
+  The easiest way is [Dolphin](https://dolphin-emu.org): right-click the game, then
+  Properties > Filesystem > right-click the disc > Extract Entire Disc. Only this version works;
+  the build checks `main.dol`'s SHA-256 and rejects anything else.
+- A 64-bit Windows 10/11, Linux or macOS 14+ (Apple Silicon) machine with a GPU that supports
+  Direct3D 12, Vulkan or Metal.
+- About 10 GB of free disk space for the build.
+- The [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0), CMake 3.25+, Ninja, and
+  Clang. Per-platform setup is below.
 
 > [!NOTE]
 > Nobody here will tell you where to get the game. Dumping your own disc is on you, and links to
 > game files won't be provided or tolerated.
 
-## Building from source
+### Windows
 
-1. Build the translator:
+The runtime builds with **LLVM-MinGW** Clang, not MSVC.
 
-   ```bash
-   dotnet build translator/src/Translator.Cli -c Release
+1. Install the tools (from a terminal; or grab the installers from each project's site):
+
+   ```powershell
+   winget install Microsoft.DotNet.SDK.8 Kitware.CMake Ninja-build.Ninja Git.Git
    ```
 
-2. Copy `main.dol` from your extracted disc (`sys/main.dol`) to `Assets/main.dol`. Its SHA-256
-   must match the one in [`projects/mscharged/recomp.yml`](projects/mscharged/recomp.yml).
-   `Assets/` is gitignored, so it never gets committed.
+2. Download the latest `llvm-mingw-<version>-ucrt-x86_64.zip` from
+   [mstorsjo/llvm-mingw releases](https://github.com/mstorsjo/llvm-mingw/releases), extract it
+   (for example to `C:\llvm-mingw`), and put its `bin` folder first on your `PATH`, so that
+   `clang --version` reports the target `x86_64-w64-windows-gnu`.
 
-3. Translate and build:
+### Linux (Debian/Ubuntu shown)
 
-   ```bash
-   scripts/msc/rebuild.sh
-   ```
+```bash
+sudo apt install git clang lld cmake ninja-build pkg-config dotnet-sdk-8.0 \
+  libasound2-dev libpulse-dev libpipewire-0.3-dev libx11-dev libxext-dev libxrandr-dev \
+  libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libdrm-dev \
+  libgbm-dev libgl1-mesa-dev libegl1-mesa-dev libwayland-dev libdecor-0-dev libdbus-1-dev \
+  libudev-dev libusb-1.0-0-dev
+```
 
-   This statically translates the whole DOL to C++ (under `generated/`, also gitignored),
-   generates the build graph, and compiles `build-macos/WiiCompiled`.
+(`dotnet-sdk-8.0` may need [Microsoft's package feed](https://learn.microsoft.com/dotnet/core/install/linux)
+on older distributions. Other distributions need the equivalent packages.)
 
-4. Point the runtime at your extracted disc. Create
-   `~/Library/Application Support/MSCRecomp/Config.toml` with:
+### macOS (Apple Silicon)
 
-   ```toml
-   [paths]
-   dvd_root = "/path/to/your/extracted/game/DATA"
-   ```
+```bash
+xcode-select --install
+brew install cmake ninja
+```
 
-   The runtime keeps its config, saves and caches in `MSCRecomp`, separate from any Mario Kart
-   Wii WiiCompiled install.
+and the [.NET 8 SDK installer](https://dotnet.microsoft.com/download/dotnet/8.0) (Arm64) from Microsoft.
 
-5. Run it:
+## Building
 
-   ```bash
-   build-macos/WiiCompiled
-   ```
+Clone the repository and run the build script with the folder you extracted the game into:
 
-After changing the runtime, rebuild with `cmake --build build-macos --target WiiCompiled`. Adding
-or removing a `PPC_NATIVE_OVERRIDE` needs a full `scripts/msc/rebuild.sh`, because the translator
-scans `runtime/src` for them.
+```bash
+git clone https://github.com/BlackAndBlue95/Strikers-WiiCompiled.git
+cd Strikers-WiiCompiled
+./build.sh "/path/to/extracted/game"
+```
+
+On Windows, run this from a terminal in the repository folder:
+
+```bat
+build.cmd "C:\path\to\extracted\game"
+```
+
+The script:
+
+1. checks and copies `sys/main.dol` to `Assets/main.dol`,
+2. builds the translator,
+3. statically translates the game code to C++ under `generated/`,
+4. compiles the runtime and translated code with CMake + Ninja + Clang into
+   `build-windows/`, `build-linux/` or `build-macos/`,
+5. points the runtime's `Config.toml` at your extracted disc.
+
+The first build takes a while (translation is a few minutes, and compiling the translated code
+and fetching the graphics dependencies can take much longer on slower machines). Logs for every
+step are written to the build folder. Later runs are incremental.
+
+Then run `build-<platform>/Strikers-WiiCompiled` (`Strikers-WiiCompiled.exe` on Windows). Config, saves and caches
+live in a `MSCRecomp` folder, separate from any Mario Kart Wii WiiCompiled install:
+
+| Platform | Location |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\MSCRecomp` |
+| Linux | `$XDG_DATA_HOME/MSCRecomp` (default `~/.local/share/MSCRecomp`) |
+| macOS | `~/Library/Application Support/MSCRecomp` |
+
+> [!IMPORTANT]
+> Everything the build produces (`Assets/`, `generated/`, `build-*/`) contains or is derived from
+> game code, and is gitignored. Don't commit it, upload it or share builds. Everyone builds from
+> their own copy.
+
+### Developing
+
+After changing only runtime code, `./build.sh --skip-translate` (`build.cmd -SkipTranslate`) recompiles
+without retranslating. Adding or removing a `PPC_NATIVE_OVERRIDE` needs a full run, because the
+translator scans `runtime/src` for them to decide which game functions to leave untranslated.
 
 ## How the port works
 
