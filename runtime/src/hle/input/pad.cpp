@@ -175,7 +175,11 @@ struct State {
     int pressFrames = 0;      // tapping A on it
     int pageFrames = 0;       // tapping +/- (stage select)
     int pageDir = 0;
+    int pauseFrames = 0;      // tapping the pause button (B on an in-match overlay)
     uint32_t scene = 0;       // top scene last frame, to spot screen changes
+    bool hadButtons = false;  // buttons last frame (false: a menu/overlay just appeared)
+    bool overlay = false;     // this menu appeared over an unchanged scene (e.g. the pause menu)
+    uint32_t sceneWhenEmpty = 0;
 };
 State s_state[PAD_CHANMAX];
 // Screen units per KPAD unit. The game maps KPAD pos to screen as (x * w/2, -y * h/2); these start at
@@ -351,6 +355,7 @@ struct Result {
     bool menu = false;       // a menu is up: navigation owns the D-pad/left stick
     bool hidePointer = false; // report no IR pointer (hand hidden, game keeps the last position)
     bool pressA = false;     // tap A (B-to-back)
+    bool pressPause = false; // tap the pause button (B on the pause menu)
     int page = 0;            // tap - (-1) or + (+1): stage select flips stages with left/right
 };
 
@@ -360,7 +365,7 @@ Result Update(uint32_t chan, uint32_t dir, Point stick, bool backButton, float c
     Result r;
     // A menu is up whenever live pointer buttons exist (none during matches).
     const std::vector<Button> buttons = CollectButtons(chan);
-    if (buttons.empty()) { st = {}; return r; }
+    if (buttons.empty()) { const uint32_t scene = CurrentScene(); st = {}; st.sceneWhenEmpty = scene; return r; }
     r.menu = true;
     // One direction at a time; first press moves at once, holding repeats.
     if (dir & (kNavUp | kNavDown)) dir &= (kNavUp | kNavDown); else dir &= (kNavLeft | kNavRight);
@@ -379,8 +384,11 @@ Result Update(uint32_t chan, uint32_t dir, Point stick, bool backButton, float c
     // selection (first in reading order), wherever the pointer was left.
     const bool stageSelectScreen = CurrentSceneVtable() == kStadiumSelectVtable;
     const uint32_t scene = CurrentScene();
-    if (scene != st.scene) {
+    if (scene != st.scene || !st.hadButtons) {
+        // In-match overlays (the pause menu) appear without a scene change.
+        st.overlay = !st.hadButtons && scene == st.sceneWhenEmpty;
         st.scene = scene;
+        st.hadButtons = true;
         SnapTo(st, PickDefault(buttons, stageSelectScreen), cursor);
         return r;
     }
@@ -393,12 +401,14 @@ Result Update(uint32_t chan, uint32_t dir, Point stick, bool backButton, float c
         r.page = st.pageDir;
         step = false;
     }
-    // B: go to the back button, then tap A on it.
+    // B: go to the back button, then tap A on it. Overlays without one (the pause menu) close
+    // with the game's own pause button instead.
     if (backPressed) {
-        for (const Button& b : buttons) {
-            if (b.back) { SnapTo(st, b.centre, cursor); st.backFrames = 30; break; }
-        }
+        const auto back = std::find_if(buttons.begin(), buttons.end(), [](const Button& b) { return b.back; });
+        if (back != buttons.end()) { SnapTo(st, back->centre, cursor); st.backFrames = 30; }
+        else if (st.overlay) { st.pauseFrames = 4; }
     }
+    if (st.pauseFrames > 0) { --st.pauseFrames; r.pressPause = st.pauseFrames >= 2; }
     if (st.pressFrames > 0) { --st.pressFrames; r.pressA = st.pressFrames >= 2; return r; }
     if (st.backFrames > 0) {
         --st.backFrames;
@@ -498,6 +508,7 @@ void ApplyCommon(uint32_t chan, WiiRemoteInput::KpadSample& sample, bool remoteS
     const MenuNav::Result navResult = MenuNav::Update(chan, nav, navStick, (sample.hold & kWB) != 0, s_cursor[chan]);
     const bool menu = navResult.menu;
     if (navResult.pressA) sample.hold |= kWA;
+    if (navResult.pressPause) sample.hold |= kWOne;
     if (navResult.page > 0) sample.hold |= kWPlus;
     if (navResult.page < 0) sample.hold |= kWMinus;
     float moveX = sample.stick[0], moveY = sample.stick[1];
