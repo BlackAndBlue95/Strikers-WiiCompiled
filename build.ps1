@@ -1,9 +1,10 @@
-# Build Strikers-WiiCompiled from your own extracted copy of Mario Strikers Charged (Windows).
+# Build Strikers-WiiCompiled from your own copy of Mario Strikers Charged (Windows).
 #
-#   .\build.cmd "C:\path\to\extracted\game"     # full build
-#   .\build.cmd -SkipTranslate                  # recompile the runtime only
+#   build.cmd                                   # asks for your game (or double-click build.cmd)
+#   build.cmd "C:\path\to\game.wbfs"            # disc image: ISO, RVZ, WBFS, WIA, CISO, GCZ, ...
+#   build.cmd "C:\path\to\extracted\game"       # or a folder extracted with Dolphin (sys\ + files\)
+#   build.cmd -SkipTranslate                    # recompile the runtime only
 #
-# The game folder is the one you extracted the disc into (contains sys\ and files\, or DATA\).
 # Everything this produces (Assets\, generated\, build-windows\) stays on your machine and is gitignored.
 param(
     [Parameter(Position = 0)] [string] $Disc = "",
@@ -18,6 +19,13 @@ $TranslatorDll = 'translator/src/Translator.Cli/bin/Release/net8.0/Translator.Cl
 $BuildDir = Join-Path $Repo 'build-windows'
 $AppDir = Join-Path $env:LOCALAPPDATA 'MSCRecomp'
 $ExeName = 'Strikers-WiiCompiled.exe'
+$GameDir = Join-Path $Repo 'Assets/Game'   # where a disc image gets extracted
+# nodtool (https://github.com/encounter/nod) reads Wii disc images; pinned by version and hash.
+$NodVersion = 'v2.0.0-alpha.10'
+$NodBuilds = @{
+    'AMD64' = @('nodtool-windows-x86_64.exe', '1e150e33b88157527f96caea89ad12267aed8b117180c9ebaa89ebe89c1d948d')
+    'ARM64' = @('nodtool-windows-arm64.exe', 'a2cf9a1ab153fb1252e9676a60d9dd6f68d8f192387bbfbf571e7ba19b8047aa')
+}
 Set-Location $Repo
 
 function Fail([string] $Message) { Write-Host "`nerror: $Message" -ForegroundColor Red; exit 1 }
@@ -50,28 +58,95 @@ if ($clangVersion -notmatch 'windows-gnu|mingw') {
 }
 New-Item -ItemType Directory -Force $BuildDir | Out-Null
 
-$DiscRoot = $null
-if ($Disc) {
-    foreach ($candidate in @($Disc, (Join-Path $Disc 'DATA'))) {
+$ExpectedDolSha = ([regex]::Match((Get-Content $Project -Raw), 'sha256:\s*([0-9a-fA-F]{64})')).Groups[1].Value.ToLower()
+function Get-Sha([string] $Path) { (Get-FileHash $Path -Algorithm SHA256).Hash.ToLower() }
+function Assert-Dol([string] $Path) {
+    $actual = Get-Sha $Path
+    if ($actual -ne $ExpectedDolSha) {
+        Fail "$Path has SHA-256 $actual, expected $ExpectedDolSha.`nOnly a clean Mario Strikers Charged USA Rev 1 (R4QE01) disc is supported."
+    }
+}
+# The folder that directly contains sys\main.dol and files\ (the folder itself or DATA\), or $null.
+function Get-DiscRoot([string] $Folder) {
+    foreach ($candidate in @($Folder, (Join-Path $Folder 'DATA'))) {
         if ((Test-Path (Join-Path $candidate 'sys/main.dol') -PathType Leaf) -and (Test-Path (Join-Path $candidate 'files') -PathType Container)) {
-            $DiscRoot = (Resolve-Path $candidate).Path; break
+            return (Resolve-Path $candidate).Path
         }
     }
-    if (-not $DiscRoot) { Fail "$Disc doesn't look like an extracted disc (expected sys\main.dol and files\ in it or in DATA\)" }
+    return $null
+}
+function Get-NodTool {
+    $arch = $env:PROCESSOR_ARCHITECTURE
+    if ($env:PROCESSOR_ARCHITEW6432) { $arch = $env:PROCESSOR_ARCHITEW6432 }
+    if (-not $NodBuilds.ContainsKey($arch)) { Fail "no prebuilt nodtool for $arch; extract the disc with Dolphin and pass the folder instead" }
+    $asset, $sha = $NodBuilds[$arch]
+    $tool = Join-Path $BuildDir 'tools/nodtool.exe'
+    if ((Test-Path $tool) -and ((Get-Sha $tool) -eq $sha)) { return $tool }
+    New-Item -ItemType Directory -Force (Split-Path $tool) | Out-Null
+    Write-Host "    downloading nodtool $NodVersion"
+    $part = "$tool.part"
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $ProgressPreference = 'SilentlyContinue'
+    Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/encounter/nod/releases/download/$NodVersion/$asset" -OutFile $part
+    if ((Get-Sha $part) -ne $sha) { Remove-Item $part -Force; Fail 'nodtool download failed its checksum' }
+    Move-Item $part $tool -Force
+    return $tool
+}
+function Expand-DiscImage([string] $Image) {
+    Step 'Extracting your disc image (a few minutes)'
+    $nodtool = Get-NodTool
+    $stage = Join-Path $Repo "Assets/.extract-$PID"
+    if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+    New-Item -ItemType Directory -Force (Join-Path $Repo 'Assets') | Out-Null
+    try {
+        Logged 'extract.log' $nodtool @('extract', $Image, $stage)
+        $dol = Get-ChildItem $stage -Recurse -File -Filter 'main.dol' | Where-Object { $_.Directory.Name -eq 'sys' } | Select-Object -First 1
+        if (-not $dol) { Fail "that image doesn't contain sys\main.dol (is it a Wii disc?)" }
+        $root = $dol.Directory.Parent.FullName
+        if (-not (Test-Path (Join-Path $root 'files') -PathType Container)) { Fail "that image doesn't contain a files\ folder" }
+        Assert-Dol $dol.FullName
+        if (Test-Path $GameDir) { Remove-Item $GameDir -Recurse -Force }
+        Move-Item $root $GameDir
+    } finally {
+        if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+    }
+    Write-Host "    extracted to $GameDir"
+}
+
+if (-not $Disc -and -not $SkipTranslate -and -not (Test-Path (Join-Path $Repo 'Assets/main.dol'))) {
+    Add-Type -AssemblyName System.Windows.Forms
+    $dialog = New-Object System.Windows.Forms.OpenFileDialog
+    $dialog.Title = 'Choose your Mario Strikers Charged (USA) disc image'
+    $dialog.Filter = 'Wii disc images (*.iso;*.rvz;*.wbfs;*.wia;*.ciso;*.gcz;*.nfs)|*.iso;*.rvz;*.wbfs;*.wia;*.ciso;*.gcz;*.nfs|All files (*.*)|*.*'
+    if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { Fail 'no game selected' }
+    $Disc = $dialog.FileName
+}
+
+$DiscRoot = $null
+if ($Disc) {
+    if (Test-Path $Disc -PathType Container) {
+        $DiscRoot = Get-DiscRoot $Disc
+        if (-not $DiscRoot) { Fail "$Disc doesn't look like an extracted disc (expected sys\main.dol and files\ in it or in DATA\)" }
+    } elseif (Test-Path $Disc -PathType Leaf) {
+        $existing = Get-DiscRoot $GameDir
+        if ($existing -and ((Get-Sha (Join-Path $existing 'sys/main.dol')) -eq $ExpectedDolSha)) {
+            Write-Host "    using the already-extracted game in $GameDir"
+            $DiscRoot = $existing
+        } else {
+            Expand-DiscImage (Resolve-Path $Disc).Path
+            $DiscRoot = $GameDir
+        }
+    } else {
+        Fail "$Disc not found"
+    }
 }
 
 if (-not $SkipTranslate) {
     Step 'Checking main.dol'
     $dol = Join-Path $Repo 'Assets/main.dol'
-    if ($DiscRoot) { $source = Join-Path $DiscRoot 'sys/main.dol' }
-    elseif (Test-Path $dol) { $source = $dol }
-    else { Fail 'pass the folder you extracted the game into: .\build.cmd "C:\path\to\game"' }
-    $expected = ([regex]::Match((Get-Content $Project -Raw), 'sha256:\s*([0-9a-fA-F]{64})')).Groups[1].Value.ToLower()
-    $actual = (Get-FileHash $source -Algorithm SHA256).Hash.ToLower()
-    if ($actual -ne $expected) {
-        Fail "$source has SHA-256 $actual, expected $expected.`nOnly a clean Mario Strikers Charged USA Rev 1 (R4QE01) main.dol is supported."
-    }
-    if ((Resolve-Path $source).Path -ne $dol) {
+    if ($DiscRoot) { $source = Join-Path $DiscRoot 'sys/main.dol' } else { $source = $dol }
+    Assert-Dol $source
+    if ([IO.Path]::GetFullPath($source) -ne [IO.Path]::GetFullPath($dol)) {
         New-Item -ItemType Directory -Force (Join-Path $Repo 'Assets') | Out-Null
         Copy-Item $source $dol -Force
     }
@@ -104,17 +179,19 @@ $exe = Join-Path $BuildDir $ExeName
 if (-not (Test-Path $exe)) { Fail "build finished but $exe is missing (see $(Join-Path $BuildDir 'build.log'))" }
 
 if ($DiscRoot) {
-    # Point Config.toml's [paths] dvd_root at the extracted disc, keeping any other settings.
+    # Point Config.toml's [paths] dvd_root at the game files, keeping any other settings.
     $config = Join-Path $AppDir 'Config.toml'
     New-Item -ItemType Directory -Force $AppDir | Out-Null
     # Forward slashes work on Windows and need no TOML escaping.
     $line = 'dvd_root = "' + ($DiscRoot -replace '\\', '/') + '"'
     $text = if (Test-Path $config) { Get-Content $config -Raw } else { '' }
     if ($null -eq $text) { $text = '' }
-    if ($text -match '(?m)^\s*dvd_root\s*=') {
-        $text = [regex]::Replace($text, '(?m)^\s*dvd_root\s*=.*$', { param($m) $line })
-    } elseif ($text -match '(?m)^\[paths\]\s*$') {
-        $text = [regex]::Replace($text, '(?m)^\[paths\]\s*$', { param($m) "[paths]`n$line" }, 1)
+    $dvdRe = [regex]'(?m)^[ \t]*dvd_root[ \t]*=[^\r\n]*'
+    $pathsRe = [regex]'(?m)^\[paths\][ \t]*\r?$'
+    if ($dvdRe.IsMatch($text)) {
+        $text = $dvdRe.Replace($text, [Text.RegularExpressions.MatchEvaluator] { param($m) $line }, 1)
+    } elseif ($pathsRe.IsMatch($text)) {
+        $text = $pathsRe.Replace($text, [Text.RegularExpressions.MatchEvaluator] { param($m) "[paths]`n$line" }, 1)
     } else {
         $text = $text.TrimEnd("`r", "`n") + $(if ($text) { "`n`n" } else { '' }) + "[paths]`n$line`n"
     }

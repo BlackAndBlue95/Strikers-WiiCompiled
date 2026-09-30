@@ -64,10 +64,9 @@ bindings. Settings are saved to `Config.toml` straight away.
 
 ## Requirements
 
-- **Your own copy of Mario Strikers Charged (USA) (Rev 1)**, `R4QE01`, extracted to a folder.
-  The easiest way is [Dolphin](https://dolphin-emu.org): right-click the game, then
-  Properties > Filesystem > right-click the disc > Extract Entire Disc. Only this version works;
-  the build checks `main.dol`'s SHA-256 and rejects anything else.
+- **Your own dump of Mario Strikers Charged (USA) (Rev 1)**, `R4QE01`, as a disc image (ISO,
+  RVZ, WBFS, WIA, CISO, GCZ, ...). An already-extracted folder works too. Only this version is
+  supported; the build checks `main.dol`'s SHA-256 and rejects anything else.
 - A 64-bit Windows 10/11, Linux or macOS 14+ (Apple Silicon) machine with a GPU that supports
   Direct3D 12, Vulkan or Metal.
 - About 10 GB of free disk space for the build.
@@ -117,28 +116,30 @@ and the [.NET 8 SDK installer](https://dotnet.microsoft.com/download/dotnet/8.0)
 
 ## Building
 
-Clone the repository and run the build script with the folder you extracted the game into:
+Clone the repository and run the build script:
 
 ```bash
 git clone https://github.com/BlackAndBlue95/Strikers-WiiCompiled.git
 cd Strikers-WiiCompiled
-./build.sh "/path/to/extracted/game"
+./build.sh
 ```
 
-On Windows, run this from a terminal in the repository folder:
+On Windows, double-click `build.cmd` in the repository folder (or run it from a terminal).
 
-```bat
-build.cmd "C:\path\to\extracted\game"
-```
+The script asks you to pick your disc image; that's the only input it needs. You can also pass
+it directly: `./build.sh "/path/to/game.wbfs"` or `build.cmd "C:\path\to\game.wbfs"`. A folder
+extracted with Dolphin works in place of an image.
 
 The script:
 
-1. checks and copies `sys/main.dol` to `Assets/main.dol`,
-2. builds the translator,
-3. statically translates the game code to C++ under `generated/`,
-4. compiles the runtime and translated code with CMake + Ninja + Clang into
+1. extracts your disc image into `Assets/Game` with [nodtool](https://github.com/encounter/nod)
+   (downloaded once, pinned by version and checksum),
+2. checks and copies `sys/main.dol` to `Assets/main.dol`,
+3. builds the translator,
+4. statically translates the game code to C++ under `generated/`,
+5. compiles the runtime and translated code with CMake + Ninja + Clang into
    `build-windows/`, `build-linux/` or `build-macos/`,
-5. points the runtime's `Config.toml` at your extracted disc.
+6. points the runtime's `Config.toml` at the game files.
 
 The first build takes a while (translation is a few minutes, and compiling the translated code
 and fetching the graphics dependencies can take much longer on slower machines). Logs for every
@@ -212,6 +213,8 @@ AI coding tools were used heavily in developing this port.
   licensed.
 - **[Dawn](https://dawn.googlesource.com/dawn)**: Google's WebGPU implementation, powering
   aurora's backends.
+- **[nod](https://github.com/encounter/nod)**: the disc-image library and `nodtool`, used to read
+  your disc image. MIT licensed.
 - **[Dolphin Emulator](https://github.com/dolphin-emu/dolphin)**: an invaluable hardware
   reference, and the source of the free DSP coefficient ROM and the default WiiConnect24
   bootstrap tree bundled with the runtime.
