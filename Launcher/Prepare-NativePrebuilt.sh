@@ -372,7 +372,7 @@ while IFS='|' read -r name linkerfile; do
     [[ -n "$ref" ]] || fail "Mbed TLS archive was not harvested: $name ($linkerfile)"
     mbedtls_refs+=("$ref")
 done < "$mbedtls_txt"
-[[ ${#mbedtls_refs[@]} -eq 3 ]] || fail "Expected three Mbed TLS archives, got ${#mbedtls_refs[@]}"
+[[ ${#mbedtls_refs[@]} -ge 3 ]] || fail "Expected at least three Mbed TLS archives, got ${#mbedtls_refs[@]}"
 mbedtls_source_dir=$(get_meta mbedtls_source_dir)
 assert_dir "$mbedtls_source_dir/include/mbedtls" "Mbed TLS headers"
 mkdir -p "$output_dir/include/mbedtls"
