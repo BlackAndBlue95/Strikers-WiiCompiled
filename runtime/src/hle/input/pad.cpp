@@ -126,116 +126,344 @@ bool Present(uint32_t chan) {
     return ReadBoundPad(chan, pad);
 }
 
-// Menu navigation (mod): MSC's menus are pointer-only. While the game shows its pointer, the D-pad
-// and left-stick flicks move a highlight between buttons instead: the emulated pointer snaps onto
-// the centre of the nearest FEPointerRegion in that direction, so the game's own hover/click logic
-// (and A to confirm) keeps working. The right stick still drives a free pointer as a fallback.
+// Menu navigation (mod): MSC's menus are pointer-only. To make them feel like a console menu, the
+// D-pad and left-stick flicks move a highlight between buttons: the emulated pointer snaps onto the
+// nearest FEPointerRegion in that direction and the hand is hidden, so the button's own hover
+// highlight is the selection and the game's hover/click logic (A to confirm) runs unchanged. When
+// nothing is highlighted (a menu just opened), the nearest button is selected. Moving the right
+// stick brings the hand back as a free pointer until the D-pad is used again.
 namespace MenuNav {
-constexpr uint32_t kPointerManagerPtr = 0x806E2030u;  // g_pFEPointerManager
-constexpr uint32_t kPointerPositions = 0x80578460u;   // gFEPointerPositions[4]: centre origin, +y up
+constexpr uint32_t kPointerManagerPtr = 0x806E2030u;   // g_pFEPointerManager
+constexpr uint32_t kPointerPositions = 0x80578460u;    // gFEPointerPositions[4]: centre origin, +y up
+constexpr uint32_t kPointerInstances = 0x80578450u;    // gFEPointerInstances[4] (the hand)
 constexpr uint32_t kRegionContainsPoint = 0x8030131Cu; // FEPointerRegion::ContainsPoint (vtable +0x2C)
+constexpr uint32_t kBackButtonVtable = 0x8051D5E4u;    // __vt__12FEBackButton
+constexpr uint32_t kFEInputPtr = 0x806E2038u;          // g_pFEInput (m_InputLockDepth at +0x20)
+constexpr uint32_t kSceneManagerPtr = 0x806E1838u;     // nlSingleton<GameSceneManager>::s_pInstance
+constexpr uint32_t kStadiumSelectVtable = 0x80519C70u; // __vt__18StadiumSelectScene
+// Scenes that keep a character grid's buttons live while the grid is hidden: {vtable, "grid shown"
+// flag, first grid FEPointerButton (0xB4 bytes each), count}.
+struct HiddenGrid { uint32_t vtable, shownFlag, buttons, count; };
+constexpr HiddenGrid kHiddenGrids[] = {
+    {0x8051D168u, 0x4C, 0xB0, 12},  // ChooseCaptainsSceneV2: mCaptainsShown, mCaptainButtons
+    {0x8051D584u, 0x4C, 0xE8, 8},   // ChooseSidekicksSceneV2: mSidekicksShown, mSidekickButtons
+};
 enum : uint32_t { kNavUp = 1, kNavDown = 2, kNavLeft = 4, kNavRight = 8 };
 
-struct Target { float x, y; };
+struct Point { float x, y; };
+struct Button {
+    float minX, maxX, minY, maxY, rot, pivotX, pivotY;
+    Point centre;
+    bool back;
+    uint32_t listener;
+    // Same test as FEPointerRegion::ContainsPoint.
+    bool Contains(Point p) const {
+        if (rot != 0.0f) {
+            const float lx = p.x - pivotX, ly = p.y - pivotY, c = std::cos(rot), sn = std::sin(rot);
+            p = {lx * c + ly * sn + pivotX, -lx * sn + ly * c + pivotY};
+        }
+        return p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY;
+    }
+};
 struct State {
     uint32_t heldDir = 0;
     uint64_t repeatAtMs = 0;
-    Target goal{};
+    Point goal{};
     int settleFrames = 0;
+    bool backHeld = false;
+    int backFrames = 0;       // B pressed: heading for the back button
+    int pressFrames = 0;      // tapping A on it
+    int pageFrames = 0;       // tapping +/- (stage select)
+    int pageDir = 0;
+    uint32_t scene = 0;       // top scene last frame, to spot screen changes
 };
 State s_state[PAD_CHANMAX];
 // Screen units per KPAD unit. The game maps KPAD pos to screen as (x * w/2, -y * h/2); these start at
 // 4:3 values and are refined from where the pointer actually lands, so widescreen needs no special case.
 float s_scaleX = 320.0f, s_scaleY = 240.0f;
 
-
-Target PointerPosition(uint32_t chan) {
+Point PointerPosition(uint32_t chan) {
     return {Memory::ReadFloat32(kPointerPositions + chan * 8), Memory::ReadFloat32(kPointerPositions + chan * 8 + 4)};
 }
 
-// Centres of every enabled pointer region (buttons), in screen space.
-std::vector<Target> CollectTargets() {
-    std::vector<Target> out;
+// The scene handler on top of the game's scene stack (BaseGameSceneManager: depth +0x04,
+// handlers +0x88), or 0.
+uint32_t CurrentScene() {
+    try {
+        const uint32_t mgr = Memory::Read32(kSceneManagerPtr);
+        const uint32_t depth = mgr ? Memory::Read32(mgr + 0x04) : 0;
+        if (depth == 0 || depth > 32) return 0;
+        return Memory::Read32(mgr + 0x88 + (depth - 1) * 4);
+    } catch (...) { return 0; }
+}
+uint32_t CurrentSceneVtable() {
+    const uint32_t scene = CurrentScene();
+    try { return scene ? Memory::Read32(scene) : 0; } catch (...) { return 0; }
+}
+
+// Every live pointer region (button), in screen space. Scenes feed pointer events only to their
+// own buttons, so buttons of screens that are registered but not shown never see an event: a
+// button counts as live only if its last event for this pad is at the pointer's current position.
+std::vector<Button> CollectButtons(uint32_t chan) {
+    std::vector<Button> out;
     try {
         const uint32_t mgr = Memory::Read32(kPointerManagerPtr);
+        const uint32_t input = Memory::Read32(kFEInputPtr);
+        const bool inputLocked = input && Memory::Read32(input + 0x20) != 0;
+        const Point at = PointerPosition(chan);
+        uint32_t hiddenFrom = 0, hiddenTo = 0;  // listener range of a hidden character grid
+        if (const uint32_t scene = CurrentScene()) {
+            const uint32_t vtable = Memory::Read32(scene);
+            for (const HiddenGrid& g : kHiddenGrids) {
+                if (vtable == g.vtable && !Memory::Read8(scene + g.shownFlag)) {
+                    hiddenFrom = scene + g.buttons;
+                    hiddenTo = hiddenFrom + g.count * 0xB4;
+                }
+            }
+        }
         // mListeners (nlListContainer) is {?, head, tail}; entries are {next, listener}.
         uint32_t entry = mgr ? Memory::Read32(mgr + 4) : 0;
         for (int guard = 0; entry && guard < 512; ++guard, entry = Memory::Read32(entry)) {
             const uint32_t listener = Memory::Read32(entry + 4);
-            if (!listener || Memory::Read32(Memory::Read32(listener) + 0x2C) != kRegionContainsPoint) continue;
-            if (Memory::Read8(listener + 0x80)) continue;  // mDisabled
-            const float minX = Memory::ReadFloat32(listener + 0x84), maxX = Memory::ReadFloat32(listener + 0x88);
-            const float maxY = Memory::ReadFloat32(listener + 0x8C), minY = Memory::ReadFloat32(listener + 0x90);
-            if (!(maxX > minX && maxY > minY) || maxX - minX > 600.0f || maxY - minY > 420.0f) continue;
-            Target t{(minX + maxX) * 0.5f, (minY + maxY) * 0.5f};
-            // ContainsPoint rotates the probe by -rotation about the pivot; rotate the centre forward.
-            const float rot = Memory::ReadFloat32(listener + 0x94);
-            if (rot != 0.0f) {
-                const float px = Memory::ReadFloat32(listener + 0x98), py = Memory::ReadFloat32(listener + 0x9C);
-                const float dx = t.x - px, dy = t.y - py, c = std::cos(rot), sn = std::sin(rot);
-                t = {px + dx * c - dy * sn, py + dx * sn + dy * c};
+            if (!listener || (listener >= hiddenFrom && listener < hiddenTo)) continue;
+            const uint32_t vtable = Memory::Read32(listener);
+            if (Memory::Read32(vtable + 0x2C) != kRegionContainsPoint) continue;
+            if (Memory::Read8(listener + 0x80)) continue;                  // mDisabled
+            if (inputLocked && !Memory::Read8(listener + 0x81)) continue;  // !mIgnoreInputLock
+            const uint32_t last = listener + 0x3C + chan * 0x10;           // mPreviousEvents[chan]
+            if (static_cast<int32_t>(Memory::Read32(last)) != static_cast<int32_t>(chan) ||
+                std::fabs(Memory::ReadFloat32(last + 4) - at.x) > 1.0f ||
+                std::fabs(Memory::ReadFloat32(last + 8) - at.y) > 1.0f) continue;
+            Button b{};
+            b.minX = Memory::ReadFloat32(listener + 0x84);
+            b.maxX = Memory::ReadFloat32(listener + 0x88);
+            b.maxY = Memory::ReadFloat32(listener + 0x8C);
+            b.minY = Memory::ReadFloat32(listener + 0x90);
+            if (!(b.maxX > b.minX && b.maxY > b.minY) || b.maxX - b.minX > 600.0f || b.maxY - b.minY > 420.0f) continue;
+            b.rot = Memory::ReadFloat32(listener + 0x94);
+            b.pivotX = Memory::ReadFloat32(listener + 0x98);
+            b.pivotY = Memory::ReadFloat32(listener + 0x9C);
+            b.centre = {(b.minX + b.maxX) * 0.5f, (b.minY + b.maxY) * 0.5f};
+            if (b.rot != 0.0f) {
+                const float dx = b.centre.x - b.pivotX, dy = b.centre.y - b.pivotY, c = std::cos(b.rot), sn = std::sin(b.rot);
+                b.centre = {b.pivotX + dx * c - dy * sn, b.pivotY + dx * sn + dy * c};
             }
-            if (std::isfinite(t.x) && std::isfinite(t.y)) out.push_back(t);
+            b.back = vtable == kBackButtonVtable;
+            b.listener = listener;
+            if (std::isfinite(b.centre.x) && std::isfinite(b.centre.y)) out.push_back(b);
         }
     } catch (...) {}
     return out;
 }
 
-// Nearest target in the pressed direction, weighting sideways distance so moves stay in line.
-bool PickTarget(const std::vector<Target>& targets, Target from, uint32_t dir, Target& out) {
+// Nearest button in the pressed direction, weighting sideways distance so moves stay in line.
+bool PickInDirection(const std::vector<Button>& buttons, Point from, uint32_t dir, Point& out) {
     const float dx = (dir & kNavRight) ? 1.0f : (dir & kNavLeft) ? -1.0f : 0.0f;
     const float dy = (dir & kNavUp) ? 1.0f : (dir & kNavDown) ? -1.0f : 0.0f;
     float best = 1e30f;
-    for (const Target& t : targets) {
-        const float vx = t.x - from.x, vy = t.y - from.y;
+    for (const Button& b : buttons) {
+        const float vx = b.centre.x - from.x, vy = b.centre.y - from.y;
         const float forward = vx * dx + vy * dy;
         if (forward < 8.0f) continue;
         const float score = forward + 2.5f * std::fabs(vx * dy - vy * dx);
-        if (score < best) { best = score; out = t; }
+        if (score < best) { best = score; out = b.centre; }
     }
     return best < 1e30f;
 }
 
-// The free pointer (right stick) takes over from a snap that's still settling.
-void CancelSettle(uint32_t chan) { s_state[chan].settleFrames = 0; }
+// Default selection when a menu opens: the first button in reading order (top row first, then
+// left to right), skipping BACK and controls at the screen edges (page dots, side arrows). With
+// preferWidest (stage select) the widest button wins instead, i.e. PLAY NOW over the arrows.
+Point PickDefault(const std::vector<Button>& buttons, bool preferWidest) {
+    std::vector<const Button*> pool;
+    for (const Button& b : buttons) {
+        if (b.back || std::fabs(b.centre.x) > s_scaleX - 50.0f || b.centre.y > s_scaleY - 50.0f) continue;
+        pool.push_back(&b);
+    }
+    if (pool.empty()) for (const Button& b : buttons) if (!b.back) pool.push_back(&b);
+    if (pool.empty()) return buttons.front().centre;
+    const Button* best = pool.front();
+    for (const Button* b : pool) {
+        if (preferWidest) {
+            if (b->maxX - b->minX > best->maxX - best->minX) best = b;
+        } else if (b->centre.y > best->centre.y + 20.0f ||
+                   (std::fabs(b->centre.y - best->centre.y) <= 20.0f && b->centre.x < best->centre.x)) {
+            best = b;  // higher row, or same row further left
+        }
+    }
+    return best->centre;
+}
 
-// Returns true while menu navigation owns the pointer this frame.
-bool Update(uint32_t chan, uint32_t dir, float cursor[2]) {
+// Hiding the hand: scenes re-show it every frame, but nothing touches its colour (SetPointerColour is
+// a stub), so give the hand and its child graphics a colour override with zero alpha, remembering the
+// originals to put back. TLInstance: m_next +0x00, pChildren +0x08, overloaded colour +0x6D (RGBA),
+// m_overloadFlags +0x84 (0x10 = colour overridden).
+struct SavedColour { uint32_t inst, flags; uint8_t rgba[4]; };
+struct HandState { uint32_t hand = 0; std::vector<SavedColour> saved; };
+HandState s_hand[PAD_CHANMAX];
+
+void CollectInstanceTree(uint32_t inst, std::vector<uint32_t>& out) {
+    for (int guard = 0; inst && guard < 64 && out.size() < 64; ++guard) {
+        if (std::find(out.begin(), out.end(), inst) != out.end()) return;
+        out.push_back(inst);
+        CollectInstanceTree(Memory::Read32(inst + 0x08), out);
+        inst = Memory::Read32(inst);
+    }
+}
+
+void SetHandVisible(uint32_t chan, bool visible) {
+    HandState& hs = s_hand[chan];
+    try {
+        const uint32_t hand = Memory::Read32(kPointerInstances + chan * 4);
+        if (hand != hs.hand) { hs = {}; hs.hand = hand; }  // new scene/hand: old instances may be gone
+        if (!hand) return;
+        if (visible) {
+            for (const SavedColour& c : hs.saved) {
+                Memory::Write32(c.inst + 0x84, c.flags);
+                for (int i = 0; i < 4; ++i) Memory::Write8(c.inst + 0x6D + i, c.rgba[i]);
+            }
+            hs.saved.clear();
+            return;
+        }
+        std::vector<uint32_t> tree;
+        tree.push_back(hand);
+        CollectInstanceTree(Memory::Read32(hand + 0x08), tree);
+        for (uint32_t inst : tree) {
+            if (std::none_of(hs.saved.begin(), hs.saved.end(), [&](const SavedColour& c) { return c.inst == inst; })) {
+                SavedColour c{inst, Memory::Read32(inst + 0x84), {}};
+                for (int i = 0; i < 4; ++i) c.rgba[i] = Memory::Read8(inst + 0x6D + i);
+                hs.saved.push_back(c);
+            }
+            Memory::Write32(inst + 0x84, Memory::Read32(inst + 0x84) | 0x10);
+            Memory::Write8(inst + 0x70, 0);  // alpha
+        }
+    } catch (...) {}
+}
+
+void SnapTo(State& st, Point goal, float cursor[2]) {
+    st.goal = goal;
+    st.settleFrames = 10;
+    cursor[0] = std::clamp(goal.x / s_scaleX, -1.0f, 1.0f);
+    cursor[1] = std::clamp(-goal.y / s_scaleY, -1.0f, 1.0f);
+}
+
+struct Result {
+    bool menu = false;       // a menu is up: navigation owns the D-pad/left stick
+    bool hidePointer = false; // report no IR pointer (hand hidden, game keeps the last position)
+    bool pressA = false;     // tap A (B-to-back)
+    int page = 0;            // tap - (-1) or + (+1): stage select flips stages with left/right
+};
+
+
+Result Update(uint32_t chan, uint32_t dir, Point stick, bool backButton, float cursor[2]) {
     State& st = s_state[chan];
-    // A menu is up whenever the game has enabled pointer buttons registered (none during matches).
-    const std::vector<Target> targets = CollectTargets();
-    if (targets.empty()) { st = {}; return false; }
+    Result r;
+    // A menu is up whenever live pointer buttons exist (none during matches).
+    const std::vector<Button> buttons = CollectButtons(chan);
+    if (buttons.empty()) { st = {}; return r; }
+    r.menu = true;
     // One direction at a time; first press moves at once, holding repeats.
     if (dir & (kNavUp | kNavDown)) dir &= (kNavUp | kNavDown); else dir &= (kNavLeft | kNavRight);
-    if (dir & kNavUp && dir & kNavDown) dir = 0;
-    if (dir & kNavLeft && dir & kNavRight) dir = 0;
+    if ((dir & kNavUp && dir & kNavDown) || (dir & kNavLeft && dir & kNavRight)) dir = 0;
     const uint64_t now = SDL_GetTicks();
     bool step = false;
-    if (dir && dir != st.heldDir) { step = true; st.repeatAtMs = now + 380; }
-    else if (dir && now >= st.repeatAtMs) { step = true; st.repeatAtMs = now + 140; }
+    if (dir && dir != st.heldDir) { step = true; st.repeatAtMs = now + 350; }
+    else if (dir && now >= st.repeatAtMs) { step = true; st.repeatAtMs = now + 130; }
     st.heldDir = dir;
-    if (step) {
-        Target goal{};
-        if (PickTarget(targets, PointerPosition(chan), dir, goal)) {
-            st.goal = goal;
-            st.settleFrames = 10;
-            cursor[0] = std::clamp(goal.x / s_scaleX, -1.0f, 1.0f);
-            cursor[1] = std::clamp(-goal.y / s_scaleY, -1.0f, 1.0f);
-            return true;
+    const bool backPressed = backButton && !st.backHeld;
+    st.backHeld = backButton;
+
+    SetHandVisible(chan, false);
+    const Point at = PointerPosition(chan);
+    // A new screen (another scene on top, or buttons appearing after none) starts on its default
+    // selection (first in reading order), wherever the pointer was left.
+    const bool stageSelectScreen = CurrentSceneVtable() == kStadiumSelectVtable;
+    const uint32_t scene = CurrentScene();
+    if (scene != st.scene) {
+        st.scene = scene;
+        SnapTo(st, PickDefault(buttons, stageSelectScreen), cursor);
+        return r;
+    }
+    // Stage select pages with +/-; let left/right do that instead of moving between buttons.
+    const bool stageSelect = CurrentSceneVtable() == kStadiumSelectVtable;
+    if (st.pageFrames > 0) { --st.pageFrames; r.page = st.pageFrames >= 2 ? st.pageDir : 0; }
+    if (step && (dir & (kNavLeft | kNavRight)) && stageSelect) {
+        st.pageDir = (dir & kNavRight) ? 1 : -1;
+        st.pageFrames = 4;
+        r.page = st.pageDir;
+        step = false;
+    }
+    // B: go to the back button, then tap A on it.
+    if (backPressed) {
+        for (const Button& b : buttons) {
+            if (b.back) { SnapTo(st, b.centre, cursor); st.backFrames = 30; break; }
         }
+    }
+    if (st.pressFrames > 0) { --st.pressFrames; r.pressA = st.pressFrames >= 2; return r; }
+    if (st.backFrames > 0) {
+        --st.backFrames;
+        const auto back = std::find_if(buttons.begin(), buttons.end(), [&](const Button& b) { return b.back; });
+        if (back != buttons.end() && back->Contains(at)) { st.backFrames = 0; st.pressFrames = 5; r.pressA = true; return r; }
+    }
+    // Ring menus (the main menu): a stick or D-pad direction selects the button at that angle
+    // around the ring's centre, following the stick as it turns. BACK stays on B.
+    std::vector<const Button*> ring;
+    Point ringCentre{};
+    for (const Button& b : buttons) if (!b.back) ring.push_back(&b);
+    if (ring.size() >= 5) {
+        for (const Button* b : ring) { ringCentre.x += b->centre.x; ringCentre.y += b->centre.y; }
+        ringCentre.x /= ring.size(); ringCentre.y /= ring.size();
+        float lo = 1e30f, hi = 0.0f, sum = 0.0f;
+        for (const Button* b : ring) {
+            const float d = std::hypot(b->centre.x - ringCentre.x, b->centre.y - ringCentre.y);
+            lo = std::min(lo, d); hi = std::max(hi, d); sum += d;
+        }
+        if (sum <= 0.0f || (hi - lo) / (sum / ring.size()) > 0.35f) ring.clear();
+    } else {
+        ring.clear();
+    }
+    if (!ring.empty() && !stageSelect) {
+        Point aim = stick;
+        if (std::hypot(aim.x, aim.y) < 0.55f) {
+            aim = {(dir & kNavRight) ? 1.0f : (dir & kNavLeft) ? -1.0f : 0.0f,
+                   (dir & kNavUp) ? 1.0f : (dir & kNavDown) ? -1.0f : 0.0f};
+            if (!step) aim = {};
+        }
+        if (aim.x != 0.0f || aim.y != 0.0f) {
+            const float want = std::atan2(aim.y, aim.x);
+            const Button* best = nullptr;
+            float bestDiff = 1e30f;
+            for (const Button* b : ring) {
+                float diff = std::fabs(std::atan2(b->centre.y - ringCentre.y, b->centre.x - ringCentre.x) - want);
+                if (diff > 3.14159265f) diff = 6.2831853f - diff;
+                if (diff < bestDiff) { bestDiff = diff; best = b; }
+            }
+            if (best && !best->Contains(at) && !(st.settleFrames > 0 && st.goal.x == best->centre.x && st.goal.y == best->centre.y))
+                SnapTo(st, best->centre, cursor);
+        }
+    }
+    Point goal{};
+    if (ring.empty() && step && PickInDirection(buttons, at, dir, goal)) {
+        SnapTo(st, goal, cursor);
+        return r;
     }
     if (st.settleFrames > 0) {
         // The pointer reflects last frame's KPAD position; nudge toward the goal and learn the scale.
         --st.settleFrames;
-        const Target at = PointerPosition(chan);
         if (std::fabs(cursor[0]) > 0.1f && std::fabs(at.x) > 1.0f && at.x * cursor[0] > 0.0f)
             s_scaleX = std::clamp(at.x / cursor[0], 200.0f, 600.0f);
         if (std::fabs(cursor[1]) > 0.1f && std::fabs(at.y) > 1.0f && -at.y * cursor[1] > 0.0f)
             s_scaleY = std::clamp(-at.y / cursor[1], 150.0f, 400.0f);
         cursor[0] = std::clamp(cursor[0] + 0.5f * (st.goal.x - at.x) / s_scaleX, -1.0f, 1.0f);
         cursor[1] = std::clamp(cursor[1] - 0.5f * (st.goal.y - at.y) / s_scaleY, -1.0f, 1.0f);
+        // Settled once the pointer is on the goal: stop steering.
+        if (std::hypot(st.goal.x - at.x, st.goal.y - at.y) < 2.0f) st.settleFrames = 0;
+        return r;
     }
-    return true;
+    // Keep something selected: if the pointer rests on no button, select the default.
+    const bool onButton = std::any_of(buttons.begin(), buttons.end(), [&](const Button& b) { return b.Contains(at); });
+    if (!onButton) { SnapTo(st, PickDefault(buttons, stageSelect), cursor); return r; }
+    return r;
 }
 } // namespace MenuNav
 
@@ -258,37 +486,33 @@ void ApplyCommon(uint32_t chan, WiiRemoteInput::KpadSample& sample, bool remoteS
     const float dt = s_lastMs[chan] ? std::min((now - s_lastMs[chan]) / 1000.0f, 0.1f) : 0.0f;
     s_lastMs[chan] = now;
     const auto dz = [](float v) { return std::fabs(v) < 0.2f ? 0.0f : v; };
+    // Menus: the D-pad and either stick navigate (the stronger stick wins); flicks step between
+    // buttons, and on ring menus the stick angle picks directly.
+    MenuNav::Point navStick{sample.stick[0], sample.stick[1]};
+    if (std::hypot(freeX, freeY) > std::hypot(navStick.x, navStick.y)) navStick = {freeX, freeY};
     uint32_t nav = navDpad;
-    if (sample.stick[1] > 0.6f) nav |= MenuNav::kNavUp;
-    if (sample.stick[1] < -0.6f) nav |= MenuNav::kNavDown;
-    if (sample.stick[0] < -0.6f) nav |= MenuNav::kNavLeft;
-    if (sample.stick[0] > 0.6f) nav |= MenuNav::kNavRight;
-    // In menus the left stick/D-pad navigate and the right stick is the free pointer; elsewhere the
-    // left stick moves the pointer as before.
-    const bool menu = MenuNav::Update(chan, nav, s_cursor[chan]);
-    float moveX = menu ? freeX : sample.stick[0], moveY = menu ? freeY : sample.stick[1];
+    if (navStick.y > 0.6f) nav |= MenuNav::kNavUp;
+    if (navStick.y < -0.6f) nav |= MenuNav::kNavDown;
+    if (navStick.x < -0.6f) nav |= MenuNav::kNavLeft;
+    if (navStick.x > 0.6f) nav |= MenuNav::kNavRight;
+    const MenuNav::Result navResult = MenuNav::Update(chan, nav, navStick, (sample.hold & kWB) != 0, s_cursor[chan]);
+    const bool menu = navResult.menu;
+    if (navResult.pressA) sample.hold |= kWA;
+    if (navResult.page > 0) sample.hold |= kWPlus;
+    if (navResult.page < 0) sample.hold |= kWMinus;
+    float moveX = sample.stick[0], moveY = sample.stick[1];
     if (menu) {
-        // Only the real D-pad reaches the game as D-pad here, not the right stick used for aiming.
+        // Only the real D-pad reaches the game as D-pad here, not the sticks used for navigating.
         sample.hold &= ~(kWUp | kWDown | kWLeft | kWRight);
         if (navDpad & MenuNav::kNavUp) sample.hold |= kWUp;
         if (navDpad & MenuNav::kNavDown) sample.hold |= kWDown;
         if (navDpad & MenuNav::kNavLeft) sample.hold |= kWLeft;
         if (navDpad & MenuNav::kNavRight) sample.hold |= kWRight;
-        // Radial deadzone, then gentle near the centre for fine aim and quick at full tilt.
-        const float mag = std::min(std::hypot(moveX, moveY), 1.0f);
-        if (mag < 0.2f) {
-            moveX = moveY = 0.0f;
-        } else {
-            MenuNav::CancelSettle(chan);
-            const float t = (mag - 0.2f) / 0.8f, speed = 0.3f + 1.9f * t * t;  // KPAD units per second
-            s_cursor[chan][0] = std::clamp(s_cursor[chan][0] + moveX / mag * speed * dt, -1.0f, 1.0f);
-            s_cursor[chan][1] = std::clamp(s_cursor[chan][1] - moveY / mag * speed * dt, -1.0f, 1.0f);
-            moveX = moveY = 0.0f;
-        }
+        moveX = moveY = 0.0f;  // the pointer belongs to navigation
     }
     s_cursor[chan][0] = std::clamp(s_cursor[chan][0] + dz(moveX) * 1.6f * dt, -1.0f, 1.0f);
     s_cursor[chan][1] = std::clamp(s_cursor[chan][1] - dz(moveY) * 1.6f * dt, -1.0f, 1.0f);
-    sample.hasPointer = true;
+    sample.hasPointer = !navResult.hidePointer;
     sample.pointer[0] = s_cursor[chan][0];
     sample.pointer[1] = s_cursor[chan][1];
 }
