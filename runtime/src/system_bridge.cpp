@@ -325,7 +325,7 @@ void SystemBridge::Initialize() {
     // AbiCallContext path implicitly selected and seeded it for every ctor.
     InitializePersistentCpuContext();
     CpuContext& cpu = GetPersistentCpuContext();
-    cpu.gpr[1] = 0x81700000u;
+    cpu.gpr[1] = 0x806F7BE8u; // MSC: _stack_addr from __init_registers (0x81700000 is inside MSC's MEM1 heap)
     CpuContextScope scope(&cpu);
 
     g_suppressSehReporting = true;
@@ -334,8 +334,8 @@ void SystemBridge::Initialize() {
     // These set up vtables and other critical infrastructure
     RT_LOG(RT_TAG_RUNTIME) << "Running static constructors for main DOL..." << std::endl;
 
-    const uint32_t dolCtorStart = 0x80244DE0;
-    const uint32_t dolCtorEnd = 0x80244EA0;
+    const uint32_t dolCtorStart = 0x804DB4E0;
+    const uint32_t dolCtorEnd = 0x804DBBC0;
 
     int dolCount = 0;
     for (uint32_t addr = dolCtorStart; addr < dolCtorEnd; addr += 4) {
@@ -352,7 +352,7 @@ void SystemBridge::Initialize() {
             MkwJmpBuf jumpBuf;
             g_sehJumpTarget = &jumpBuf;
             if (MKW_SETJMP(jumpBuf) == 0) {
-                cpu.gpr[1] = 0x81700000u;
+                cpu.gpr[1] = 0x806F7BE8u; // MSC: _stack_addr from __init_registers (0x81700000 is inside MSC's MEM1 heap)
                 InvokeIndirectCpu(funcAddr, &cpu);
                 dolCount++;
             } else {
@@ -392,7 +392,7 @@ void SystemBridge::Initialize() {
             MkwJmpBuf jumpBuf;
             g_sehJumpTarget = &jumpBuf;
             if (MKW_SETJMP(jumpBuf) == 0) {
-                cpu.gpr[1] = 0x81700000u;
+                cpu.gpr[1] = 0x806F7BE8u; // MSC: _stack_addr from __init_registers (0x81700000 is inside MSC's MEM1 heap)
                 InvokeIndirectCpu(funcAddr, &cpu);
                 count++;
             } else {
@@ -484,7 +484,7 @@ void SystemBridge::SeedLowMemDefaults(const Memory::Config& config) {
     };
 
     std::vector<SeedEntry> entries;
-    constexpr uint32_t kMem1ArenaLoDefault = 0x80399180u;
+    constexpr uint32_t kMem1ArenaLoDefault = 0x806F7BE8u;
     uint32_t mem1ArenaHiDefault = 0x817f0520u;
     constexpr uint32_t kBusClockHz =
         static_cast<uint32_t>(TimeBaseContract::kBusClockHz);
@@ -508,10 +508,10 @@ void SystemBridge::SeedLowMemDefaults(const Memory::Config& config) {
     // Retro Rewind reads the region byte directly from here while building its
     // Retro-WFC payload URL, and OSGetAppGamename reads the app code mirrors
     // at 0x80003180/0x80003194 while building NAS auth fields.
-    entries.push_back({0x80000000u, 0x524D4350u, "Disc game code"}); // RMCP
-    entries.push_back({0x80000004u, 0x30310100u, "Disc maker/id"});  // 01 + disc 1
-    entries.push_back({0x80003180u, 0x524D4350u, "OS app game code"}); // RMCP
-    entries.push_back({0x80003194u, 0x524D4350u, "OS app gamename"});  // RMCP
+    entries.push_back({0x80000000u, 0x52345145u, "Disc game code"}); // R4QE
+    entries.push_back({0x80000004u, 0x30310000u, "Disc maker/id"});  // MSC: matches R4QE01 boot.bin
+    entries.push_back({0x80003180u, 0x52345145u, "OS app game code"}); // R4QE
+    entries.push_back({0x80003194u, 0x52345145u, "OS app gamename"});  // RMCP
     if (RuntimeProduct::IsRetroRewind()) {
         entries.push_back({0x800017D8u, 0x00000001u, "Retro Rewind recomp runtime marker", true});
     }

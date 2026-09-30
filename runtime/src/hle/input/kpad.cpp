@@ -112,6 +112,15 @@ int32_t WriteStatus(uint32_t chan, uint32_t addr, const WiiRemoteInput::KpadSamp
     // the game treats as "pointing away from the screen".
     WriteZeroFloats(addr + kPos, (kAccVertical + 8 - kPos) / 4);
     Memory::Write8(addr + kDpdValidFg, 0);
+    if (sample->hasPointer) {
+        // MSC: emulated pointer. pos, horizon (level remote) and a nominal distance,
+        // reported as a two-dot IR reading.
+        Memory::WriteFloat32(addr + kPos, sample->pointer[0]);
+        Memory::WriteFloat32(addr + kPos + 4, sample->pointer[1]);
+        Memory::WriteFloat32(addr + 0x34, 1.0f); // horizon.x
+        Memory::WriteFloat32(addr + 0x48, 1.0f); // dist
+        Memory::Write8(addr + kDpdValidFg, 2);
+    }
 
     const uint8_t devType = sample->hasClassic ? kDevClassic : sample->hasNunchuk ? kDevFreestyle : kDevCore;
     const uint8_t dataFormat =
@@ -238,7 +247,7 @@ extern "C" int32_t KPAD__Read_HLE(uint32_t chan, uint32_t statusPtr, uint32_t co
         return 0;
     }
 }
-PPC_NATIVE_OVERRIDE(80197380, KPAD__Read_HLE, int32_t, (uint32_t chan, uint32_t statusPtr, uint32_t count),
+PPC_NATIVE_OVERRIDE(803AC34C, KPAD__Read_HLE, int32_t, (uint32_t chan, uint32_t statusPtr, uint32_t count),
          (chan, statusPtr, count));
 
 // KPADGetUnifiedWpadStatus: the raw WPAD status behind KPADStatus. The game
@@ -264,5 +273,57 @@ extern "C" int32_t KPAD__GetUnifiedWpadStatus_HLE(uint32_t chan, uint32_t status
     }
     return have ? 1 : 0;
 }
-PPC_NATIVE_OVERRIDE(8019812C, KPAD__GetUnifiedWpadStatus_HLE, int32_t,
-         (uint32_t chan, uint32_t statusPtr, uint32_t count), (chan, statusPtr, count));
+// MSC-UNMAPPED(KPAD::GetUnifiedWpadStatus) PPC_NATIVE_OVERRIDE(8019812C, KPAD__GetUnifiedWpadStatus_HLE, int32_t,
+// MSC-UNMAPPED(KPAD::GetUnifiedWpadStatus)          (uint32_t chan, uint32_t statusPtr, uint32_t count), (chan, statusPtr, count));
+
+// MSC: WPADRead. Strikers Charged reads the raw WPAD status first and only calls KPADRead
+// when it reports WPAD_ERR_OK; MKW never calls it. Writes WPADStatus (+ the WPADFSStatus
+// Nunchuk tail) from the same sample KPAD uses.
+extern "C" void MSC_WPADRead_803CD944(uint32_t chan, uint32_t statusPtr)
+{
+    if (chan >= g_channels.size() || statusPtr == 0) {
+        return;
+    }
+    WiiRemoteInput::KpadSample sample;
+    const bool have = ReadSample(chan, sample);
+    try {
+        for (uint32_t offset = 0; offset < 0x34; offset += 2) {
+            Memory::Write16(statusPtr + offset, 0);
+        }
+        if (!have) {
+            Memory::Write8(statusPtr + 0x29, static_cast<uint8_t>(kWpadErrNoController));
+            return;
+        }
+        Memory::Write16(statusPtr + 0x00, static_cast<uint16_t>(sample.hold & 0xFFFF));
+        Memory::Write16(statusPtr + 0x02, RawAcc(-sample.acc[0]));
+        Memory::Write16(statusPtr + 0x04, RawAcc(sample.acc[2]));
+        Memory::Write16(statusPtr + 0x06, RawAcc(-sample.acc[1]));
+        for (uint32_t i = 0; i < 4; ++i) {
+            const uint32_t obj = statusPtr + 0x08 + i * 8;
+            if (sample.hasPointer && i < 2) {
+                // Two sensor-bar dots 200 px apart; the camera sees them opposite to the aim.
+                const float cx = 512.0f - sample.pointer[0] * 384.0f;
+                const float cy = 384.0f - sample.pointer[1] * 288.0f;
+                Memory::Write16(obj + 0, static_cast<uint16_t>(std::clamp(cx + (i ? 100.0f : -100.0f), 0.0f, 1023.0f)));
+                Memory::Write16(obj + 2, static_cast<uint16_t>(std::clamp(cy, 0.0f, 767.0f)));
+                Memory::Write16(obj + 4, 4);
+                Memory::Write8(obj + 6, static_cast<uint8_t>(i));
+            } else {
+                Memory::Write16(obj + 0, 0x3FF);
+                Memory::Write16(obj + 2, 0x3FF);
+            }
+        }
+        Memory::Write8(statusPtr + 0x28, sample.hasNunchuk ? kDevFreestyle : kDevCore);
+        Memory::Write8(statusPtr + 0x29, static_cast<uint8_t>(kWpadErrNone));
+        if (sample.hasNunchuk) {
+            Memory::Write16(statusPtr + 0x2A, RawAcc(-sample.nunchukAcc[0]));
+            Memory::Write16(statusPtr + 0x2C, RawAcc(sample.nunchukAcc[2]));
+            Memory::Write16(statusPtr + 0x2E, RawAcc(-sample.nunchukAcc[1]));
+            Memory::Write8(statusPtr + 0x30, static_cast<uint8_t>(static_cast<int8_t>(std::clamp(sample.stick[0] * 100.0f, -128.0f, 127.0f))));
+            Memory::Write8(statusPtr + 0x31, static_cast<uint8_t>(static_cast<int8_t>(std::clamp(sample.stick[1] * 100.0f, -128.0f, 127.0f))));
+        }
+    } catch (const Memory::AccessViolation&) {
+    }
+}
+PPC_NATIVE_OVERRIDE_VOID(803CD944, MSC_WPADRead_803CD944, (uint32_t chan, uint32_t statusPtr), (chan, statusPtr));
+

@@ -14,8 +14,8 @@
 #include "generated/RuntimeConfig.h"
 #include "os_internal.h"
 
-extern "C" void func_801AADE0(CpuContext* ctx);
-extern "C" void func_801A0620(CpuContext* ctx);
+extern "C" void func_803BCCFC(CpuContext* ctx);
+extern "C" void func_803B3D5C(CpuContext* ctx);
 
 // ============================================================================
 // Alarm queue helpers
@@ -90,7 +90,7 @@ void RunDeferredReschedule(CpuContext* cpu)
     }
 
     cpu->gpr[3] = 0;
-    SelectThread_801a9c08(cpu);
+    SelectThread_803BBCB0(cpu);
 }
 
 void SanitizeAlarmQueue(CpuContext* cpu)
@@ -208,7 +208,7 @@ bool ProcessAlarmQueue(CpuContext* cpu, int maxToProcess)
                     cpu->gpr[5] = 0;
                     cpu->gpr[6] = 0;
                     cpu->gpr[7] = handler;
-                    func_801A0620(cpu);
+                    func_803B3D5C(cpu);
                 }
 
                 if (handler != 0) {
@@ -250,7 +250,7 @@ bool ProcessAlarmQueue(CpuContext* cpu, int maxToProcess)
 }
 } // namespace OsHleInternal
 
-extern "C" void OSSetAlarm_HLE_801a0870(CpuContext* ctx)
+extern "C" void OSSetAlarm_HLE_803B3FAC(CpuContext* ctx)
 {
     CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
     if (!cpu) {
@@ -278,7 +278,7 @@ extern "C" void OSSetAlarm_HLE_801a0870(CpuContext* ctx)
         return;
     }
 
-    const int32_t level = OS__DisableInterrupts_801a65ac();
+    const int32_t level = OS__DisableInterrupts_803B8F34();
     SanitizeAlarmQueue(cpu);
 
     uint64_t now = 0;
@@ -300,7 +300,7 @@ extern "C" void OSSetAlarm_HLE_801a0870(CpuContext* ctx)
         ::Memory::Write32(alarm + kAlarmNextOffset, 0);
         ::Memory::Write32(alarm + kAlarmPrevOffset, 0);
     } catch (const ::Memory::AccessViolation&) {
-        OS__RestoreInterrupts_801a65d4(level);
+        OS__RestoreInterrupts_803B8F5C(level);
         return;
     }
 
@@ -343,9 +343,9 @@ extern "C" void OSSetAlarm_HLE_801a0870(CpuContext* ctx)
     } catch (const ::Memory::AccessViolation&) {
     }
 
-    OS__RestoreInterrupts_801a65d4(level);
+    OS__RestoreInterrupts_803B8F5C(level);
 }
-PPC_NATIVE_OVERRIDE_VOID(801A0870, OSSetAlarm_HLE_801a0870, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(803B3FAC, OSSetAlarm_HLE_803B3FAC, (CpuContext* ctx), (ctx));
 
 extern "C" void OS_HLE_ProcessAlarms(int maxToProcess)
 {
@@ -399,7 +399,7 @@ extern "C" void OS_HLE_EndDeferredGuestCallbacks()
 
 // HLE implementation replacing the translated version. Keeps the original
 // field writes and InsertAlarm call but avoids the bad self-linked queue state.
-extern "C" void OS__SetPeriodicAlarm_801a08e0(CpuContext* ctx)
+extern "C" void OS__SetPeriodicAlarm_803B401C(CpuContext* ctx)
 {
     CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
     if (!cpu) {
@@ -415,14 +415,14 @@ extern "C" void OS__SetPeriodicAlarm_801a08e0(CpuContext* ctx)
     const uint32_t periodLo = cpu->gpr[8];
     const uint32_t handler = cpu->gpr[9];
 
-    const int32_t level = OS__DisableInterrupts_801a65ac();
+    const int32_t level = OS__DisableInterrupts_803B8F34();
 
     Memory::Write32(alarm + kAlarmPeriodLoOffset, periodLo);
     Memory::Write32(alarm + kAlarmPeriodHiOffset, periodHi);
 
     cpu->gpr[3] = startHi;
     cpu->gpr[4] = startLo;
-    func_801AADE0(cpu);
+    func_803BCCFC(cpu);
     Memory::Write32(alarm + 0x20u, cpu->gpr[3]);
     Memory::Write32(alarm + 0x24u, cpu->gpr[4]);
 
@@ -430,19 +430,19 @@ extern "C" void OS__SetPeriodicAlarm_801a08e0(CpuContext* ctx)
     cpu->gpr[5] = 0;
     cpu->gpr[6] = 0;
     cpu->gpr[7] = handler;
-    func_801A0620(cpu);
+    func_803B3D5C(cpu);
 
-    cpu->gpr[3] = static_cast<uint32_t>(OS__RestoreInterrupts_801a65d4(level));
+    cpu->gpr[3] = static_cast<uint32_t>(OS__RestoreInterrupts_803B8F5C(level));
 }
 
 // Register the function
-PPC_NATIVE_OVERRIDE_VOID(801A08E0, OS__SetPeriodicAlarm_801a08e0, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(803B401C, OS__SetPeriodicAlarm_803B401C, (CpuContext* ctx), (ctx));
 
 // RFLiIsWorking (RFL, the Mii library) lives here because its whole job is to
 // pump this file's alarm queue: RFLInitRes spins on it waiting for async RFL
 // work that only completes when the interrupt-driven alarmCheckCb_ fires.
-// Original at 0x800BD860 reads the "working" flag at RFL manager + 0x1B34,
-// returning 0 when the manager pointer (0x80386298) is null.
+// Original (MKW 0x800BD860, MSC 0x804D0110) reads the "working" flag at RFL manager + 0x1B34,
+// returning 0 when the manager pointer (0x806E3038) is null.
 extern "C" uint32_t RFLiIsWorking_HLE_800bd860()
 {
     // Alarm callbacks interrupt the caller; keep their register writes private.
@@ -459,7 +459,7 @@ extern "C" uint32_t RFLiIsWorking_HLE_800bd860()
     DecrementSchedulerDisableCount();
 
     // Now return the actual "working" status
-    constexpr uint32_t kRflManagerPtrAddr = 0x80386298u;
+    constexpr uint32_t kRflManagerPtrAddr = 0x806E3038u;
     constexpr uint32_t kWorkingFlagOffset = 0x1b34u;
 
     try {
@@ -473,4 +473,5 @@ extern "C" uint32_t RFLiIsWorking_HLE_800bd860()
         return 0;
     }
 }
-PPC_NATIVE_OVERRIDE(800BD860, RFLiIsWorking_HLE_800bd860, uint32_t, (), ());
+// MSC: RFLiIsWorking @ 0x804D0110 (sRFLManager 0x806E3038, working flag +0x1B34, same as MKW).
+PPC_NATIVE_OVERRIDE(804D0110, RFLiIsWorking_HLE_800bd860, uint32_t, (), ());

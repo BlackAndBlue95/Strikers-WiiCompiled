@@ -52,7 +52,7 @@ void WriteDisplayListData(uint32_t val, uint32_t sizeBytes) {
         const uint32_t end = dl.base + dl.size;
         if (nextPtr > end) {
             // The wrap flag is read straight out of guest memory by
-            // GX__EndDisplayList_80172eb4, so keep writing it through. Wrapping
+            // GX__EndDisplayList_803A7240, so keep writing it through. Wrapping
             // is a once-per-overflow event, not a per-write cost.
             Memory::Write8(kDlFifoAddr + kDlWrapFlagOffset, 1);
             nextPtr = dl.base + (nextPtr - end);

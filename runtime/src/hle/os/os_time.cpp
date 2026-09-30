@@ -55,25 +55,25 @@ extern "C" void OS__GetTime_HLE(CpuContext* ctx)
     ctx->gpr[4] = lo;
 }
 
-PPC_NATIVE_OVERRIDE_VOID(801AAD5C, OS__GetTime_HLE, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(803BCC78, OS__GetTime_HLE, (CpuContext* ctx), (ctx));
 
 
 // ----------------------------------------------------------------------------
 // OSGetSystemTime HLE - map system time structure to a 64-bit return
-extern "C" uint32_t OS____GetSystemTime_801aad7c(uint32_t /*r3_hi*/, uint32_t /*r4_lo*/, uint32_t /*r5*/, int32_t /*r6*/, uint32_t /*r7*/, uint32_t /*r8*/) {
+extern "C" uint32_t OS____GetSystemTime_803BCC98(uint32_t /*r3_hi*/, uint32_t /*r4_lo*/, uint32_t /*r5*/, int32_t /*r6*/, uint32_t /*r7*/, uint32_t /*r8*/) {
     // Save/disable interrupts (mirrors the original implementation).
-    int saved_level = OS__DisableInterrupts_801a65ac();
+    int saved_level = OS__DisableInterrupts_803B8F34();
 
     uint64_t now = 0;
     try {
         now = ReadSystemTime();
     } catch (const ::Memory::AccessViolation& e) {
-        LogMemoryError(RT_TAG_OS, "OS____GetSystemTime_801aad7c", e);
+        LogMemoryError(RT_TAG_OS, "OS____GetSystemTime_803BCC98", e);
         now = (static_cast<uint64_t>(PPC_Mftbu()) << 32) | PPC_Mftb();
     }
     const uint32_t hi = static_cast<uint32_t>(now >> 32);
     const uint32_t lo = static_cast<uint32_t>(now & 0xFFFFFFFFu);
-    OS__RestoreInterrupts_801a65d4(saved_level);
+    OS__RestoreInterrupts_803B8F5C(saved_level);
 
     if (CpuContext* ctx = CurrentCpuContext()) {
         ctx->gpr[3] = hi;
@@ -82,4 +82,4 @@ extern "C" uint32_t OS____GetSystemTime_801aad7c(uint32_t /*r3_hi*/, uint32_t /*
     return hi;
 }
 
-PPC_NATIVE_OVERRIDE(801AAD7C, OS____GetSystemTime_801aad7c, uint32_t, (uint32_t r3_low, uint32_t r4_high, uint32_t r5_unused, int32_t r6_unused, uint32_t r7_unused, uint32_t r8_unused), (r3_low, r4_high, r5_unused, r6_unused, r7_unused, r8_unused));
+PPC_NATIVE_OVERRIDE(803BCC98, OS____GetSystemTime_803BCC98, uint32_t, (uint32_t r3_low, uint32_t r4_high, uint32_t r5_unused, int32_t r6_unused, uint32_t r7_unused, uint32_t r8_unused), (r3_low, r4_high, r5_unused, r6_unused, r7_unused, r8_unused));

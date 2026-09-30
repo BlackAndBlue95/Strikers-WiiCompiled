@@ -191,7 +191,7 @@ static const char* GetGuestString(uint32_t guestAddr)
 
 // Keep the full CPU context: variadic integer arguments use r4-r10/stack while
 // variadic floating-point arguments use f1-f8.
-extern "C" void OS__Report_801a25d0(CpuContext* ctx)
+extern "C" void OS__Report_803B5BE4(CpuContext* ctx)
 {
     // Clear the thread-local cache of host-side string copies so that each
     // call of OS__Report has fresh buffers and returned const char* values
@@ -202,4 +202,4 @@ extern "C" void OS__Report_801a25d0(CpuContext* ctx)
     HLE_LogOSReport(ctx, fmt_str);
 }
 
-PPC_NATIVE_OVERRIDE_VOID(801A25D0, OS__Report_801a25d0, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(803B5BE4, OS__Report_803B5BE4, (CpuContext* ctx), (ctx));

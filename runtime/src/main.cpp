@@ -852,7 +852,7 @@ const TranslatedFunctionInfo* ResolveEntry() {
 }
 
 void SeedCpuContext(CpuContext& cpu) {
-    cpu.gpr[1] = 0x81700000u;
+    cpu.gpr[1] = 0x806F7BE8u; // MSC: _stack_addr from __init_registers (0x81700000 is inside MSC's MEM1 heap)
 }
 
 void DumpAccessViolationReport(const Memory::AccessViolation& ex,
@@ -868,7 +868,7 @@ void DumpAccessViolationReport(const Memory::AccessViolation& ex,
               << " (+0x" << length << ")" << std::dec << std::setfill(' ') << std::endl;
     RT_LOG(RT_TAG_RUNTIME) << "Entry  : " << (entryLabel.empty() ? "(unknown)" : std::string(entryLabel)) << std::endl;
     RT_LOG(RT_TAG_RUNTIME) << "Mode   : strict (trap on unmapped)" << std::endl;
-    RT_LOG(RT_TAG_RUNTIME) << "r1 seed: 0x81700000" << std::endl;
+    RT_LOG(RT_TAG_RUNTIME) << "r1 seed: 0x806F7BE8" << std::endl;
     if (cpu) {
         RT_LOG(RT_TAG_RUNTIME) << "CurrentCpuContext: " << cpu << "  r1=0x"
                   << std::hex << std::uppercase << cpu->gpr[1] << std::dec << std::nouppercase << std::endl;

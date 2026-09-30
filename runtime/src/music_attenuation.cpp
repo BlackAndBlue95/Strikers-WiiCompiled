@@ -80,6 +80,7 @@ bool ReadGuestFloat(uint32_t address, float& value) noexcept {
 }
 
 uint32_t ResolveSoundPlayerArray() noexcept {
+    return 0; // MSC: MKW-specific, disabled
     uint32_t soundManager = 0;
     uint32_t archivePlayer = 0;
     uint32_t soundPlayers = 0;

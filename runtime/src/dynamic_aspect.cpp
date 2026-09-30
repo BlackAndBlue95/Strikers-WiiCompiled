@@ -163,6 +163,7 @@ void ApplyEggScreenRecords(uint32_t surfaceWidth, uint32_t surfaceHeight) {
 
 
 void AssertMkwOffscreenScreenBypass() {
+    return; // MSC: MKW-specific, disabled
     static int lastSweptFrame = -1;
     if (lastSweptFrame == g_gxFrameCount) {
         return;
@@ -172,6 +173,7 @@ void AssertMkwOffscreenScreenBypass() {
 }
 
 void UpdateMkwDynamicAspectSurface(uint32_t surfaceWidth, uint32_t surfaceHeight) {
+    return; // MSC: MKW-specific, disabled
     const bool requestedForceAspect169 = g_requestedForceAspect169.load(std::memory_order_acquire);
     if (g_forceAspect169 != requestedForceAspect169) {
         g_forceAspect169 = requestedForceAspect169;
@@ -209,6 +211,7 @@ bool MkwForceAspect169Requested() {
 }
 
 void ConfigureMkwDynamicAspect(bool widescreen, bool forceAspect169, uint32_t surfaceWidth, uint32_t surfaceHeight) {
+    return; // MSC: MKW-specific, disabled
     g_widescreenSetting = widescreen;
     g_widescreenConfigured = widescreen || forceAspect169;
     g_forceAspect169 = forceAspect169;

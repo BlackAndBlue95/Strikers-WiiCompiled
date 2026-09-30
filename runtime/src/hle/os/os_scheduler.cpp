@@ -90,8 +90,8 @@ void PromoteThreadPriority(uint32_t threadPtr, int32_t priority)
 }
 } // namespace
 
-extern "C" void OSWakeupThread_HLE_801aaaa4(CpuContext* ctx);
-extern "C" void OSSleepThread_HLE_801aa9b8(CpuContext* ctx);
+extern "C" void OSWakeupThread_HLE_803BCAAC(CpuContext* ctx);
+extern "C" void OSSleepThread_HLE_803BC9C0(CpuContext* ctx);
 
 static void TryInvokeSwitchCallback(uint32_t oldCtx, uint32_t newCtx, CpuContext* cpu)
 {
@@ -118,16 +118,16 @@ static void TryInvokeSwitchCallback(uint32_t oldCtx, uint32_t newCtx, CpuContext
 }
 
 // Forward declare for SelectThread to use
-extern "C" void OS__SetCurrentContext_801a1e70(uint32_t contextAddr);
-extern "C" void func_801A1ED8(CpuContext* ctx);
+extern "C" void OS__SetCurrentContext_803B55B0(uint32_t contextAddr);
+extern "C" void func_803B5618(CpuContext* ctx);
 
 // ============================================================================
 // SelectThread HLE - Thread Scheduler (Fiber-Aware)
-// Address: 0x801A9C08. Picks the next runnable thread; switches via Windows
+// Address: 0x803BBCB0. Picks the next runnable thread; switches via Windows
 // Fibers instead of blocking InvokeIndirectJump.
 // ============================================================================
 
-extern "C" void SelectThread_801a9c08(CpuContext* ctx)
+extern "C" void SelectThread_803BBCB0(CpuContext* ctx)
 {
     CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
     const uint32_t forceSwitch = cpu->gpr[3];
@@ -200,7 +200,7 @@ extern "C" void SelectThread_801a9c08(CpuContext* ctx)
             const uint16_t modeFlags = ::Memory::Read16(runningContext + 0x1A2u);
             if ((modeFlags & 0x0002u) == 0) {
                 cpu->gpr[3] = runningContext;
-                func_801A1ED8(cpu);
+                func_803B5618(cpu);
                 if (cpu->gpr[3] != 0) {
                     cpu->gpr[3] = 0;
                     return;
@@ -220,11 +220,11 @@ extern "C" void SelectThread_801a9c08(CpuContext* ctx)
         ::Memory::Write32(kOSRunningContextAddr, 0);
         
         // Set current context to idle thread context
-        OS__SetCurrentContext_801a1e70(kIdleThreadContextAddr);
+        OS__SetCurrentContext_803B55B0(kIdleThreadContextAddr);
         
         while (true) {
             // Enable interrupts and idle until something becomes runnable.
-            OS__EnableInterrupts_801a65c0();
+            OS__EnableInterrupts_803B8F48();
 
             while (::Memory::Read32(kSchedulerPendingFlagAddr) == 0) {
                 ProcessSleepTimers(cpu);
@@ -247,14 +247,14 @@ extern "C" void SelectThread_801a9c08(CpuContext* ctx)
                 VI_HLE_WaitForNextRetracePoll();
             }
 
-            OS__DisableInterrupts_801a65ac();
+            OS__DisableInterrupts_803B8F34();
             reschedPending = ::Memory::Read32(kSchedulerPendingFlagAddr);
             if (reschedPending != 0) {
                 break;
             }
         }
 
-        OS__ClearContext_801a2098(kIdleThreadContextAddr);
+        OS__ClearContext_803B57D8(kIdleThreadContextAddr);
     }
 
     // Clear reschedule counter
@@ -330,7 +330,7 @@ extern "C" void SelectThread_801a9c08(CpuContext* ctx)
     ::Memory::Write32(kOSRunningContextAddr, nextThread);
     
     // Set as current context
-    OS__SetCurrentContext_801a1e70(nextThread);
+    OS__SetCurrentContext_803B55B0(nextThread);
 
     // Use fiber-based context switch if available
     if (Fiber::GuestFiberManager::IsInitialized()) {
@@ -352,7 +352,7 @@ extern "C" void SelectThread_801a9c08(CpuContext* ctx)
             // No fiber for target thread - this can happen if the thread was created
             // by translated code that didn't go through our HLE. Just continue.
             cpu->gpr[3] = nextThread;
-            OS__LoadContext_801a1f58(cpu);
+            OS__LoadContext_803B5698(cpu);
             return;
         }
         
@@ -371,14 +371,14 @@ extern "C" void SelectThread_801a9c08(CpuContext* ctx)
     
     // Fallback to blocking InvokeIndirectJump (original behavior)
     cpu->gpr[3] = nextThread;
-    OS__LoadContext_801a1f58(cpu);
+    OS__LoadContext_803B5698(cpu);
 }
 
-PPC_NATIVE_OVERRIDE_VOID(801A9C08, SelectThread_801a9c08, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(803BBCB0, SelectThread_803BBCB0, (CpuContext* ctx), (ctx));
 
 // ============================================================================
 // OSWakeupThread HLE - drain a thread queue and mark threads runnable
-// Address: 0x801AAAA4
+// Address: 0x803BCAAC
 // ============================================================================
 static void WakeupThreadQueue(CpuContext* ctx, bool allowImmediateReschedule)
 {
@@ -388,7 +388,7 @@ static void WakeupThreadQueue(CpuContext* ctx, bool allowImmediateReschedule)
         return;
     }
 
-    const int32_t irqState = OS__DisableInterrupts_801a65ac();
+    const int32_t irqState = OS__DisableInterrupts_803B8F34();
     bool resched = false;
     constexpr int kMaxWake = 256;
     int woke = 0;
@@ -441,13 +441,13 @@ static void WakeupThreadQueue(CpuContext* ctx, bool allowImmediateReschedule)
 
     if (allowImmediateReschedule && resched && !VI_HLE_IsAdvancingRetrace()) {
         cpu->gpr[3] = 0;
-        SelectThread_801a9c08(cpu);
+        SelectThread_803BBCB0(cpu);
     }
 
-    OS__RestoreInterrupts_801a65d4(irqState);
+    OS__RestoreInterrupts_803B8F5C(irqState);
 }
 
-extern "C" void OSWakeupThread_HLE_801aaaa4(CpuContext* ctx)
+extern "C" void OSWakeupThread_HLE_803BCAAC(CpuContext* ctx)
 {
     WakeupThreadQueue(ctx, true);
 }
@@ -461,11 +461,11 @@ void OS_HLE_WakeupThreadNoReschedule(CpuContext* ctx, uint32_t waitQueue)
     cpu->gpr[3] = savedR3;
 }
 
-PPC_NATIVE_OVERRIDE_VOID(801AAAA4, OSWakeupThread_HLE_801aaaa4, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(803BCAAC, OSWakeupThread_HLE_803BCAAC, (CpuContext* ctx), (ctx));
 
-extern "C" void OSSleepThread_HLE_801aa9b8(CpuContext* ctx);
+extern "C" void OSSleepThread_HLE_803BC9C0(CpuContext* ctx);
 
-extern "C" void OSLockMutex_HLE_801a7ee4(CpuContext* ctx)
+extern "C" void OSLockMutex_HLE_803BA120(CpuContext* ctx)
 {
     CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
     const uint32_t mutexPtr = cpu->gpr[3];
@@ -473,12 +473,12 @@ extern "C" void OSLockMutex_HLE_801a7ee4(CpuContext* ctx)
         return;
     }
 
-    const int32_t irqState = OS__DisableInterrupts_801a65ac();
+    const int32_t irqState = OS__DisableInterrupts_803B8F34();
 
     try {
         const uint32_t currentThread = ::Memory::Read32(kOSRunningContextAddr);
         if (currentThread == 0) {
-            OS__RestoreInterrupts_801a65d4(irqState);
+            OS__RestoreInterrupts_803B8F5C(irqState);
             return;
         }
 
@@ -504,18 +504,18 @@ extern "C" void OSLockMutex_HLE_801a7ee4(CpuContext* ctx)
             PromoteThreadPriority(ownerThread, priority);
 
             cpu->gpr[3] = mutexPtr;
-            OSSleepThread_HLE_801aa9b8(cpu);
+            OSSleepThread_HLE_803BC9C0(cpu);
             ::Memory::Write32(currentThread + kThreadMutexOffset, 0);
         }
     } catch (const ::Memory::AccessViolation& e) {
         LogMemoryError(RT_TAG_OS, "OSLockMutex", e);
     }
 
-    OS__RestoreInterrupts_801a65d4(irqState);
+    OS__RestoreInterrupts_803B8F5C(irqState);
 }
-PPC_NATIVE_OVERRIDE_VOID(801A7EE4, OSLockMutex_HLE_801a7ee4, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(803BA120, OSLockMutex_HLE_803BA120, (CpuContext* ctx), (ctx));
 
-extern "C" void OSUnlockMutex_HLE_801a7fc0(CpuContext* ctx)
+extern "C" void OSUnlockMutex_HLE_803BA1FC(CpuContext* ctx)
 {
     CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
     const uint32_t mutexPtr = cpu->gpr[3];
@@ -523,12 +523,12 @@ extern "C" void OSUnlockMutex_HLE_801a7fc0(CpuContext* ctx)
         return;
     }
 
-    const int32_t irqState = OS__DisableInterrupts_801a65ac();
+    const int32_t irqState = OS__DisableInterrupts_803B8F34();
 
     try {
         const uint32_t currentThread = ::Memory::Read32(kOSRunningContextAddr);
         if (currentThread == 0) {
-            OS__RestoreInterrupts_801a65d4(irqState);
+            OS__RestoreInterrupts_803B8F5C(irqState);
             return;
         }
 
@@ -550,14 +550,14 @@ extern "C" void OSUnlockMutex_HLE_801a7fc0(CpuContext* ctx)
                 }
 
                 cpu->gpr[3] = mutexPtr;
-                OSWakeupThread_HLE_801aaaa4(cpu);
+                OSWakeupThread_HLE_803BCAAC(cpu);
             }
         }
     } catch (const ::Memory::AccessViolation& e) {
         LogMemoryError(RT_TAG_OS, "OSUnlockMutex", e);
     }
 
-    OS__RestoreInterrupts_801a65d4(irqState);
+    OS__RestoreInterrupts_803B8F5C(irqState);
 }
-PPC_NATIVE_OVERRIDE_VOID(801A7FC0, OSUnlockMutex_HLE_801a7fc0, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(803BA1FC, OSUnlockMutex_HLE_803BA1FC, (CpuContext* ctx), (ctx));
 

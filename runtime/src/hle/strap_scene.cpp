@@ -14,4 +14,4 @@ extern "C" uint32_t StrapScene__CheckInput_Skip(uint32_t scenePtr)
     settings_overlay::NotifyStrapInputAccepted();
     return 1;
 }
-PPC_NATIVE_OVERRIDE(800077C8, StrapScene__CheckInput_Skip, uint32_t, (uint32_t scenePtr), (scenePtr));
+// MSC-UNMAPPED(StrapScene::CheckInput) PPC_NATIVE_OVERRIDE(800077C8, StrapScene__CheckInput_Skip, uint32_t, (uint32_t scenePtr), (scenePtr));

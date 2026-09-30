@@ -52,6 +52,8 @@ struct KpadSample {
     int16_t clRStickRaw[2] = {};
     uint8_t clTriggerL = 0;      // 0..255; SDL only exposes the digital click
     uint8_t clTriggerR = 0;
+    bool hasPointer = false;     // MSC: emulated IR pointer
+    float pointer[2] = {};       // KPAD pos, -1..1, +y down
 };
 
 // What the game should see on `chan`: the controller SDL has there right now,
@@ -110,3 +112,10 @@ bool PeriodicRescanEnabled();
 uint32_t ScanCount();
 
 } // namespace WiiRemoteInput
+
+// MSC: Wii Remote + Nunchuk emulated from a port's bound GameCube-pad input (hle/input/pad.cpp).
+namespace MscEmulatedRemote {
+bool Present(uint32_t chan);
+bool Read(uint32_t chan, WiiRemoteInput::KpadSample& sample);
+void RecenterPointer(uint32_t chan);
+}

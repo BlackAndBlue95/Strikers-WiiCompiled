@@ -11,9 +11,9 @@
 
 // Hardware boundary used by the translated MetroWerks stdio implementation.
 // The original routine forwards completed FILE-buffer writes to UART/EXI or TRK.
-// Keep __FileWrite (0x80011620), __fwrite, and fwide translated so their buffering,
+// Keep __FileWrite (0x803833B4), __fwrite, and fwide translated so their buffering,
 // orientation, short-write, and return-value semantics remain guest-owned.
-extern "C" uint32_t ConsoleWrite_HLE_80015500(
+extern "C" uint32_t ConsoleWrite_HLE_80389730(
     uint32_t handle, uint32_t bufferAddr, uint32_t lengthPtr, uint32_t refCon)
 {
     (void)handle;
@@ -45,7 +45,7 @@ extern "C" uint32_t ConsoleWrite_HLE_80015500(
     }
 }
 
-PPC_NATIVE_OVERRIDE(80015500, ConsoleWrite_HLE_80015500, uint32_t,
+PPC_NATIVE_OVERRIDE(80389730, ConsoleWrite_HLE_80389730, uint32_t,
          (uint32_t handle, uint32_t bufferAddr, uint32_t lengthPtr, uint32_t refCon),
          (handle, bufferAddr, lengthPtr, refCon));
 
@@ -265,7 +265,7 @@ std::string RuntimeHle::FormatGuestPrintf(const std::string& fmt,
     return out.str();
 }
 
-// 0x801D09CC is WUD_DEBUGPrint in the PAL executable. Its retail body only
+// 0x803D6F64 is WUD_DEBUGPrint in the PAL executable. Its retail body only
 // performs the compiler-generated variadic prologue and returns; it does not
 // format or emit text. Keep it on the ordinary translated path so its guest
 // memory effects remain exact without inventing expensive host-side logging.

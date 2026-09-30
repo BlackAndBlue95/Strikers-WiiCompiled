@@ -480,7 +480,7 @@ void HleFifoWrite(u32 val, uint32_t sizeBytes) {
             const uint32_t listSize = ReadBE32(data + 5);
             if (!consumeBytes(9, sink)) break;
             if (listAddr != 0 && listSize > 0) {
-                GX__CallDisplayList_80172f64(listAddr, listSize);
+                GX__CallDisplayList_803A72EC(listAddr, listSize);
             }
             continue;
         }

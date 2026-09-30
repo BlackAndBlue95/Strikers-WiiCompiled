@@ -548,6 +548,26 @@ GXTexObj* GetHostTexObj(uint32_t addr) {
                 addr, cpu ? cpu->pc : 0u, cpu ? cpu->lr : 0u, cpu ? cpu->ctr : 0u);
         std::fflush(stderr);
         GXTexObj* obj = CreateHostTexObj(addr);
+        // MSC: objects that were memcpy'd from an initialized GXTexObj (glx_BindTexture) never
+        // pass through GXInitTexObj; build the host object from the guest words so a later
+        // GXLoadTexObj doesn't bind an empty (1x1) texture.
+        const TexObjMeta extracted = ExtractTexObjMetaFromGuest(addr);
+        if (extracted.width > 0 && extracted.height > 0 && extracted.dataAddr != 0) {
+            if (void* dp = GuestToHostPtr(extracted.dataAddr)) {
+                if (IsPaletteTexFormat(extracted.format)) {
+                    GXInitTexObjCI(obj, dp, extracted.width, extracted.height, (GXCITexFmt)extracted.format,
+                                   (GXTexWrapMode)extracted.wrapS, (GXTexWrapMode)extracted.wrapT,
+                                   extracted.mipmap ? GX_TRUE : GX_FALSE, extracted.tlut);
+                } else {
+                    GXInitTexObj(obj, dp, extracted.width, extracted.height, (GXTexFmt)extracted.format,
+                                 (GXTexWrapMode)extracted.wrapS, (GXTexWrapMode)extracted.wrapT,
+                                 extracted.mipmap ? GX_TRUE : GX_FALSE);
+                }
+                TexObjMeta& meta = GetTexObjMeta(addr);
+                meta = extracted;
+                meta.needsUpload = true;
+            }
+        }
         MarkHostTexObjConstructed(addr);
         return obj;
     }

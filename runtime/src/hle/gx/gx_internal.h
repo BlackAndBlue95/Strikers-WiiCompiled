@@ -54,24 +54,24 @@ bool is_offscreen() noexcept;
 }
 
 // --- Constants ---
-constexpr uint32_t kGXDataPtrAddr = 0x803886C8;
-constexpr uint32_t kDlFifoAddr = 0x80344090;
-constexpr uint32_t kDlWritePtrAddr = 0x803440A4;
-constexpr uint32_t kDlCountAddr = 0x803440AC;
+constexpr uint32_t kGXDataPtrAddr = 0x806E7378;
+constexpr uint32_t kDlFifoAddr = 0x805BE248;
+constexpr uint32_t kDlWritePtrAddr = 0x805BE25C;
+constexpr uint32_t kDlCountAddr = 0x805BE264;
 constexpr uint32_t kDlWrapFlagOffset = 0x20;
 constexpr uint32_t kMaxTluts = 20;
-constexpr uint32_t kGxDrawDoneFlagAddr = 0x803867d8;
+constexpr uint32_t kGxDrawDoneFlagAddr = 0x806E27F8;
 
 // --- External Declarations ---
 extern "C" void GXInitTexObjTlut(GXTexObj* obj, u32 tlut);
-extern "C" int32_t OS__DisableInterrupts_801a65ac();
-extern "C" int32_t OS__RestoreInterrupts_801a65d4(int32_t level);
-extern "C" uint32_t __OSSetInterruptHandler_801a65f8_hle(uint32_t interrupt, uint32_t handler);
-extern "C" uint32_t __OSUnmaskInterrupts_801a69bc_hle(uint32_t mask);
-extern "C" uint32_t OS__GetCurrentThread_801a98b0_hle();
-extern "C" void GX__SetCPUFifo_8016c94c(uint32_t fifoAddr);
-extern "C" void GX__SetDirtyState_8016ee78();
-extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes);
+extern "C" int32_t OS__DisableInterrupts_803B8F34();
+extern "C" int32_t OS__RestoreInterrupts_803B8F5C(int32_t level);
+extern "C" uint32_t __OSSetInterruptHandler_803B8F80_hle(uint32_t interrupt, uint32_t handler);
+extern "C" uint32_t __OSUnmaskInterrupts_803B9344_hle(uint32_t mask);
+extern "C" uint32_t OS__GetCurrentThread_803BB958_hle();
+extern "C" void GX__SetCPUFifo_803A1E14(uint32_t fifoAddr);
+extern "C" void GX__SetDirtyState_803A3AE8();
+extern "C" void GX__CallDisplayList_803A72EC(uint32_t listAddr, uint32_t nbytes);
 
 extern std::atomic_bool g_auroraFrameActive;
 extern std::atomic_bool g_auroraFrameHadWork;
@@ -291,7 +291,7 @@ extern GxDisplayListState g_dlRecordState;
 
 inline bool IsDisplayListActive() noexcept { return g_dlRecordState.active; }
 
-// Mirrors GX__BeginDisplayList_80172e00's guest-side initialization.
+// Mirrors GX__BeginDisplayList_803A7190's guest-side initialization.
 void BeginDisplayListRecording(uint32_t listAddr, uint32_t sizeBytes);
 // Flushes the shadow cursor/count back into guest memory and stops recording.
 void EndDisplayListRecording();

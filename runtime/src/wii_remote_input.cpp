@@ -581,7 +581,7 @@ Kind EffectiveKind(uint32_t chan) {
 
 // True when the game reads the port through KPAD (live or bridging a swap).
 bool IsRemoteChannel(uint32_t chan) {
-    return IsKpadKind(EffectiveKind(chan));
+    return IsKpadKind(EffectiveKind(chan)) || MscEmulatedRemote::Present(chan);
 }
 
 // Marks KPAD-served ports as "no controller" in the GameCube pad statuses.
@@ -623,7 +623,7 @@ bool ReadKpadSample(uint32_t chan, KpadSample& sample) {
     if (!IsKpadKind(kind)) {
         const Kind remembered = EffectiveKind(chan);
         if (!IsKpadKind(remembered)) {
-            return false;
+            return MscEmulatedRemote::Read(chan, sample);
         }
         FillGraceSample(chan, remembered, sample);
         return true;

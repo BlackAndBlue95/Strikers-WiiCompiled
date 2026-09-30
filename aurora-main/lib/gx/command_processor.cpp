@@ -299,7 +299,36 @@ static inline void mark_pipeline_state_dirty() noexcept {
     }                                                                                                                  \
   } while (0)
 
+static bool copy_xf_data(u32 addr, const u8* data, u32 len, bool bigEndian);
+
+// Word-granular write into XF matrix memory, for loads that start mid-matrix or span
+// several matrices (the full-matrix fast paths below reject those).
+static bool copy_xf_matrix_words(u32 addr, const u8* data, u32 len, bool bigEndian) {
+  for (u32 i = 0; i < len; ++i) {
+    const u32 a = addr + i;
+    const f32 v = read_f32(data + i * 4, bigEndian);
+    if (a < 0x78) {
+      reinterpret_cast<f32*>(&g_gxState.pnMtx[a / 12].pos)[a % 12] = v;
+    } else if (a < 0x0F0) {
+      const u32 t = a - 0x78;
+      if (t / 12 < MaxTexMtx) reinterpret_cast<f32*>(&g_gxState.texMtxs[t / 12])[t % 12] = v;
+    } else if (a >= 0x400 && a < 0x45A) {
+      const u32 n = a - 0x400;
+      if (n / 9 < MaxPnMtx) reinterpret_cast<f32*>(&g_gxState.pnMtx[n / 9].nrm)[(n % 9) / 3 * 4 + (n % 3)] = v;
+    }
+  }
+  g_gxState.stateDirty = true;
+  return true;
+}
+
 static bool copy_xf_data(u32 addr, const u8* data, u32 len, bool bigEndian) {
+  if (addr < 0x0F0 && (addr % 12 != 0 || (addr < 0x78 ? len != 12 : (len != 8 && len != 12)) ||
+                       (addr < 0x78 && addr + len > 0x78))) {
+    return copy_xf_matrix_words(addr, data, len, bigEndian);
+  }
+  if (addr >= 0x400 && addr < 0x45A && ((addr - 0x400) % 9 != 0 || len != 9)) {
+    return copy_xf_matrix_words(addr, data, len, bigEndian);
+  }
   if (addr < 0x78) {
     // Position matrices (0x0000 - 0x0077)
     u32 mtxIdx = addr / 12;

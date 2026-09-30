@@ -1,0 +1,40 @@
+schema_version: 1
+workspace_root: ../..
+
+project:
+  id: mscharged-r4qe01
+  display_name: Mario Strikers Charged USA Rev 1
+  game_id: R4QE01
+  region: E
+  base_manifest_format: mkwii-recomp-base-manifest
+  base_manifest_stem: msc_base
+
+memory:
+  base: 0x80000000
+  size: 0x01A00000
+  sda_base: 0x806E33C0   # from __init_registers @ 0x80006290
+  sda2_base: 0x806EB060
+
+inputs:
+  dol:
+    path: Assets/main.dol
+    sha256: 8f811628ee6646c60620a9c599ef08ed929d2eccc98a779c211847f1500f81fd
+
+translation:
+  entry_points:
+    - 0x80006124   # __start
+  function_map:
+    path: projects/mscharged/MAP.txt   # generated from mscharged-decomp symbols.txt
+  allow_unsupported_instructions: true
+
+runtime:
+  native_registration_root: runtime/src   # re-keyed by scripts/msc/remap_runtime.py
+  native_abi_directories:
+    - runtime/src/hle/gx
+
+output:
+  root: generated
+  functions: functions
+  runtime_config: RuntimeConfig.h
+  data_initializer: data_sections_init.cpp
+  base_manifest: ../build/base/msc_base_manifest.json

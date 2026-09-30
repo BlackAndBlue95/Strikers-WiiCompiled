@@ -1,0 +1,67 @@
+// Mario Strikers Charged (R4QE01) game-specific HLE.
+#include <cstdint>
+#include <cstdio>
+#include "abi_bridge.h"
+#include "hle_stubs.h"
+#include "ppc_runtime.h"
+
+extern "C" void OS__Report_803B5BE4(CpuContext* ctx);
+
+// nlPrintf(const char*, ...) is compiled to a no-op sink in retail; route it to
+// OSReport so engine diagnostics (allocator panics, asserts) reach the log.
+extern "C" void MSC_nlPrintf_80009B34(CpuContext* ctx)
+{
+    OS__Report_803B5BE4(ctx);
+}
+
+PPC_NATIVE_OVERRIDE_VOID(80009B34, MSC_nlPrintf_80009B34, (CpuContext* ctx), (ctx));
+
+#include "wii_remote_input.h"
+
+// WPADSetConnectCallback(chan, cb) -> previous cb. Strikers Charged's PlatPadManager only polls
+// a channel after its connect callback reports WPAD_ERR_OK, and MKW never registers one, so the
+// runtime had no implementation. Store it and report a controller that is already present, as
+// the SDK does for a remote paired before the game starts.
+extern "C" void MSC_WPADSetConnectCallback_803CD0DC(CpuContext* ctx)
+{
+    static uint32_t s_connectCallbacks[4]{};
+    const uint32_t chan = ctx->gpr[3];
+    const uint32_t cb = ctx->gpr[4];
+    if (chan >= 4) {
+        ctx->gpr[3] = 0;
+        return;
+    }
+    const uint32_t previous = s_connectCallbacks[chan];
+    s_connectCallbacks[chan] = cb;
+    if (cb != 0 && WiiRemoteInput::IsRemoteChannel(chan)) {
+        const uint32_t savedLr = ctx->lr;
+        ctx->gpr[3] = chan;
+        ctx->gpr[4] = 0; // WPAD_ERR_OK
+        InvokeIndirectCpu(cb, ctx);
+        ctx->lr = savedLr;
+    }
+    ctx->gpr[3] = previous;
+}
+
+PPC_NATIVE_OVERRIDE_VOID(803CD0DC, MSC_WPADSetConnectCallback_803CD0DC, (CpuContext* ctx), (ctx));
+
+// OSYieldThread: on hardware the AI DMA interrupt keeps firing while a thread yield-spins
+// (e.g. DestroyFEState waiting for audio to go idle). Here audio only pumps when the
+// scheduler idles, and a yield-spinning main thread never lets it idle, so voices never stop.
+// Service the pending audio interrupt first, then do the SDK's disable/SelectThread(TRUE)/restore.
+extern "C" int32_t OS__DisableInterrupts_803B8F34();
+extern "C" int32_t OS__RestoreInterrupts_803B8F5C(int32_t level);
+extern "C" void SelectThread_803BBCB0(CpuContext* ctx);
+
+extern "C" void MSC_OSYieldThread_803BBEF0(CpuContext* ctx)
+{
+    Audio_HLE_PollDeferred();
+    const int32_t level = OS__DisableInterrupts_803B8F34();
+    const uint32_t lr = ctx->lr;
+    ctx->gpr[3] = 1;
+    SelectThread_803BBCB0(ctx);
+    ctx->lr = lr;
+    OS__RestoreInterrupts_803B8F5C(level);
+}
+
+PPC_NATIVE_OVERRIDE_VOID(803BBEF0, MSC_OSYieldThread_803BBEF0, (CpuContext* ctx), (ctx));

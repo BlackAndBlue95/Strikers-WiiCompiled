@@ -10,7 +10,7 @@
 #include <cstring>
 
 
-extern "C" void func_8012B830(CpuContext* ctx);
+static void func_8012B830(CpuContext*) {} // MSC: MKW AXFXReverbStdExp fallback; hook dropped
 
 #if defined(__clang__)
 // PowerPC uses discrete fmuls/fadds; a fused multiply-add would change sample rounding.
@@ -371,5 +371,5 @@ extern "C" void AXFXReverbStdExpCallback_8012b830(CpuContext* ctx) {
     ReverbStd::Render(stateAddr, frame);
 }
 
-REGISTER_NATIVE_FUNCTION_AS(0x8012B830, AXFXReverbStdExpCallback_8012b830,
-                            "AXFXReverbStdExpCallback_8012b830");
+// MSC-UNMAPPED(AXFXReverbStdExpCallback) REGISTER_NATIVE_FUNCTION_AS(0x8012B830, AXFXReverbStdExpCallback_8012b830,
+// MSC-UNMAPPED(AXFXReverbStdExpCallback)                             "AXFXReverbStdExpCallback_8012b830");

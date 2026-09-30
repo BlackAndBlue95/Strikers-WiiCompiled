@@ -794,18 +794,14 @@ struct DlMayContainDrawVisitor {
     // An array base/stride write means the list is setting up indexed geometry.
     bool OnCpReg(const uint8_t*, uint8_t reg, uint32_t) { return !(reg >= 0xA0 && reg <= 0xBF); }
     bool OnXfReg(const uint8_t*, uint32_t) { return true; }
-    bool OnIndexedXf(const uint8_t*, uint8_t, uint32_t) { return true; }
+    // Indexed XF loads need their matrix array applied, and nested calls need
+    // flattening (aurora drops CALL_DL), so both must take the full path.
+    bool OnIndexedXf(const uint8_t*, uint8_t, uint32_t) { return false; }
     bool OnInvalidateVertexCache(uint8_t) { return true; }
     // Draw opcodes reach this too (kHandlesDraw is false): a draw opcode, or a
     // command byte this walker does not model, both mean "assume it draws".
     bool OnUnknownCommand(uint8_t) { return false; }
-    bool OnCallDisplayList(uint32_t addr, uint32_t size, int depth) {
-        if (addr == 0 || size == 0) return true;
-        const uint8_t* nested = static_cast<const uint8_t*>(GuestToHostPtr(addr, size));
-        if (!nested) return false;
-        DlMayContainDrawVisitor child;
-        return WalkDisplayList(nested, size, child, depth + 1);
-    }
+    bool OnCallDisplayList(uint32_t addr, uint32_t size, int) { return addr == 0 || size == 0; }
 };
 
 static bool DisplayListMayContainDraw(const uint8_t* data, uint32_t nbytes) {
@@ -1129,8 +1125,11 @@ static void ApplyAuroraVtxDesc() {
         // GXGetVtxDesc only decodes GX_VA_PNMTXIDX..GX_VA_TEX7; the XF array
         // pseudo-attributes above GX_VA_TEX7 have no CP descriptor bits, so
         // probing them would always report GX_NONE and republish a no-op.
-        if (!needsPublish && !IsMatrixIndexAttr(gxAttr) && gxAttr <= GX_VA_TEX7 &&
-            (type == GX_INDEX8 || type == GX_INDEX16)) {
+        // Matrix-index attributes are never forwarded eagerly by GXSetVtxDesc, so a
+        // GXClearVtxDesc (which resets aurora directly) leaves the mirror claiming a
+        // DIRECT index aurora no longer has; verify those against live state too.
+        if (!needsPublish && gxAttr <= GX_VA_TEX7 &&
+            (IsMatrixIndexAttr(gxAttr) || type == GX_INDEX8 || type == GX_INDEX16)) {
             needsPublish = !AuroraVtxDescMatchesLive(gxAttr, type);
         }
         if (needsPublish) {
@@ -1289,12 +1288,11 @@ extern "C" void GxNotifyDisplayListMemoryWrite(uint32_t addr, uint32_t size) {
     GxGuestWrite::NotifyWrite(addr, size);
 }
 
-extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes) {
+extern "C" void GX__CallDisplayList_803A72EC(uint32_t listAddr, uint32_t nbytes) {
     if (nbytes == 0 || listAddr == 0) return;
     try {
         const uint8_t* list = static_cast<const uint8_t*>(GuestToHostPtr(listAddr, nbytes));
         if (!list) return;
-
         const bool allowScanCache = nbytes <= kDlScanCacheMaxEntryBytes;
         const uint64_t scanLayoutHash = allowScanCache ? HashScanLayoutState() : 0;
         // The digest is computed lazily inside the probe: an entry whose covering
@@ -1483,7 +1481,7 @@ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes)
     } catch (...) {}
 }
 
-PPC_NATIVE_OVERRIDE_VOID(80172F64, GX__CallDisplayList_80172f64, (uint32_t listAddr, uint32_t nbytes), (listAddr, nbytes));
+PPC_NATIVE_OVERRIDE_VOID(803A72EC, GX__CallDisplayList_803A72EC, (uint32_t listAddr, uint32_t nbytes), (listAddr, nbytes));
 
 extern "C" void nw4r__lyt__detail__DrawQuad_800847c0(CpuContext* ctx) {
     uint32_t colors[4];
@@ -1500,7 +1498,7 @@ extern "C" void nw4r__lyt__detail__DrawQuad_800847c0(CpuContext* ctx) {
     EmitLytDrawQuad(ctx->gpr[3], ctx->gpr[4], static_cast<int32_t>(ctx->gpr[5]), ctx->gpr[6], colorPtr);
 }
 
-REGISTER_NATIVE_FUNCTION(0x800847C0, nw4r__lyt__detail__DrawQuad_800847c0);
+// MSC-UNMAPPED(nw4r::lyt::detail::DrawQuad) REGISTER_NATIVE_FUNCTION(0x800847C0, nw4r__lyt__detail__DrawQuad_800847c0);
 
 extern "C" void nw4r__lyt__detail__DrawQuad_80084d20(CpuContext* ctx) {
     uint32_t colors[4];
@@ -1518,4 +1516,4 @@ extern "C" void nw4r__lyt__detail__DrawQuad_80084d20(CpuContext* ctx) {
     EmitLytDrawQuad(ctx->gpr[3], ctx->gpr[4], static_cast<int32_t>(ctx->gpr[5]), ctx->gpr[6], colorPtr);
 }
 
-REGISTER_NATIVE_FUNCTION(0x80084D20, nw4r__lyt__detail__DrawQuad_80084d20);
+// MSC-UNMAPPED(nw4r::lyt::detail::DrawQuad) REGISTER_NATIVE_FUNCTION(0x80084D20, nw4r__lyt__detail__DrawQuad_80084d20);

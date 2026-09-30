@@ -70,48 +70,48 @@ void InvalidateEfbCopyDestinationsForRange(uint32_t addr, uint32_t size) {
 // Display Copy Source/Destination
 // ============================================================================
 
-extern "C" void GX__SetDispCopySrc_8016f438(uint32_t l, uint32_t t, uint32_t w, uint32_t h) {
+extern "C" void GX__SetDispCopySrc_803A41BC(uint32_t l, uint32_t t, uint32_t w, uint32_t h) {
     GXSetDispCopySrc((u16)l, (u16)t, (u16)w, (u16)h);
 }
-PPC_NATIVE_OVERRIDE_VOID(8016f438, GX__SetDispCopySrc_8016f438, (uint32_t l, uint32_t t, uint32_t w, uint32_t h), (l, t, w, h));
+PPC_NATIVE_OVERRIDE_VOID(803A41BC, GX__SetDispCopySrc_803A41BC, (uint32_t l, uint32_t t, uint32_t w, uint32_t h), (l, t, w, h));
 
-extern "C" void GX__SetDispCopyDst_8016f4b8(uint32_t w, uint32_t h) { GXSetDispCopyDst((u16)w, (u16)h); }
-PPC_NATIVE_OVERRIDE_VOID(8016f4b8, GX__SetDispCopyDst_8016f4b8, (uint32_t w, uint32_t h), (w, h));
+extern "C" void GX__SetDispCopyDst_803A423C(uint32_t w, uint32_t h) { GXSetDispCopyDst((u16)w, (u16)h); }
+PPC_NATIVE_OVERRIDE_VOID(803A423C, GX__SetDispCopyDst_803A423C, (uint32_t w, uint32_t h), (w, h));
 
 // ============================================================================
 // Texture Copy Source/Destination
 // ============================================================================
 
-extern "C" void GX__SetTexCopySrc_8016f478(uint32_t l, uint32_t t, uint32_t w, uint32_t h) {
+extern "C" void GX__SetTexCopySrc_803A41FC(uint32_t l, uint32_t t, uint32_t w, uint32_t h) {
     GXSetTexCopySrc((u16)l, (u16)t, (u16)w, (u16)h);
     g_texCopyState.srcLeft=(u16)l; g_texCopyState.srcTop=(u16)t;
     g_texCopyState.srcWidth=(u16)w; g_texCopyState.srcHeight=(u16)h;
 }
-PPC_NATIVE_OVERRIDE_VOID(8016f478, GX__SetTexCopySrc_8016f478, (uint32_t l, uint32_t t, uint32_t w, uint32_t h), (l, t, w, h));
+PPC_NATIVE_OVERRIDE_VOID(803A41FC, GX__SetTexCopySrc_803A41FC, (uint32_t l, uint32_t t, uint32_t w, uint32_t h), (l, t, w, h));
 
-extern "C" void GX__SetTexCopyDst_8016f4dc(uint32_t w, uint32_t h, uint32_t f, uint32_t m) {
+extern "C" void GX__SetTexCopyDst_803A4260(uint32_t w, uint32_t h, uint32_t f, uint32_t m) {
     GXSetTexCopyDst((u16)w, (u16)h, (GXTexFmt)f, (GXBool)m);
     g_texCopyState.dstWidth=(u16)w; g_texCopyState.dstHeight=(u16)h;
     g_texCopyState.dstFormat=f; g_texCopyState.dstMipmap=m;
 }
-PPC_NATIVE_OVERRIDE_VOID(8016f4dc, GX__SetTexCopyDst_8016f4dc, (uint32_t w, uint32_t h, uint32_t f, uint32_t m), (w, h, f, m));
+PPC_NATIVE_OVERRIDE_VOID(803A4260, GX__SetTexCopyDst_803A4260, (uint32_t w, uint32_t h, uint32_t f, uint32_t m), (w, h, f, m));
 
-extern "C" void GX__SetCopyFilter_8016fa40(uint32_t aa, uint32_t spa, uint32_t vf, uint32_t vfa) {
+extern "C" void GX__SetCopyFilter_803A4738(uint32_t aa, uint32_t spa, uint32_t vf, uint32_t vfa) {
     uint8_t sp[12][2]={}, vfb[7]={};
     if(spa) std::memcpy(sp, GuestToHostPtr(spa, 24), 24);
     if(vfa) std::memcpy(vfb, GuestToHostPtr(vfa, 7), 7);
     GXSetCopyFilter((GXBool)aa, sp, (GXBool)vf, vfb);
 }
-PPC_NATIVE_OVERRIDE_VOID(8016fa40, GX__SetCopyFilter_8016fa40, (uint32_t aa, uint32_t spa, uint32_t vf, uint32_t vfa), (aa, spa, vf, vfa));
+PPC_NATIVE_OVERRIDE_VOID(803A4738, GX__SetCopyFilter_803A4738, (uint32_t aa, uint32_t spa, uint32_t vf, uint32_t vfa), (aa, spa, vf, vfa));
 
-extern "C" void GX__SetDispCopyGamma_8016fc24(uint32_t g) { GXSetDispCopyGamma((GXGamma)g); }
-PPC_NATIVE_OVERRIDE_VOID(8016fc24, GX__SetDispCopyGamma_8016fc24, (uint32_t g), (g));
+extern "C" void GX__SetDispCopyGamma_803A491C(uint32_t g) { GXSetDispCopyGamma((GXGamma)g); }
+PPC_NATIVE_OVERRIDE_VOID(803A491C, GX__SetDispCopyGamma_803A491C, (uint32_t g), (g));
 
 // ============================================================================
 // Copy Execution
 // ============================================================================
 
-extern "C" void GX__CopyDisp_8016fc38(uint32_t da, uint32_t c) {
+extern "C" void GX__CopyDisp_803A4930(uint32_t da, uint32_t c) {
     EnsureAuroraFrameActive();
     // GX copies are FIFO-ordered on hardware. Drain submitted draws before
     // resolving the EFB so high-level copies see the same contents.
@@ -131,10 +131,10 @@ extern "C" void GX__CopyDisp_8016fc38(uint32_t da, uint32_t c) {
     VI_HLE_PresentFrame(/*presentedXfb=*/true, /*paceToRetrace=*/true);
 }
 
-PPC_NATIVE_OVERRIDE_VOID(8016fc38, GX__CopyDisp_8016fc38, (uint32_t da, uint32_t c), (da, c));
+PPC_NATIVE_OVERRIDE_VOID(803A4930, GX__CopyDisp_803A4930, (uint32_t da, uint32_t c), (da, c));
 
 
-extern "C" void GX__CopyTex_8016fd74(uint32_t da, uint32_t c) {
+extern "C" void GX__CopyTex_803A4A6C(uint32_t da, uint32_t c) {
     EnsureAuroraFrameActive();
     // Match GX FIFO ordering: texture copies observe all prior draws.
     GXDrawDone();
@@ -157,4 +157,4 @@ extern "C" void GX__CopyTex_8016fd74(uint32_t da, uint32_t c) {
                                g_texCopyState.dstFormat, GX_FALSE, 0));
     GXSetTexCopySrc(rawSrcLeft, rawSrcTop, rawSrcWidth, rawSrcHeight);
 }
-PPC_NATIVE_OVERRIDE_VOID(8016fd74, GX__CopyTex_8016fd74, (uint32_t da, uint32_t c), (da, c));
+PPC_NATIVE_OVERRIDE_VOID(803A4A6C, GX__CopyTex_803A4A6C, (uint32_t da, uint32_t c), (da, c));

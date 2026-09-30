@@ -2,7 +2,7 @@
 #include "gx_internal.h"
 
 // Vertex helper declarations not used by the direct-call catalog.
-extern "C" void GX__SetArray_8016e32c(uint32_t a, uint32_t ba, uint32_t str);
+extern "C" void GX__SetArray_803A2F34(uint32_t a, uint32_t ba, uint32_t str);
 extern "C" void GX_HLE_FIFO_WriteFloat(float val);
 extern "C" void GX_HLE_FIFO_Write8(uint8_t val);
 
@@ -13,10 +13,10 @@ extern "C" void GX_HLE_FIFO_Write8(uint8_t val);
 // Use translated implementations for the main DrawGX setup routines.
 // Keep HLE fallbacks only for known missing alias entry points.
 static void EGG__DrawGX__SetVtxState_HLE(uint32_t state) {
-    GX__ClearVtxDesc_8016dc34();
-    auto setDesc = [](uint32_t attr, uint32_t type) { GX__SetVtxDesc_8016d3a4(attr, type); };
-    auto setFmt = [](uint32_t attr, uint32_t cnt, uint32_t type, uint32_t frac) { GX__SetVtxAttrFmt_8016dc68(0, attr, cnt, type, frac); };
-    auto setArray = [](uint32_t attr, uint32_t addr, uint32_t stride) { if (addr && stride) GX__SetArray_8016e32c(attr, addr, stride); };
+    GX__ClearVtxDesc_803A2B1C();
+    auto setDesc = [](uint32_t attr, uint32_t type) { GX__SetVtxDesc_803A26DC(attr, type); };
+    auto setFmt = [](uint32_t attr, uint32_t cnt, uint32_t type, uint32_t frac) { GX__SetVtxAttrFmt_803A2B50(0, attr, cnt, type, frac); };
+    auto setArray = [](uint32_t attr, uint32_t addr, uint32_t stride) { if (addr && stride) GX__SetArray_803A2F34(attr, addr, stride); };
 
     switch (state) {
     case 0:
@@ -68,7 +68,7 @@ static void EGG__DrawGX__SetVtxState_HLE(uint32_t state) {
     default: break;
     }
 }
-PPC_NATIVE_OVERRIDE_VOID(8021b344, EGG__DrawGX__SetVtxState_HLE, (uint32_t state), (state));
+// MSC-UNMAPPED(EGG::DrawGX::SetVtxState_switch) PPC_NATIVE_OVERRIDE_VOID(8021b344, EGG__DrawGX__SetVtxState_HLE, (uint32_t state), (state));
 PPC_NATIVE_OVERRIDE_VOID(8021b688, EGG__DrawGX__SetVtxState_HLE, (uint32_t state), (state));
 
 extern "C" void EGG__LightTexture__SetupTevFinish_HLE_8022e2bc(CpuContext* ctx) {
@@ -98,7 +98,7 @@ extern "C" void EGG__LightTexture__SetupTevFinish_HLE_8022e2bc(CpuContext* ctx) 
                 GX_HLE_FIFO_WriteFloat(t);
             };
 
-            GX__Begin_8016f0f0(GX_QUADS, GX_VTXFMT0, 4);
+            GX__Begin_803A3D60(GX_QUADS, GX_VTXFMT0, 4);
             writeVertex(0, origin, origin);
             writeVertex(1, origin, lower);
             writeVertex(2, end, lower);
@@ -108,7 +108,7 @@ extern "C" void EGG__LightTexture__SetupTevFinish_HLE_8022e2bc(CpuContext* ctx) 
 
     Memory::Write8(self + 0x74, 2);
 }
-PPC_NATIVE_OVERRIDE_VOID(8022e2bc, EGG__LightTexture__SetupTevFinish_HLE_8022e2bc, (CpuContext* ctx), (ctx));
+// MSC-UNMAPPED(EGG::LightTexture::SetupTevFinish) PPC_NATIVE_OVERRIDE_VOID(8022e2bc, EGG__LightTexture__SetupTevFinish_HLE_8022e2bc, (CpuContext* ctx), (ctx));
 
 // ============================================================================
 // EGG::AsyncDisplay
@@ -117,6 +117,6 @@ PPC_NATIVE_OVERRIDE_VOID(8022e2bc, EGG__LightTexture__SetupTevFinish_HLE_8022e2b
 extern "C" void EGG__AsyncDisplay__endRender_HLE_8020ff9c(CpuContext* ctx) {
     uint32_t p = ctx->gpr[3]; ctx->gpr[3] = p; ctx->lr = 0x8020FF9C;
     InvokeIndirectCpu(0x80219FB4u, ctx);
-    InvokeIndirectCpu(0x8016ED50u, ctx);
+    InvokeIndirectCpu(0x803A39C0u, ctx);
 }
-PPC_NATIVE_OVERRIDE_VOID(8020FF9C, EGG__AsyncDisplay__endRender_HLE_8020ff9c, (CpuContext* ctx), (ctx));
+// MSC-UNMAPPED(EGG::AsyncDisplay::endRender) PPC_NATIVE_OVERRIDE_VOID(8020FF9C, EGG__AsyncDisplay__endRender_HLE_8020ff9c, (CpuContext* ctx), (ctx));

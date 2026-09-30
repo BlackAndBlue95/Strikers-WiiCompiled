@@ -13,17 +13,17 @@
 #include "runtime_log.h"
 #include "os_internal.h"
 
-extern "C" uint32_t OS__GetCurrentThread_801a98b0_hle()
+extern "C" uint32_t OS__GetCurrentThread_803BB958_hle()
 {
     try {
         return ::Memory::Read32(kOSRunningContextAddr);
     } catch (const ::Memory::AccessViolation& e) {
-        LogMemoryError(RT_TAG_OS, "OS__GetCurrentThread_801a98b0", e);
+        LogMemoryError(RT_TAG_OS, "OS__GetCurrentThread_803BB958", e);
         return 0;
     }
 }
 
-extern "C" void OS__ClearContext_801a2098(uint32_t contextAddr)
+extern "C" void OS__ClearContext_803B57D8(uint32_t contextAddr)
 {
     if (contextAddr == 0) {
         return;
@@ -38,11 +38,11 @@ extern "C" void OS__ClearContext_801a2098(uint32_t contextAddr)
             ::Memory::Write32(kOSExceptionContextAddr, 0);
         }
     } catch (const ::Memory::AccessViolation& e) {
-        LogMemoryError(RT_TAG_OS, "OS__ClearContext_801a2098", e);
+        LogMemoryError(RT_TAG_OS, "OS__ClearContext_803B57D8", e);
     }
 }
 
-extern "C" void OS__SetCurrentContext_801a1e70(uint32_t contextAddr)
+extern "C" void OS__SetCurrentContext_803B55B0(uint32_t contextAddr)
 {
     try {
         if (contextAddr == 0) {
@@ -73,23 +73,23 @@ extern "C" void OS__SetCurrentContext_801a1e70(uint32_t contextAddr)
         }
         ::Memory::Write16(contextAddr + 0x1a2u, modeFlags);
     } catch (const ::Memory::AccessViolation& e) {
-        LogMemoryError(RT_TAG_OS, "OS__SetCurrentContext_801a1e70", e);
+        LogMemoryError(RT_TAG_OS, "OS__SetCurrentContext_803B55B0", e);
     }
 }
 
-PPC_NATIVE_OVERRIDE_VOID(801A2098, OS__ClearContext_801a2098, (uint32_t contextAddr), (contextAddr));
-PPC_NATIVE_OVERRIDE_VOID(801A1E70, OS__SetCurrentContext_801a1e70, (uint32_t contextAddr), (contextAddr));
-REGISTER_NATIVE_FUNCTION(0x801A98B0, OS__GetCurrentThread_801a98b0_hle);
+PPC_NATIVE_OVERRIDE_VOID(803B57D8, OS__ClearContext_803B57D8, (uint32_t contextAddr), (contextAddr));
+PPC_NATIVE_OVERRIDE_VOID(803B55B0, OS__SetCurrentContext_803B55B0, (uint32_t contextAddr), (contextAddr));
+REGISTER_NATIVE_FUNCTION(0x803BB958, OS__GetCurrentThread_803BB958_hle);
 
-// OSLoadContext (0x801A1F58): restores CPU state from a guest OSContext and jumps to SRR0 by hand,
+// OSLoadContext (0x803B5698): restores CPU state from a guest OSContext and jumps to SRR0 by hand,
 // since the real function's privileged mtspr/rfi can't be translated.
 
-extern "C" [[noreturn]] void OS__LoadContext_801a1f58(CpuContext* ctx)
+extern "C" [[noreturn]] void OS__LoadContext_803B5698(CpuContext* ctx)
 {
     CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
     const uint32_t guestContextAddr = cpu->gpr[3];
 
-    RT_LOG(RT_TAG_OS) << "OS__LoadContext_801a1f58 called: ctx=0x" << std::hex << guestContextAddr << std::dec << std::endl;
+    RT_LOG(RT_TAG_OS) << "OS__LoadContext_803B5698 called: ctx=0x" << std::hex << guestContextAddr << std::dec << std::endl;
 
     if (guestContextAddr == 0) {
         RT_LOG(RT_TAG_OS) << "OS__LoadContext: FATAL - null context address!" << std::endl;
@@ -164,4 +164,4 @@ extern "C" [[noreturn]] void OS__LoadContext_801a1f58(CpuContext* ctx)
     std::abort();
 }
 
-PPC_NATIVE_OVERRIDE_VOID(801A1F58, OS__LoadContext_801a1f58, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(803B5698, OS__LoadContext_803B5698, (CpuContext* ctx), (ctx));

@@ -1501,7 +1501,13 @@ void Draw() noexcept {
     DrawStartupScreen();
 }
 
+void NotifyStrapInputAccepted() noexcept;
 bool StartupScreenVisible() noexcept {
+    // MSC: there is no MKW strap scene to accept input on; drop the splash once shaders are ready.
+    if (g_bootShadersReady.load(std::memory_order_acquire) &&
+        !g_strapInputAccepted.load(std::memory_order_acquire)) {
+        NotifyStrapInputAccepted();
+    }
     return !g_strapInputAccepted.load(std::memory_order_acquire) ||
            !g_bootShadersReady.load(std::memory_order_acquire) ||
            g_presentedFrame < g_startupDismissFrame.load(std::memory_order_relaxed);

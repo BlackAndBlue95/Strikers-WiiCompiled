@@ -543,6 +543,15 @@ Memory::Config Memory::Config::WiiDefaults() {
         .sizeBytes = 0x200000,
     });
 
+    // MSC: CPU-side EFB access window (GXPoke*/GXPeek*). Strikers Charged's loading
+    // message writes pixels here directly; back it with scratch RAM so the writes land
+    // harmlessly (nothing presents it yet). 0xC8000000 | (y << 12) | (x << 2), 4 MiB covers 1024 rows.
+    config.regions.push_back(RegionConfig{
+        .name = "EFB_POKE",
+        .baseAddress = 0xC8000000,
+        .sizeBytes = 0x400000,
+    });
+
     // Locked cache (THP decoder fast RAM) is really 16KB at 0xE0000000, but a sub-page mapping can
     // never enter the coarse 1MiB bias tables, forcing every THP load/store through the checked
     // fallback (the dominant cost of THP-heavy screens). Back a full 1MiB page plus the successor

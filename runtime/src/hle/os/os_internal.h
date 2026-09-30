@@ -24,7 +24,7 @@ extern std::atomic<bool> g_interrupts_enabled;
 // observable state, not just bookkeeping.
 extern std::atomic<uint32_t> g_interrupt_mask;
 
-constexpr uint32_t kInterruptHandlerTablePtrAddr = 0x803868f8u;
+constexpr uint32_t kInterruptHandlerTablePtrAddr = 0x806E2920u;
 constexpr uint32_t kInterruptHandlerTableAddr = 0x80003040u;
 constexpr size_t kInterruptHandlerTableBytes = 0x80u;
 constexpr uint32_t kInterruptMaskLoAddr = 0x800000c4u;
@@ -36,17 +36,17 @@ constexpr uint32_t kThreadListHeadAddr = 0x800000dcu;    // First thread in thre
 constexpr uint32_t kThreadListTailAddr = 0x800000e0u;    // Last added thread (tail of thread list)
 constexpr uint32_t kOSRunningContextAddr = 0x800000e4u;  // Currently running thread context
 
-constexpr uint32_t kDefaultThreadContextAddr = 0x80347498u;
-constexpr uint32_t kIdleThreadContextAddr = 0x803478b0u;
-constexpr uint32_t kThreadQueueArrayAddr = 0x803477b0u;
+constexpr uint32_t kDefaultThreadContextAddr = 0x805D4ED8u;
+constexpr uint32_t kIdleThreadContextAddr = 0x805D52F0u;
+constexpr uint32_t kThreadQueueArrayAddr = 0x805D51F0u;
 constexpr size_t kThreadQueueArrayBytes = 0x100u;
-constexpr uint32_t kSwitchThreadCallbackPtrAddr = 0x80385ae0u;
-constexpr uint32_t kSchedulerReschedCounterAddr = 0x8038691cu;
-constexpr uint32_t kSchedulerPendingFlagAddr = 0x80386920u;
+constexpr uint32_t kSwitchThreadCallbackPtrAddr = 0x806DFD28u;
+constexpr uint32_t kSchedulerReschedCounterAddr = 0x806E2944u;
+constexpr uint32_t kSchedulerPendingFlagAddr = 0x806E2948u;
 // RVL OS uses this as the OSDisableScheduler/OSEnableScheduler nesting count.
 // SelectThread exits early while the count is non-zero.
-constexpr uint32_t kSchedulerIdleFlagAddr = 0x80386918u;
-constexpr uint32_t kAlarmQueueOffsetFromR13 = 0x6360u;
+constexpr uint32_t kSchedulerIdleFlagAddr = 0x806E2940u;
+constexpr uint32_t kAlarmQueueOffsetFromR13 = 0x0B00u; // MSC: AlarmQueue 0x806E28C0
 
 constexpr uint32_t kThreadStateOffset = 0x2C8u;
 constexpr uint32_t kThreadAttrOffset = 0x2CAu;
@@ -145,14 +145,14 @@ using namespace OsHleInternal;
 // Cross-file HLE entry points, declared here for the same reason they were
 // declared at the top of the old single OS translation unit: the OS subsystems
 // call into each other.
-extern "C" int32_t OS__DisableInterrupts_801a65ac();
-extern "C" int32_t OS__EnableInterrupts_801a65c0();
-extern "C" int32_t OS__RestoreInterrupts_801a65d4(int32_t level);
-extern "C" void OS__ClearContext_801a2098(uint32_t contextAddr);
-extern "C" void OS__SetCurrentContext_801a1e70(uint32_t contextAddr);
-extern "C" [[noreturn]] void OS__LoadContext_801a1f58(CpuContext* ctx);
+extern "C" int32_t OS__DisableInterrupts_803B8F34();
+extern "C" int32_t OS__EnableInterrupts_803B8F48();
+extern "C" int32_t OS__RestoreInterrupts_803B8F5C(int32_t level);
+extern "C" void OS__ClearContext_803B57D8(uint32_t contextAddr);
+extern "C" void OS__SetCurrentContext_803B55B0(uint32_t contextAddr);
+extern "C" [[noreturn]] void OS__LoadContext_803B5698(CpuContext* ctx);
 extern "C" void OSSuspendThread_HLE_801aa6a8(CpuContext* ctx);
-extern "C" void OSResumeThread_HLE_801aa58c(CpuContext* ctx);
-extern "C" void OSWakeupThread_HLE_801aaaa4(CpuContext* ctx);
-extern "C" void OSSleepThread_HLE_801aa9b8(CpuContext* ctx);
-extern "C" void SelectThread_801a9c08(CpuContext* ctx);
+extern "C" void OSResumeThread_HLE_803BC594(CpuContext* ctx);
+extern "C" void OSWakeupThread_HLE_803BCAAC(CpuContext* ctx);
+extern "C" void OSSleepThread_HLE_803BC9C0(CpuContext* ctx);
+extern "C" void SelectThread_803BBCB0(CpuContext* ctx);
