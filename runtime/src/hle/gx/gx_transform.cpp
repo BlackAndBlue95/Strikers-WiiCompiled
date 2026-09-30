@@ -2,6 +2,8 @@
 #include "isa/big_endian.h"
 #include "gx_internal.h"
 
+#include <cstring>
+
 namespace {
     static inline void SwapBeF32ArrayToHost(const uint32_t* srcBe, float* dst, size_t count) {
         const auto* bytes = reinterpret_cast<const uint8_t*>(srcBe);
@@ -44,23 +46,44 @@ extern "C" void GX__SetViewportJitter_80173378(float l, float t, float w, float 
 }
 // MSC-UNMAPPED(GX::SetViewportJitter) PPC_NATIVE_OVERRIDE_VOID(80173378, GX__SetViewportJitter_80173378, (float l, float t, float w, float h, float nz, float fz, uint32_t f), (l, t, w, h, nz, fz, f));
 
+// Dynamic aspect: full-screen perspective projections are widened to the window's shape (see
+// dynamic_aspect.cpp). Smaller viewports are render-to-texture passes (shadows, previews) and keep
+// the game's projection. The game reads back its own matrix via GXGetProjectionv either way.
+namespace {
+float g_lastPerspective[16];
+bool g_lastWasPerspective = false;
+bool g_lastPerspectiveAdjusted = false;
+
+bool ViewportIsFullScreen() { return g_viewportState[2] >= 600.0f && g_viewportState[3] >= 400.0f; }
+
+void SubmitProjection(const float raw[16], GXProjectionType type) {
+    g_lastWasPerspective = type == GX_PERSPECTIVE;
+    g_lastPerspectiveAdjusted = false;
+    if (g_lastWasPerspective) {
+        std::memcpy(g_lastPerspective, raw, sizeof(g_lastPerspective));
+        float adjusted[16];
+        std::memcpy(adjusted, raw, sizeof(adjusted));
+        if (ViewportIsFullScreen() && AdjustPerspectiveForSurface(adjusted)) {
+            g_lastPerspectiveAdjusted = true;
+            GXSetProjection(adjusted, type);
+            return;
+        }
+    }
+    GXSetProjection(raw, type);
+}
+} // namespace
+
 extern "C" void GX__SetViewport_803A7828(float l, float t, float w, float h, float nz, float fz) {
     g_viewportState[0]=l; g_viewportState[1]=t; g_viewportState[2]=w; g_viewportState[3]=h; g_viewportState[4]=nz; g_viewportState[5]=fz;
     GXSetViewport(l, t, w, h, nz, fz);
+    // A projection set before its viewport: re-issue it once the viewport says which pass it is.
+    if (g_lastWasPerspective && g_lastPerspectiveAdjusted != ViewportIsFullScreen()) {
+        SubmitProjection(g_lastPerspective, GX_PERSPECTIVE);
+    }
 }
 PPC_NATIVE_OVERRIDE_VOID(803A7828, GX__SetViewport_803A7828, (float l, float t, float w, float h, float nz, float fz), (l, t, w, h, nz, fz));
 
 extern "C" void GX__GetViewportv_803A7854(uint32_t oa) {
-    // EGG::StateGX::GXSetViewport (0x802418D0) reads the current viewport unconditionally, and
-    // every offscreen bake reaches it via its clear pass (0x8023DE7C) before building its own
-    // projection, so arming the frustum-scale bypass here always beats the bake, including
-    // RaceScene::createSubsystems's frame-boundary-less ones. Gated to one walk per GX frame to
-    // skip the cross-TU call on repeats, while the first viewport read of each frame stays unthrottled.
-    static int lastBypassFrame = -1;
-    if (lastBypassFrame != g_gxFrameCount) {
-        lastBypassFrame = g_gxFrameCount;
-        AssertMkwOffscreenScreenBypass();
-    }
     if (!oa) return; for(int i=0; i<6; ++i) WriteGuestFloat(oa + i*4, g_viewportState[i]);
 }
 PPC_NATIVE_OVERRIDE_VOID(803A7854, GX__GetViewportv_803A7854, (uint32_t oa), (oa));
@@ -115,7 +138,7 @@ PPC_NATIVE_OVERRIDE_VOID(803A78A4, GX__SetScissor_803A78A4, (uint32_t l, uint32_
 extern "C" void GX__SetProjection_803A752C(uint32_t ma, uint32_t pt) {
     const uint32_t* raw=(const uint32_t*)GuestToHostPtr(ma, 64); float m[16];
     SwapBeF32ArrayToHost(raw, m, 16);
-    GXSetProjection(m, (GXProjectionType)pt);
+    SubmitProjection(m, (GXProjectionType)pt);
     UpdateProjectionVectorFromMatrix(m, (GXProjectionType)pt);
 }
 PPC_NATIVE_OVERRIDE_VOID(803A752C, GX__SetProjection_803A752C, (uint32_t ma, uint32_t pt), (ma, pt));
@@ -126,7 +149,7 @@ extern "C" void GX__SetProjectionv_803A7590(uint32_t pa) {
     GXProjectionType pt=(v[0]!=0.f)?GX_ORTHOGRAPHIC:GX_PERSPECTIVE;
     float m[16]={0.f}; m[0]=v[1]; m[5]=v[3]; m[10]=v[5]; m[11]=v[6];
     if(pt==GX_PERSPECTIVE){ m[2]=v[2]; m[6]=v[4]; m[14]=-1.f; } else { m[3]=v[2]; m[7]=v[4]; m[15]=1.f; }
-    GXSetProjection(m, pt);
+    SubmitProjection(m, pt);
     UpdateProjectionVectorFromProjV(v);
 }
 PPC_NATIVE_OVERRIDE_VOID(803A7590, GX__SetProjectionv_803A7590, (uint32_t pa), (pa));

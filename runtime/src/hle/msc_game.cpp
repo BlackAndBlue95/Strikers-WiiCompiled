@@ -65,3 +65,13 @@ extern "C" void MSC_OSYieldThread_803BBEF0(CpuContext* ctx)
 }
 
 PPC_NATIVE_OVERRIDE_VOID(803BBEF0, MSC_OSYieldThread_803BBEF0, (CpuContext* ctx), (ctx));
+
+// glxSetSwapMode: menus run in swap mode 3, which waits an extra retrace whenever a frame ends more
+// than 12 ms after the last one. Frames here can take longer than on a Wii while still fitting in a
+// 60 Hz refresh, so mode 3 dropped those menus to 30 fps; wait one retrace per frame (mode 1) instead.
+extern "C" void MSC_glxSetSwapMode_8036CEB0(int32_t mode)
+{
+    constexpr uint32_t kGlxSwapMode = 0x806DFA7Cu;  // glx_SwapMode
+    Memory::Write32(kGlxSwapMode, static_cast<uint32_t>(mode == 3 ? 1 : mode));
+}
+PPC_NATIVE_OVERRIDE_VOID(8036CEB0, MSC_glxSetSwapMode_8036CEB0, (int32_t mode), (mode));
