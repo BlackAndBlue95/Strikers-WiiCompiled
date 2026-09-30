@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 #include <SDL3/SDL_gamepad.h>
 #include <dolphin/pad.h>
@@ -125,11 +126,125 @@ bool Present(uint32_t chan) {
     return ReadBoundPad(chan, pad);
 }
 
+// Menu navigation (mod): MSC's menus are pointer-only. While the game shows its pointer, the D-pad
+// and left-stick flicks move a highlight between buttons instead: the emulated pointer snaps onto
+// the centre of the nearest FEPointerRegion in that direction, so the game's own hover/click logic
+// (and A to confirm) keeps working. The right stick still drives a free pointer as a fallback.
+namespace MenuNav {
+constexpr uint32_t kPointerManagerPtr = 0x806E2030u;  // g_pFEPointerManager
+constexpr uint32_t kPointerPositions = 0x80578460u;   // gFEPointerPositions[4]: centre origin, +y up
+constexpr uint32_t kRegionContainsPoint = 0x8030131Cu; // FEPointerRegion::ContainsPoint (vtable +0x2C)
+enum : uint32_t { kNavUp = 1, kNavDown = 2, kNavLeft = 4, kNavRight = 8 };
+
+struct Target { float x, y; };
+struct State {
+    uint32_t heldDir = 0;
+    uint64_t repeatAtMs = 0;
+    Target goal{};
+    int settleFrames = 0;
+};
+State s_state[PAD_CHANMAX];
+// Screen units per KPAD unit. The game maps KPAD pos to screen as (x * w/2, -y * h/2); these start at
+// 4:3 values and are refined from where the pointer actually lands, so widescreen needs no special case.
+float s_scaleX = 320.0f, s_scaleY = 240.0f;
+
+
+Target PointerPosition(uint32_t chan) {
+    return {Memory::ReadFloat32(kPointerPositions + chan * 8), Memory::ReadFloat32(kPointerPositions + chan * 8 + 4)};
+}
+
+// Centres of every enabled pointer region (buttons), in screen space.
+std::vector<Target> CollectTargets() {
+    std::vector<Target> out;
+    try {
+        const uint32_t mgr = Memory::Read32(kPointerManagerPtr);
+        // mListeners (nlListContainer) is {?, head, tail}; entries are {next, listener}.
+        uint32_t entry = mgr ? Memory::Read32(mgr + 4) : 0;
+        for (int guard = 0; entry && guard < 512; ++guard, entry = Memory::Read32(entry)) {
+            const uint32_t listener = Memory::Read32(entry + 4);
+            if (!listener || Memory::Read32(Memory::Read32(listener) + 0x2C) != kRegionContainsPoint) continue;
+            if (Memory::Read8(listener + 0x80)) continue;  // mDisabled
+            const float minX = Memory::ReadFloat32(listener + 0x84), maxX = Memory::ReadFloat32(listener + 0x88);
+            const float maxY = Memory::ReadFloat32(listener + 0x8C), minY = Memory::ReadFloat32(listener + 0x90);
+            if (!(maxX > minX && maxY > minY) || maxX - minX > 600.0f || maxY - minY > 420.0f) continue;
+            Target t{(minX + maxX) * 0.5f, (minY + maxY) * 0.5f};
+            // ContainsPoint rotates the probe by -rotation about the pivot; rotate the centre forward.
+            const float rot = Memory::ReadFloat32(listener + 0x94);
+            if (rot != 0.0f) {
+                const float px = Memory::ReadFloat32(listener + 0x98), py = Memory::ReadFloat32(listener + 0x9C);
+                const float dx = t.x - px, dy = t.y - py, c = std::cos(rot), sn = std::sin(rot);
+                t = {px + dx * c - dy * sn, py + dx * sn + dy * c};
+            }
+            if (std::isfinite(t.x) && std::isfinite(t.y)) out.push_back(t);
+        }
+    } catch (...) {}
+    return out;
+}
+
+// Nearest target in the pressed direction, weighting sideways distance so moves stay in line.
+bool PickTarget(const std::vector<Target>& targets, Target from, uint32_t dir, Target& out) {
+    const float dx = (dir & kNavRight) ? 1.0f : (dir & kNavLeft) ? -1.0f : 0.0f;
+    const float dy = (dir & kNavUp) ? 1.0f : (dir & kNavDown) ? -1.0f : 0.0f;
+    float best = 1e30f;
+    for (const Target& t : targets) {
+        const float vx = t.x - from.x, vy = t.y - from.y;
+        const float forward = vx * dx + vy * dy;
+        if (forward < 8.0f) continue;
+        const float score = forward + 2.5f * std::fabs(vx * dy - vy * dx);
+        if (score < best) { best = score; out = t; }
+    }
+    return best < 1e30f;
+}
+
+// The free pointer (right stick) takes over from a snap that's still settling.
+void CancelSettle(uint32_t chan) { s_state[chan].settleFrames = 0; }
+
+// Returns true while menu navigation owns the pointer this frame.
+bool Update(uint32_t chan, uint32_t dir, float cursor[2]) {
+    State& st = s_state[chan];
+    // A menu is up whenever the game has enabled pointer buttons registered (none during matches).
+    const std::vector<Target> targets = CollectTargets();
+    if (targets.empty()) { st = {}; return false; }
+    // One direction at a time; first press moves at once, holding repeats.
+    if (dir & (kNavUp | kNavDown)) dir &= (kNavUp | kNavDown); else dir &= (kNavLeft | kNavRight);
+    if (dir & kNavUp && dir & kNavDown) dir = 0;
+    if (dir & kNavLeft && dir & kNavRight) dir = 0;
+    const uint64_t now = SDL_GetTicks();
+    bool step = false;
+    if (dir && dir != st.heldDir) { step = true; st.repeatAtMs = now + 380; }
+    else if (dir && now >= st.repeatAtMs) { step = true; st.repeatAtMs = now + 140; }
+    st.heldDir = dir;
+    if (step) {
+        Target goal{};
+        if (PickTarget(targets, PointerPosition(chan), dir, goal)) {
+            st.goal = goal;
+            st.settleFrames = 10;
+            cursor[0] = std::clamp(goal.x / s_scaleX, -1.0f, 1.0f);
+            cursor[1] = std::clamp(-goal.y / s_scaleY, -1.0f, 1.0f);
+            return true;
+        }
+    }
+    if (st.settleFrames > 0) {
+        // The pointer reflects last frame's KPAD position; nudge toward the goal and learn the scale.
+        --st.settleFrames;
+        const Target at = PointerPosition(chan);
+        if (std::fabs(cursor[0]) > 0.1f && std::fabs(at.x) > 1.0f && at.x * cursor[0] > 0.0f)
+            s_scaleX = std::clamp(at.x / cursor[0], 200.0f, 600.0f);
+        if (std::fabs(cursor[1]) > 0.1f && std::fabs(at.y) > 1.0f && -at.y * cursor[1] > 0.0f)
+            s_scaleY = std::clamp(-at.y / cursor[1], 150.0f, 400.0f);
+        cursor[0] = std::clamp(cursor[0] + 0.5f * (st.goal.x - at.x) / s_scaleX, -1.0f, 1.0f);
+        cursor[1] = std::clamp(cursor[1] - 0.5f * (st.goal.y - at.y) / s_scaleY, -1.0f, 1.0f);
+    }
+    return true;
+}
+} // namespace MenuNav
+
 // Layout follows Vague Rant's Classic Controller hack for this game (GBAtemp), by button
 // position: east=A pass, south/ZR=B shoot, north=C item, west=remote shake (big hit),
 // ZL=Z chip, L=Nunchuk shake (switch item), R/right stick/D-pad=D-pad (deke, tackle),
 // +/-=1 pause, left stick=Nunchuk stick and pointer.
-void ApplyCommon(uint32_t chan, WiiRemoteInput::KpadSample& sample, bool remoteShake, bool nunchukShake) {
+void ApplyCommon(uint32_t chan, WiiRemoteInput::KpadSample& sample, bool remoteShake, bool nunchukShake,
+                 uint32_t navDpad, float freeX, float freeY) {
     static uint32_t s_shakePhase[PAD_CHANMAX]{};
     sample.hasNunchuk = true;
     sample.acc[1] = -1.0f;        // level, 1 g down (KPAD frame)
@@ -143,8 +258,36 @@ void ApplyCommon(uint32_t chan, WiiRemoteInput::KpadSample& sample, bool remoteS
     const float dt = s_lastMs[chan] ? std::min((now - s_lastMs[chan]) / 1000.0f, 0.1f) : 0.0f;
     s_lastMs[chan] = now;
     const auto dz = [](float v) { return std::fabs(v) < 0.2f ? 0.0f : v; };
-    s_cursor[chan][0] = std::clamp(s_cursor[chan][0] + dz(sample.stick[0]) * 1.6f * dt, -1.0f, 1.0f);
-    s_cursor[chan][1] = std::clamp(s_cursor[chan][1] - dz(sample.stick[1]) * 1.6f * dt, -1.0f, 1.0f);
+    uint32_t nav = navDpad;
+    if (sample.stick[1] > 0.6f) nav |= MenuNav::kNavUp;
+    if (sample.stick[1] < -0.6f) nav |= MenuNav::kNavDown;
+    if (sample.stick[0] < -0.6f) nav |= MenuNav::kNavLeft;
+    if (sample.stick[0] > 0.6f) nav |= MenuNav::kNavRight;
+    // In menus the left stick/D-pad navigate and the right stick is the free pointer; elsewhere the
+    // left stick moves the pointer as before.
+    const bool menu = MenuNav::Update(chan, nav, s_cursor[chan]);
+    float moveX = menu ? freeX : sample.stick[0], moveY = menu ? freeY : sample.stick[1];
+    if (menu) {
+        // Only the real D-pad reaches the game as D-pad here, not the right stick used for aiming.
+        sample.hold &= ~(kWUp | kWDown | kWLeft | kWRight);
+        if (navDpad & MenuNav::kNavUp) sample.hold |= kWUp;
+        if (navDpad & MenuNav::kNavDown) sample.hold |= kWDown;
+        if (navDpad & MenuNav::kNavLeft) sample.hold |= kWLeft;
+        if (navDpad & MenuNav::kNavRight) sample.hold |= kWRight;
+        // Radial deadzone, then gentle near the centre for fine aim and quick at full tilt.
+        const float mag = std::min(std::hypot(moveX, moveY), 1.0f);
+        if (mag < 0.2f) {
+            moveX = moveY = 0.0f;
+        } else {
+            MenuNav::CancelSettle(chan);
+            const float t = (mag - 0.2f) / 0.8f, speed = 0.3f + 1.9f * t * t;  // KPAD units per second
+            s_cursor[chan][0] = std::clamp(s_cursor[chan][0] + moveX / mag * speed * dt, -1.0f, 1.0f);
+            s_cursor[chan][1] = std::clamp(s_cursor[chan][1] - moveY / mag * speed * dt, -1.0f, 1.0f);
+            moveX = moveY = 0.0f;
+        }
+    }
+    s_cursor[chan][0] = std::clamp(s_cursor[chan][0] + dz(moveX) * 1.6f * dt, -1.0f, 1.0f);
+    s_cursor[chan][1] = std::clamp(s_cursor[chan][1] - dz(moveY) * 1.6f * dt, -1.0f, 1.0f);
     sample.hasPointer = true;
     sample.pointer[0] = s_cursor[chan][0];
     sample.pointer[1] = s_cursor[chan][1];
@@ -169,7 +312,12 @@ bool ReadFromGamepad(uint32_t chan, SDL_Gamepad* gp, WiiRemoteInput::KpadSample&
     if (btn(SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || rx > 0.5f) sample.hold |= kWRight;
     sample.stick[0] = std::clamp(axis(SDL_GAMEPAD_AXIS_LEFTX), -1.0f, 1.0f);
     sample.stick[1] = std::clamp(-axis(SDL_GAMEPAD_AXIS_LEFTY), -1.0f, 1.0f);
-    ApplyCommon(chan, sample, btn(SDL_GAMEPAD_BUTTON_WEST), btn(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER));
+    uint32_t navDpad = 0;
+    if (btn(SDL_GAMEPAD_BUTTON_DPAD_UP)) navDpad |= MenuNav::kNavUp;
+    if (btn(SDL_GAMEPAD_BUTTON_DPAD_DOWN)) navDpad |= MenuNav::kNavDown;
+    if (btn(SDL_GAMEPAD_BUTTON_DPAD_LEFT)) navDpad |= MenuNav::kNavLeft;
+    if (btn(SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) navDpad |= MenuNav::kNavRight;
+    ApplyCommon(chan, sample, btn(SDL_GAMEPAD_BUTTON_WEST), btn(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER), navDpad, rx, -ry);
     return true;
 }
 
@@ -200,7 +348,13 @@ bool Read(uint32_t chan, WiiRemoteInput::KpadSample& sample) {
     if (pad.substickX > 64) sample.hold |= kWRight;
     sample.stick[0] = std::clamp(pad.stickX / 72.0f, -1.0f, 1.0f);
     sample.stick[1] = std::clamp(pad.stickY / 72.0f, -1.0f, 1.0f);
-    ApplyCommon(chan, sample, (pad.button & PAD_BUTTON_Y) != 0, (pad.button & PAD_TRIGGER_R) != 0);
+    uint32_t navDpad = 0;
+    if (pad.button & PAD_BUTTON_UP) navDpad |= MenuNav::kNavUp;
+    if (pad.button & PAD_BUTTON_DOWN) navDpad |= MenuNav::kNavDown;
+    if (pad.button & PAD_BUTTON_LEFT) navDpad |= MenuNav::kNavLeft;
+    if (pad.button & PAD_BUTTON_RIGHT) navDpad |= MenuNav::kNavRight;
+    ApplyCommon(chan, sample, (pad.button & PAD_BUTTON_Y) != 0, (pad.button & PAD_TRIGGER_R) != 0, navDpad,
+                pad.substickX / 72.0f, pad.substickY / 72.0f);
     return true;
 }
 } // namespace MscEmulatedRemote
