@@ -61,7 +61,8 @@ void ConfigureMkwDynamicAspect(bool widescreen, bool forceAspect169, uint32_t su
     g_dynamicAspectRatioEnabled = g_widescreen && !forceAspect169;
     g_surfaceWidth.store(surfaceWidth, std::memory_order_relaxed);
     g_surfaceHeight.store(surfaceHeight, std::memory_order_relaxed);
-    ApplyPolicy();
+    // Called before aurora has a window; applied at the first frame boundary.
+    g_policyDirty.store(true, std::memory_order_release);
 }
 
 bool AdjustPerspectiveForSurface(float m[16]) {
