@@ -22,6 +22,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
 endif()
 
 option(MKW_BUILD_PRODUCTS "Build translated WiiCompiled product targets" ON)
+option(MKW_BUILD_PSQ_TESTS "Build focused PSQ ISA tests" OFF)
 
 # Preprocessor definitions that belong to this project's own code (the runtime,
 # the translated shards and the product glue) and to nothing else. They are
@@ -161,6 +162,18 @@ set(MKW_AURORA_DIR "${CMAKE_CURRENT_LIST_DIR}/../aurora-main")
 # The translator's explicit float casts are PPC single-precision rounding points.
 # Fast-math may erase them and change guest-visible integer conversions.
 set(MKW_TRANSLATED_PPC_FP_OPTIONS -fno-fast-math -ffp-contract=off)
+
+set(MKW_PPC_SEMANTIC_RUNTIME_SOURCES
+    "${CMAKE_CURRENT_LIST_DIR}/src/ppc_helpers.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/src/fpu_helpers.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/src/ppc_quantized.cpp")
+set_source_files_properties(${MKW_PPC_SEMANTIC_RUNTIME_SOURCES} PROPERTIES
+    SKIP_UNITY_BUILD_INCLUSION ON
+    SKIP_PRECOMPILE_HEADERS ON
+    COMPILE_OPTIONS "${MKW_TRANSLATED_PPC_FP_OPTIONS}")
+# Match the optimization policy of the translated callers as well as their FP policy.
+set_property(SOURCE "${CMAKE_CURRENT_LIST_DIR}/src/ppc_quantized.cpp" APPEND PROPERTY
+    COMPILE_OPTIONS -O2 -fno-slp-vectorize)
 
 # ----------------------------------------------------------------------
 # Third-party: aurora-main (provides SDL3 + GPU backends)
@@ -310,6 +323,27 @@ set_target_properties(mkw_platform PROPERTIES UNITY_BUILD OFF)
 # Keep these independent from Aurora's BUILD_TESTING option: they validate the
 # project's host-platform contracts, not Aurora's third-party test suite.
 enable_testing()
+if(MKW_BUILD_PSQ_TESTS)
+    add_executable(mkw_psq_helpers_tests
+        "${CMAKE_CURRENT_LIST_DIR}/tests/psq_helpers_tests.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/src/ppc_quantized.cpp")
+    target_include_directories(mkw_psq_helpers_tests PRIVATE
+        "${CMAKE_CURRENT_LIST_DIR}/tests/psq_memory"
+        "${CMAKE_CURRENT_LIST_DIR}/include/isa"
+        "${CMAKE_CURRENT_LIST_DIR}/include")
+    target_compile_features(mkw_psq_helpers_tests PRIVATE cxx_std_17)
+    target_compile_options(mkw_psq_helpers_tests PRIVATE
+        -O2 ${MKW_TRANSLATED_PPC_FP_OPTIONS} -fno-slp-vectorize)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64)$")
+        target_compile_options(mkw_psq_helpers_tests PRIVATE -march=x86-64-v3)
+    endif()
+    set_target_properties(mkw_psq_helpers_tests PROPERTIES UNITY_BUILD OFF)
+    add_test(NAME mkw_psq_helpers_tests COMMAND mkw_psq_helpers_tests)
+    add_test(NAME mkw_psq_reserved_tests COMMAND "${CMAKE_COMMAND}"
+        "-DPSQ_TEST_EXECUTABLE=$<TARGET_FILE:mkw_psq_helpers_tests>"
+        -P "${CMAKE_CURRENT_LIST_DIR}/tests/psq_reserved_tests.cmake")
+endif()
+
 add_executable(mkw_platform_paths_tests "${CMAKE_CURRENT_LIST_DIR}/tests/platform_paths_tests.cpp")
 target_link_libraries(mkw_platform_paths_tests PRIVATE mkw_platform)
 target_compile_features(mkw_platform_paths_tests PRIVATE cxx_std_17)
