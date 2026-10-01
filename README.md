@@ -33,6 +33,12 @@ PowerPC anywhere at runtime.
 Boot, menus, the Hub, tutorials, VS matches, music, voices and saving all work. The game runs
 at full speed on Apple Silicon.
 
+**120 FPS:** set **F10 > Video > Frame rate** to 120 FPS (or `frame_rate = 120` under `[video]`
+in `Config.toml`). This isn't interpolation: the game simulates matches on a fixed clock and
+blends between those steps when it draws, so it really renders twice as many frames at normal
+game speed. It needs a high refresh rate display, such as a ProMotion MacBook or a 120 Hz+
+monitor, and uses more power, so the default is 60.
+
 Known issues:
 
 - Occasional rendering differences from the original hardware.
@@ -87,14 +93,14 @@ Real Wii Remotes use the game's original controls (see *Help wanted* above).
 ## Mods
 
 Strikers Charged was built around the Wii Remote pointer. These controller-friendly changes are
-**on by default** and can each be switched off under **F10 > Mods** (or `[mods]` in
-`Config.toml`):
+switched on or off under **F10 > Mods** (or `[mods]` in `Config.toml`):
 
-- **Controller menu navigation:** no pointer in menus. The D-pad and sticks move between
-  buttons (on the main ring menu, the stick picks the icon in that direction), new screens start
-  on their first option, **B** goes back, and left/right flip stages on stage select.
-- **Selection badge:** the selected button is marked with a badge in the player's colour.
-- **No Mega Strikes with controllers:** see below.
+- **Controller menu navigation** (on): the D-pad and sticks move the game's hand cursor between
+  buttons, row by row (on the main ring menu, the stick picks the icon in that direction). New
+  screens start on their first option, **B** goes back (the on-screen BACK button is never
+  reached by moving), and **L/R** flip pages such as stages on stage select.
+- **Selection badge** (off): marks the selected button with a badge in the player's colour.
+- **No Mega Strikes with controllers** (on): see below.
 
 > [!NOTE]
 > **Mega Strikes are disabled when you play with a controller.** Defending a Mega Strike means
