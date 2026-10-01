@@ -108,6 +108,25 @@ switched on or off under **F10 > Mods** (or `[mods]` in `Config.toml`):
 - **Selection badge** (off): marks the selected button with a badge in the player's colour.
 - **No Mega Strikes with controllers** (on): see below.
 
+The same menu has fixes and extras, several taken from the community's
+[setup guide](https://mariostrikers.gg/msc-setup-guide):
+
+- **Fix the NK bug** (on): a deke or teleport through the goalie that gets cut short (Boo deking
+  into his own Kritter, Dry Bones teleporting behind the goal) no longer leaves every shot passing
+  through Kritter for the rest of the match.
+- **Choose home/away kits on captain select** (on): with both captains picked, **X** switches the
+  home team between its home and away kit and **Y** the away team (Wii Remote: **-** and **2**).
+  Mario, Luigi, Waluigi and Wario have no away kit in the game, so they get generated ones (white
+  with red trim, sky blue, orange, blue), recoloured at runtime from your own disc's textures:
+  captain, sidekicks, goalie and team art.
+- **Unlock everything** (off): all characters, stadiums and cheats through the game's own
+  unlock-all switch. Your save isn't changed.
+- **Win by 2** (off): in first-to-X goal matches, you have to win by at least 2 goals.
+- **Blue Peach against red teams** (off): Peach wears her blue kit against red captains.
+- **Shot counter on the results screen** (off): the Mega Strike row shows white and yellow shots /
+  red and orange shots instead.
+- **All stadiums fast-paced** (off): every pitch plays like the fast, dry ones.
+
 > [!NOTE]
 > **Mega Strikes are disabled when you play with a controller.** Defending a Mega Strike means
 > pointing the Wii Remote at each incoming ball, which a gamepad or keyboard can't do, so the

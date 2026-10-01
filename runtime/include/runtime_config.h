@@ -104,6 +104,7 @@ struct RuntimeUserConfig {
     std::optional<bool> modFastStadiums;
     std::optional<bool> modShotCounter;
     std::optional<bool> modBluePeach;
+    std::optional<bool> modKitChoice;
     std::map<std::string, std::string> controllerExpressions;
 };
 
@@ -345,6 +346,8 @@ inline void EnsureConfigFile() {
               "menu_navigation = true\n"
               "selection_badge = false\n"
               "no_mega_strikes = true\n"
+              "# Captain select: X / Y (Wii Remote - / 2) switch the home / away team's kit.\n"
+              "kit_choice = true\n"
               "# Gameplay extras (off by default).\n"
               "unlock_everything = false\n"
               "win_by_two = false\n"
@@ -449,6 +452,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.modFastStadiums = FindConfigValue<bool>(document, "mods", "fast_stadiums");
     config.modShotCounter = FindConfigValue<bool>(document, "mods", "shot_counter");
     config.modBluePeach = FindConfigValue<bool>(document, "mods", "blue_peach");
+    config.modKitChoice = FindConfigValue<bool>(document, "mods", "kit_choice");
     if (auto value = FindConfigInt(document, "audio", "mute_key")) {
         config.muteHotkey = *value;
     }
@@ -787,6 +791,11 @@ inline bool ModWinByTwo() { return Get().modWinByTwo.value_or(false); }
 inline bool SetModUnlockEverything(bool value) {
     Mutable().modUnlockEverything = value;
     return WriteSetting("mods", "unlock_everything", value ? "true" : "false");
+}
+inline bool ModKitChoice() { return Get().modKitChoice.value_or(true); }
+inline bool SetModKitChoice(bool value) {
+    Mutable().modKitChoice = value;
+    return WriteSetting("mods", "kit_choice", value ? "true" : "false");
 }
 inline bool ModBluePeach() { return Get().modBluePeach.value_or(false); }
 inline bool SetModBluePeach(bool value) {

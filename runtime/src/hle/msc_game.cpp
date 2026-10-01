@@ -4,14 +4,18 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 #include "abi_bridge.h"
 #include "hle_stubs.h"
+#include "msc_away_kits.h"
 #include "runtime_config.h"
+#include "wiimote_hid.h"
 #include <SDL3/SDL_timer.h>
 #include "guest_interrupt_context.h"
 #include "ppc_runtime.h"
 
 extern "C" void OS__Report_803B5BE4(CpuContext* ctx);
+extern "C" void GxNotifyGuestRamDmaWrite(uint32_t addr, uint32_t size);
 
 // nlPrintf(const char*, ...) is compiled to a no-op sink in retail; route it to
 // OSReport so engine diagnostics (allocator panics, asserts) reach the log.
@@ -246,7 +250,7 @@ void ShotCounter() {
 // and her rank is the highest, so against red captains she alone switches, to blue.
 constexpr uint32_t kCharacterInfo = 0x80505944u;  // sCharacterInfo[], 0x5C per entry
 constexpr uint32_t kPeachInfo = kCharacterInfo + 5 * 0x5C;
-constexpr uint32_t kColourMask = 0x4C, kColourRank = 0x50;
+constexpr uint32_t kColourMask = 0x4C, kColourRank = 0x50, kPrimaryColour = 0x54, kAlternateColour = 0x58;
 void BluePeach() {
     static bool s_applied = false;
     const bool want = RuntimeConfigFile::ModBluePeach();
@@ -256,9 +260,240 @@ void BluePeach() {
     s_applied = want;
 }
 
+// Kit choice: on captain select, X switches the home team between its home and away kit and Y the
+// away team (Wii Remote: - and 2). The game decides kits from the two captains' CharacterInfo colour masks and
+// ranks (overlapping masks: the higher rank takes its _alt kit, for the captain select panels via
+// ApplyCaptainColours, the match textures and the HUD), so the chosen outcome is produced by setting
+// those for the two captains; only one side can be in its away kit. The choice holds until the
+// captains change.
+constexpr uint32_t kSceneManager = 0x806E1838u;            // GameSceneManager: depth +0x04, handlers +0x88
+constexpr uint32_t kChooseCaptainsVtable = 0x8051D168u;    // ChooseCaptainsSceneV2
+constexpr uint32_t kSceneCaptainIds = 0x40, kSceneBothConfirmed = 0x4D;
+constexpr uint32_t kSceneCaptainPanels = 0xD7C, kCaptainPanelSize = 0x2AC;  // FECharacterPDAComponent[2]
+constexpr uint32_t kApplyCaptainColours = 0x801E0B8Cu;     // FECharacterPDAComponent::ApplyCaptainColours(int, int)
+enum class KitOutcome { Auto, BothHome, HomeAway, AwayAway };  // which side wears its away kit
+
+struct KitState {
+    KitOutcome outcome = KitOutcome::Auto;
+    int32_t captains[2] = {-1, -1};
+    int customSide = -1;  // side wearing a generated away kit (captain without one of its own)
+    bool saved = false;
+    uint32_t savedMask[12] = {}, savedRank[12] = {}, savedPrimary[12] = {};
+    uint32_t prevButtons[4] = {};
+};
+KitState g_kit;
+
+void RestoreCaptainColours() {
+    if (!g_kit.saved) return;
+    for (uint32_t i = 0; i < 12; ++i) {
+        Memory::Write32(kCharacterInfo + i * 0x5C + kColourMask, g_kit.savedMask[i]);
+        Memory::Write32(kCharacterInfo + i * 0x5C + kColourRank, g_kit.savedRank[i]);
+        Memory::Write32(kCharacterInfo + i * 0x5C + kPrimaryColour, g_kit.savedPrimary[i]);
+    }
+    g_kit.saved = false;
+}
+
+// Generated away kits for the captains the game gives only one (Mario, Luigi, Waluigi, Wario; their
+// mAlternateColour is 0 and no _alt art exists). The game keeps both teams in their home kit (so it
+// never looks for _alt files); the team colour is changed for the HUD and captain select, and the
+// team's textures are swapped in memory for recoloured versions while chosen (MscAwayKits makes them
+// on a worker thread from the disc files): the captain's kit and ExtraTextures, the sidekicks' team
+// texture (<sidekick>_<captain>) and the goalie's kit.
+constexpr uint32_t kTextureManager = 0x806E1F08u;   // gTextureManager
+constexpr uint32_t kGetTextureIndex = 0x802CE1B8u;  // glTextureManager::GetTextureIndex(hash)
+struct RecolouredTexture {
+    uint32_t addr, size;
+    std::vector<uint8_t> original;
+    uint64_t recolouredSum;
+};
+std::vector<RecolouredTexture> g_recoloured;
+int32_t g_recolouredCaptain = -1;
+
+uint64_t Checksum(const uint8_t* data, size_t size) {
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0; i < size; i += 61) h = (h ^ data[i]) * 1099511628211ull;
+    return h;
+}
+
+void RestoreRecolouredTextures() {
+    for (RecolouredTexture& t : g_recoloured) {
+        uint8_t* host = Memory::GetPointer(t.addr, t.size);
+        if (host != nullptr && Checksum(host, t.size) == t.recolouredSum) {  // still ours, not reloaded
+            std::memcpy(host, t.original.data(), t.size);
+            GxNotifyGuestRamDmaWrite(t.addr, t.size);
+        }
+    }
+    g_recoloured.clear();
+    g_recolouredCaptain = -1;
+}
+
+void EnsureTextureRecoloured(int32_t captain, const MscAwayKits::Texture& texture) {
+    const uint32_t mgr = Memory::Read32(kTextureManager);
+    if (mgr == 0) return;
+    GuestInterruptCallbackContext call;
+    call.get()->gpr[3] = mgr;
+    call.get()->gpr[4] = texture.hash;
+    InvokeIndirectCpu(kGetTextureIndex, call.get());
+    const uint32_t index = call.get()->gpr[3];
+    if (index >= 0xFFFF) return;  // not loaded
+    const uint32_t tex = Memory::Read32(Memory::Read32(mgr + 0x04) + index * 4);  // PlatTexture*
+    if (tex == 0 || Memory::Read32(tex + 0x08) != 2 /* GXTex_CMPR */) return;
+    const uint32_t data = Memory::Read32(tex + 0x14);  // m_SwizzledData
+    const uint32_t w = Memory::Read16(tex), h = Memory::Read16(tex + 2), levels = std::max(1u, uint32_t(Memory::Read8(tex + 4)));
+    if (data == 0 || w == 0 || h == 0) return;
+    uint32_t size = 0;
+    for (uint32_t l = 0; l < levels; ++l) {
+        const uint32_t lw = std::max(1u, w >> l), lh = std::max(1u, h >> l);
+        size += ((lw + 7) / 8) * ((lh + 7) / 8) * 32;
+    }
+    uint8_t* host = Memory::GetPointer(data, size);
+    if (host == nullptr) return;
+    for (const RecolouredTexture& t : g_recoloured) {
+        if (t.addr == data && Checksum(host, size) == t.recolouredSum) return;  // already done
+    }
+    std::vector<uint8_t> recoloured;
+    if (MscAwayKits::Get(captain, texture, host, size, w, h, levels, recoloured) != MscAwayKits::Result::Ready ||
+        recoloured.size() != size) {
+        return;  // still being made, or nothing to change
+    }
+    std::erase_if(g_recoloured, [&](const RecolouredTexture& t) { return t.addr == data; });  // reloaded
+    RecolouredTexture t{data, size, std::vector<uint8_t>(host, host + size), 0};
+    std::memcpy(host, recoloured.data(), size);
+    t.recolouredSum = Checksum(host, size);
+    GxNotifyGuestRamDmaWrite(data, size);
+    g_recoloured.push_back(std::move(t));
+}
+
+void UpdateCustomKitTextures() {
+    int32_t captain = -1;
+    if (g_kit.customSide >= 0 && MscAwayKits::Has(g_kit.captains[g_kit.customSide])) captain = g_kit.captains[g_kit.customSide];
+    if (captain != g_recolouredCaptain) {
+        RestoreRecolouredTextures();
+        if (captain >= 0) MscAwayKits::Prepare(captain);
+    }
+    if (captain < 0) return;
+    g_recolouredCaptain = captain;
+    for (const MscAwayKits::Texture& texture : MscAwayKits::Textures(captain)) EnsureTextureRecoloured(captain, texture);
+}
+
+void ApplyKitOutcome() {
+    RestoreCaptainColours();
+    g_kit.customSide = -1;
+    const int32_t c0 = g_kit.captains[0], c1 = g_kit.captains[1];
+    if (g_kit.outcome == KitOutcome::Auto || c0 < 0 || c1 < 0 || c0 > 11 || c1 > 11 || c0 == c1) return;
+    for (uint32_t i = 0; i < 12; ++i) {
+        g_kit.savedMask[i] = Memory::Read32(kCharacterInfo + i * 0x5C + kColourMask);
+        g_kit.savedRank[i] = Memory::Read32(kCharacterInfo + i * 0x5C + kColourRank);
+        g_kit.savedPrimary[i] = Memory::Read32(kCharacterInfo + i * 0x5C + kPrimaryColour);
+    }
+    g_kit.saved = true;
+    const uint32_t e0 = kCharacterInfo + static_cast<uint32_t>(c0) * 0x5C, e1 = kCharacterInfo + static_cast<uint32_t>(c1) * 0x5C;
+    // An away side whose captain has no away kit of its own wears a generated one: the game keeps
+    // both teams at home and only the team colour (and, in the match, the textures) change.
+    if (g_kit.outcome != KitOutcome::BothHome) {
+        const int side = g_kit.outcome == KitOutcome::HomeAway ? 0 : 1;
+        const int32_t captain = side == 0 ? c0 : c1;
+        if (Memory::Read32(kCharacterInfo + static_cast<uint32_t>(captain) * 0x5C + kAlternateColour) == 0) {
+            if (MscAwayKits::Has(captain)) {
+                Memory::Write32(e0 + kColourMask, 0x4000);
+                Memory::Write32(e1 + kColourMask, 0x8000);
+                Memory::Write32(kCharacterInfo + static_cast<uint32_t>(captain) * 0x5C + kPrimaryColour, MscAwayKits::TeamColour(captain));
+                g_kit.customSide = side;
+                return;
+            }
+        }
+    }
+    if (g_kit.outcome == KitOutcome::BothHome) {
+        Memory::Write32(e0 + kColourMask, 0x4000);  // disjoint: nobody switches
+        Memory::Write32(e1 + kColourMask, 0x8000);
+    } else {
+        const bool homeAway = g_kit.outcome == KitOutcome::HomeAway;
+        Memory::Write32(e0 + kColourMask, 0x4000);  // overlapping: the higher rank switches
+        Memory::Write32(e1 + kColourMask, 0x4000);
+        Memory::Write32(e0 + kColourRank, homeAway ? 250u : 1u);
+        Memory::Write32(e1 + kColourRank, homeAway ? 1u : 250u);
+    }
+}
+
+// Does `side` currently wear its away kit (NeedsAlternateColour with the live table)?
+bool SideInAwayKit(int side, int32_t c0, int32_t c1) {
+    if (g_kit.customSide == side) return true;
+    const uint32_t me = kCharacterInfo + static_cast<uint32_t>(side == 0 ? c0 : c1) * 0x5C;
+    const uint32_t them = kCharacterInfo + static_cast<uint32_t>(side == 0 ? c1 : c0) * 0x5C;
+    return (Memory::Read32(me + kColourMask) & Memory::Read32(them + kColourMask)) != 0 &&
+           static_cast<int32_t>(Memory::Read32(me + kColourRank)) > static_cast<int32_t>(Memory::Read32(them + kColourRank));
+}
+
+// Which kit button a pad holds: bit 0 = home team's (X / Wii Remote -), bit 1 = away team's (Y / 2).
+// Sides, not players: the game clears its side-to-pad mapping once captains are confirmed, and one
+// player often picks both teams.
+uint32_t KitButtonsDown(uint32_t chan) {
+    if (WiimoteHid::Sample hid; WiimoteHid::Read(chan, hid)) {
+        return ((hid.hold & 0x1000) ? 1u : 0u) | ((hid.hold & 0x0100) ? 2u : 0u);
+    }
+    PADStatus pad{};
+    if (!MscEmulatedRemote::ReadGameCubePad(chan, pad)) return 0;
+    return ((pad.button & PAD_BUTTON_X) ? 1u : 0u) | ((pad.button & PAD_BUTTON_Y) ? 2u : 0u);
+}
+
+void KitChoice() {
+    if (!RuntimeConfigFile::ModKitChoice()) {
+        if (g_kit.outcome != KitOutcome::Auto) {
+            g_kit.outcome = KitOutcome::Auto;
+            g_kit.customSide = -1;
+            RestoreCaptainColours();
+        }
+        UpdateCustomKitTextures();
+        return;
+    }
+    const uint32_t mgr = Memory::Read32(kSceneManager);
+    const uint32_t depth = mgr ? Memory::Read32(mgr + 0x04) : 0;
+    const uint32_t scene = depth > 0 && depth <= 32 ? Memory::Read32(mgr + 0x88 + (depth - 1) * 4) : 0;
+    uint32_t down[4] = {}, pressed = 0;
+    for (uint32_t chan = 0; chan < 4; ++chan) {
+        down[chan] = KitButtonsDown(chan);
+        pressed |= down[chan] & ~g_kit.prevButtons[chan];
+    }
+    if (scene != 0 && Memory::Read32(scene) == kChooseCaptainsVtable) {
+        const int32_t c0 = static_cast<int32_t>(Memory::Read32(scene + kSceneCaptainIds));
+        const int32_t c1 = static_cast<int32_t>(Memory::Read32(scene + kSceneCaptainIds + 4));
+        if (c0 != g_kit.captains[0] || c1 != g_kit.captains[1]) {
+            // New matchup: back to the game's own choice.
+            g_kit.captains[0] = c0;
+            g_kit.captains[1] = c1;
+            g_kit.outcome = KitOutcome::Auto;
+            g_kit.customSide = -1;
+            RestoreCaptainColours();
+        }
+        const bool ready = Memory::Read8(scene + kSceneBothConfirmed) != 0 && c0 >= 0 && c1 >= 0 && c0 <= 11 && c1 <= 11 && c0 != c1;
+        for (int side = 0; side < 2 && ready; ++side) {
+            if (!(pressed & (1u << side))) continue;
+            // Toggle this side: into its away kit (the other side goes home), or back home. Mario,
+            // Luigi, Waluigi and Wario have no away kit (mAlternateColour 0): forcing the game's own
+            // switch would load art that does not exist, so they get a generated one (MscAwayKits).
+            const int32_t captain = side == 0 ? c0 : c1;
+            const bool hasAwayKit = Memory::Read32(kCharacterInfo + static_cast<uint32_t>(captain) * 0x5C + kAlternateColour) != 0;
+            const bool inAway = SideInAwayKit(side, c0, c1);
+            if (!inAway && !hasAwayKit && !MscAwayKits::Has(captain)) continue;
+            g_kit.outcome = inAway ? KitOutcome::BothHome : (side == 0 ? KitOutcome::HomeAway : KitOutcome::AwayAway);
+            ApplyKitOutcome();
+            GuestInterruptCallbackContext call;
+            for (uint32_t panel = 0; panel < 2; ++panel) {
+                call.get()->gpr[3] = scene + kSceneCaptainPanels + panel * kCaptainPanelSize;
+                call.get()->gpr[4] = static_cast<uint32_t>(panel == 0 ? c0 : c1);
+                call.get()->gpr[5] = static_cast<uint32_t>(panel == 0 ? c1 : c0);
+                InvokeIndirectCpu(kApplyCaptainColours, call.get());
+            }
+        }
+    }
+    for (uint32_t chan = 0; chan < 4; ++chan) g_kit.prevButtons[chan] = down[chan];
+    UpdateCustomKitTextures();
+}
+
 void Apply() {
     try {
         UnlockEverything();
+        KitChoice();
         BluePeach();
         ShotCounter();
         FastStadiums();

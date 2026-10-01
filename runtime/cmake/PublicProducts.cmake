@@ -138,6 +138,11 @@ set_source_files_properties(${MKW_PPC_SEMANTIC_RUNTIME_SOURCES} PROPERTIES
     SKIP_UNITY_BUILD_INCLUSION ON
     SKIP_PRECOMPILE_HEADERS ON
     COMPILE_OPTIONS "${MKW_TRANSLATED_PPC_FP_OPTIONS}")
+# The generated away kits' colour maths gets the same policy, so every platform makes the same kits.
+set_source_files_properties("${MKW_RUNTIME_SOURCE_DIR}/src/hle/msc_away_kits.cpp" PROPERTIES
+    SKIP_UNITY_BUILD_INCLUSION ON
+    SKIP_PRECOMPILE_HEADERS ON
+    COMPILE_OPTIONS "${MKW_TRANSLATED_PPC_FP_OPTIONS}")
 set_target_properties(mkw_runtime_common PROPERTIES UNITY_BUILD ON UNITY_BUILD_MODE GROUP)
 target_precompile_headers(mkw_runtime_common PRIVATE "${MKW_RUNTIME_SOURCE_DIR}/include/mkw_pch.h")
 mkw_apply_common_compile_options(mkw_runtime_common)

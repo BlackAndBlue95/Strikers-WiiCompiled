@@ -743,6 +743,38 @@ extern "C" const char* DVDResolveHostPathForTest(const char* dvdPath)
     return resolved.c_str();
 }
 
+// Whole contents of a disc file, for runtime features that read game data themselves (the
+// generated away kits read texture bundles). Unlike DVDResolveHostPathForTest it never runs
+// DVDInit, so it is safe while the game runs and from any thread: the file table does not change
+// once DVDInit has built it.
+bool DVDReadFileForRuntime(const char* dvdPath, std::vector<uint8_t>& out)
+{
+    out.clear();
+    if (!g_dvdInitialized || !dvdPath || dvdPath[0] == '\0') {
+        return false;
+    }
+    const auto it = g_pathToEntry.find(NormalizePath(dvdPath));
+    if (it == g_pathToEntry.end() || it->second < 0 ||
+        it->second >= static_cast<int32_t>(g_fileEntries.size()) ||
+        g_fileEntries[it->second].isDirectory) {
+        return false;
+    }
+    const fs::path& hostPath = g_fileEntries[it->second].hostPath;
+    std::error_code ec;
+    const uintmax_t size = fs::file_size(hostPath, ec);
+    std::ifstream file(hostPath, std::ios::binary);
+    if (ec || !file) {
+        return false;
+    }
+    out.resize(static_cast<size_t>(size));
+    file.read(reinterpret_cast<char*>(out.data()), static_cast<std::streamsize>(size));
+    if (static_cast<uintmax_t>(file.gcount()) != size) {
+        out.clear();
+        return false;
+    }
+    return true;
+}
+
 // ============================================================================
 // High-Level DVD API
 // ============================================================================

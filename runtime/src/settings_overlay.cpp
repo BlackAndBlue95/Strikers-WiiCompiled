@@ -1076,6 +1076,14 @@ void DrawModSettings() {
     ImGui::TextDisabled("A deke or teleport through the goalie that gets cut short (Boo deking into\n"
                         "his own Kritter, Dry Bones teleporting behind the goal) no longer leaves\n"
                         "every shot passing through Kritter for the rest of the match.");
+    bool kitChoice = RuntimeConfigFile::ModKitChoice();
+    if (ImGui::Checkbox("Choose home/away kits on captain select", &kitChoice)) {
+        RuntimeConfigFile::SetModKitChoice(kitChoice);
+    }
+    ImGui::TextDisabled("With both captains picked, X switches the home team between its home and\n"
+                        "away kit and Y the away team (Wii Remote: - and 2). Only one team can wear\n"
+                        "its away kit at a time. Mario, Luigi, Waluigi and Wario get generated away\n"
+                        "kits (white, sky blue, orange, blue) recoloured from their own.");
     ImGui::SeparatorText("Gameplay extras");
     bool unlockEverything = RuntimeConfigFile::ModUnlockEverything();
     if (ImGui::Checkbox("Unlock everything", &unlockEverything)) {
