@@ -351,9 +351,22 @@ void ensure_player_index(GameController& controller) noexcept {
     return;
   }
   ensure_port_preferences_loaded();
+  // Strikers-WiiCompiled: a port saved for a controller that isn't connected is lent out, so a
+  // lone pad still plays as player 1; apply_port_preferences hands the port back when the saved
+  // controller returns. Ports set to None stay reserved.
+  const auto reserved = [&](int32_t port) {
+    const auto& preference = g_portPreferences[port];
+    if (preference.state != PortPreferenceState::Controller) {
+      return preference.state != PortPreferenceState::Unset;
+    }
+    return std::any_of(g_GameControllers.begin(), g_GameControllers.end(), [&](const auto& entry) {
+      return entry.second.m_controller != controller.m_controller &&
+             identity_match(preference.identity, controller_identity(entry.second)) != IdentityMatch::None;
+    });
+  };
   const auto claim = [&](bool skipConfiguredPorts) {
     for (int32_t port = 0; port < PAD_MAX_CONTROLLERS; ++port) {
-      if (skipConfiguredPorts && g_portPreferences[port].state != PortPreferenceState::Unset) {
+      if (skipConfiguredPorts && reserved(port)) {
         continue;
       }
       const bool taken = std::any_of(g_GameControllers.begin(), g_GameControllers.end(), [&](const auto& entry) {
