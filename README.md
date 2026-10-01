@@ -39,6 +39,22 @@ Known issues:
 - Online play and WiiConnect24 features are not supported.
 - Only the USA Rev 1 disc (`R4QE01`) has been mapped. Other regions and revisions won't work.
 
+### Help wanted: real Wii Remotes
+
+Everything so far has been built and tested with gamepads. **Real Wii Remotes are untested** and
+missing pieces, and contributions are very welcome:
+
+- **No IR pointer.** Real remotes are read through SDL, which exposes the buttons, accelerometer
+  and Nunchuk but not the remote's IR camera, so there's no pointer for menus or Mega Strike
+  defence. Adding it means reading the remote's Bluetooth HID reports directly (as Dolphin does).
+- **The mods only cover gamepads and keyboard.** Menu navigation and "No Mega Strikes" run for
+  emulated remotes only; extending them to real remotes (navigating with the remote's D-pad)
+  would make them playable without a pointer.
+- Wii Remote pairing on macOS can be unreliable.
+
+Where to start: `runtime/src/wii_remote_input.cpp` (the real-remote path) and
+`runtime/src/hle/input/pad.cpp` (the emulated remote and the mods).
+
 ## Controls
 
 Strikers Charged expects a Wii Remote and Nunchuk. This port emulates both from a regular
