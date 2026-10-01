@@ -30,6 +30,10 @@ $NodBuilds = @{
     'AMD64' = @('nodtool-windows-x86_64.exe', '1e150e33b88157527f96caea89ad12267aed8b117180c9ebaa89ebe89c1d948d')
     'ARM64' = @('nodtool-windows-arm64.exe', 'a2cf9a1ab153fb1252e9676a60d9dd6f68d8f192387bbfbf571e7ba19b8047aa')
 }
+# LLVM-MinGW ships no C++/WinRT headers (music_attenuation.cpp needs them), so they're generated
+# with cppwinrt.exe from the same NuGet package Launcher/Prepare-Dependencies.ps1 pins.
+$CppWinRtVersion = '3.0.260818.1'
+$CppWinRtSha = 'a8993608ae9263a8288e1a1d9ee2684a5632f4acc59e1e89ddd86b3b889a7367'
 Set-Location $Repo
 
 function Fail([string] $Message) { Write-Host "`nerror: $Message" -ForegroundColor Red; exit 1 }
@@ -63,7 +67,7 @@ if ($clangVersion -notmatch 'windows-gnu|mingw') {
 New-Item -ItemType Directory -Force $BuildDir | Out-Null
 
 $ExpectedDolSha = ([regex]::Match((Get-Content $Project -Raw), 'sha256:\s*([0-9a-fA-F]{64})')).Groups[1].Value.ToLower()
-function Get-Sha([string] $Path) { (Get-FileHash $Path -Algorithm SHA256).Hash.ToLower() }
+function Get-Sha([string] $Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLower() }
 function Assert-Dol([string] $Path) {
     $actual = Get-Sha $Path
     if ($actual -ne $ExpectedDolSha) {
@@ -73,8 +77,8 @@ function Assert-Dol([string] $Path) {
 # The folder that directly contains sys\main.dol and files\ (the folder itself or DATA\), or $null.
 function Get-DiscRoot([string] $Folder) {
     foreach ($candidate in @($Folder, (Join-Path $Folder 'DATA'))) {
-        if ((Test-Path (Join-Path $candidate 'sys/main.dol') -PathType Leaf) -and (Test-Path (Join-Path $candidate 'files') -PathType Container)) {
-            return (Resolve-Path $candidate).Path
+        if ((Test-Path -LiteralPath (Join-Path $candidate 'sys/main.dol') -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $candidate 'files') -PathType Container)) {
+            return (Resolve-Path -LiteralPath $candidate).Path
         }
     }
     return $null
@@ -95,6 +99,32 @@ function Get-NodTool {
     if ((Get-Sha $part) -ne $sha) { Remove-Item $part -Force; Fail 'nodtool download failed its checksum' }
     Move-Item $part $tool -Force
     return $tool
+}
+# Generates the C++/WinRT projection headers from this machine's Windows metadata, once.
+function Get-CppWinRtHeaders {
+    $headers = Join-Path $BuildDir 'cppwinrt'
+    if (Test-Path (Join-Path $headers 'winrt/base.h') -PathType Leaf) { return $headers }
+    Step 'Generating C++/WinRT headers'
+    $toolRoot = Join-Path $BuildDir 'tools/cppwinrt'
+    $compiler = Join-Path $toolRoot 'bin/cppwinrt.exe'
+    if (-not (Test-Path $compiler -PathType Leaf)) {
+        New-Item -ItemType Directory -Force (Join-Path $BuildDir 'tools') | Out-Null
+        Write-Host "    downloading cppwinrt $CppWinRtVersion"
+        # Expand-Archive in Windows PowerShell only accepts a .zip extension (a .nupkg is a zip).
+        $part = Join-Path $BuildDir 'tools/cppwinrt.zip'
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -UseBasicParsing -Uri "https://www.nuget.org/api/v2/package/Microsoft.Windows.CppWinRT/$CppWinRtVersion" -OutFile $part
+        if ((Get-Sha $part) -ne $CppWinRtSha) { Remove-Item $part -Force; Fail 'cppwinrt download failed its checksum' }
+        if (Test-Path $toolRoot) { Remove-Item $toolRoot -Recurse -Force }
+        Expand-Archive $part $toolRoot
+        Remove-Item $part -Force
+    }
+    if (Test-Path $headers) { Remove-Item $headers -Recurse -Force }
+    New-Item -ItemType Directory -Force $headers | Out-Null
+    Logged 'cppwinrt.log' $compiler @('-input', 'local', '-output', $headers)
+    if (-not (Test-Path (Join-Path $headers 'winrt/base.h') -PathType Leaf)) { Fail "cppwinrt produced no winrt\base.h (see $(Join-Path $BuildDir 'cppwinrt.log'))" }
+    return $headers
 }
 function Expand-DiscImage([string] $Image) {
     Step 'Extracting your disc image (a few minutes)'
@@ -128,7 +158,8 @@ if (-not $Disc -and -not $SkipTranslate -and -not (Test-Path (Join-Path $Repo 'A
 
 $DiscRoot = $null
 if ($Disc) {
-    if (Test-Path $Disc -PathType Container) {
+    # -LiteralPath throughout: image names like "Game [R4QE01].wbfs" are not wildcards.
+    if (Test-Path -LiteralPath $Disc -PathType Container) {
         $sourceRoot = Get-DiscRoot $Disc
         if (-not $sourceRoot) { Fail "$Disc doesn't look like an extracted disc (expected sys\main.dol and files\ in it or in DATA\)" }
         Assert-Dol (Join-Path $sourceRoot 'sys/main.dol')
@@ -137,19 +168,19 @@ if ($Disc) {
             New-Item -ItemType Directory -Force $AppDir | Out-Null
             $tmp = "$GameDir.tmp"
             if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-            Copy-Item $sourceRoot $tmp -Recurse
+            Copy-Item -LiteralPath $sourceRoot $tmp -Recurse
             if (Test-Path $GameDir) { Remove-Item $GameDir -Recurse -Force }
             Move-Item $tmp $GameDir
             Write-Host "    installed to $GameDir"
         }
         $DiscRoot = $GameDir
-    } elseif (Test-Path $Disc -PathType Leaf) {
+    } elseif (Test-Path -LiteralPath $Disc -PathType Leaf) {
         $existing = Get-DiscRoot $GameDir
         if ($existing -and ((Get-Sha (Join-Path $existing 'sys/main.dol')) -eq $ExpectedDolSha)) {
             Write-Host "    using the already-extracted game in $GameDir"
             $DiscRoot = $existing
         } else {
-            Expand-DiscImage (Resolve-Path $Disc).Path
+            Expand-DiscImage (Resolve-Path -LiteralPath $Disc).Path
             $DiscRoot = $GameDir
         }
     } else {
@@ -184,10 +215,12 @@ if (-not $SkipTranslate) {
         '--native-source-dir', 'runtime/src', '--out', 'generated/build_shards')
 }
 
+$cppWinRt = Get-CppWinRtHeaders
+
 Step 'Configuring the native build'
 Logged 'configure.log' $cmake @('-S', 'runtime', '-B', $BuildDir, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
     "-DCMAKE_C_COMPILER=$($clang -replace '\\', '/')", "-DCMAKE_CXX_COMPILER=$($clangxx -replace '\\', '/')",
-    "-DCMAKE_MAKE_PROGRAM=$($ninja -replace '\\', '/')")
+    "-DCMAKE_MAKE_PROGRAM=$($ninja -replace '\\', '/')", "-DMKW_CPPWINRT_INCLUDE_DIR=$($cppWinRt -replace '\\', '/')")
 
 Step 'Compiling (the first build takes a long time)'
 Logged 'build.log' $cmake @('--build', $BuildDir, '--target', 'WiiCompiled', '--parallel', "$Jobs")
