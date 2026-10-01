@@ -45,21 +45,23 @@ Known issues:
 - Online play and WiiConnect24 features are not supported.
 - Only the USA Rev 1 disc (`R4QE01`) has been mapped. Other regions and revisions won't work.
 
-### Help wanted: real Wii Remotes
+### Real Wii Remotes (experimental)
 
-Everything so far has been built and tested with gamepads. **Real Wii Remotes are untested** and
-missing pieces, and contributions are very welcome:
+Real Wii Remotes, with or without a Nunchuk, are driven directly over Bluetooth HID the way
+Dolphin does it: the IR camera is switched on for the **pointer** (menus, Mega Strike defence),
+along with the accelerometers and the Nunchuk. Pair the remote in your system's Bluetooth settings
+(press 1+2 or the red SYNC button, leave any PIN empty), and it takes the first free player port.
+You need a sensor bar (or any IR source) for the pointer.
 
-- **No IR pointer.** Real remotes are read through SDL, which exposes the buttons, accelerometer
-  and Nunchuk but not the remote's IR camera, so there's no pointer for menus or Mega Strike
-  defence. Adding it means reading the remote's Bluetooth HID reports directly (as Dolphin does).
-- **The mods only cover gamepads and keyboard.** Menu navigation and "No Mega Strikes" run for
-  emulated remotes only; extending them to real remotes (navigating with the remote's D-pad)
-  would make them playable without a pointer.
-- Wii Remote pairing on macOS can be unreliable.
+This is new and has had little testing, so reports are very welcome. `console.log` lists each step
+("Wii Remote connected on port 1", "Nunchuk connected", "IR camera setup failed", ...). Known gaps:
 
-Where to start: `runtime/src/wii_remote_input.cpp` (the real-remote path) and
-`runtime/src/hle/input/pad.cpp` (the emulated remote and the mods).
+- On macOS, plain HID access to Wii Remotes may not work at all (Dolphin uses a separate
+  Bluetooth backend there).
+- The Wii U Pro Controller isn't supported by this backend.
+
+Where to start: `runtime/src/wiimote_hid.cpp` (the remote driver) and
+`runtime/src/wii_remote_input.cpp` (how its state reaches the game).
 
 ## Controls
 
@@ -88,7 +90,7 @@ match, and on an Xbox-style pad they sit where a Switch controller's would (bott
 Buttons can be rebound per controller in the **F10** settings bar, which also has resolution,
 FPS counter, volume and the mods below. Settings are saved to `Config.toml` straight away.
 
-Real Wii Remotes use the game's original controls (see *Help wanted* above).
+Real Wii Remotes use the game's original controls (see *Real Wii Remotes* above).
 
 ## Mods
 

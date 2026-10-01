@@ -2,6 +2,7 @@
 
 #include "runtime_config.h"
 #include "runtime_log.h"
+#include "wiimote_hid.h"
 
 #include <dolphin/pad.h>
 #include <SDL3/SDL_gamepad.h>
@@ -420,6 +421,16 @@ void ConfigureSdlHints(bool enabled) {
     // A rescan may be mid-flight; drop its bookkeeping so Poll() is not left
     // waiting for a FinishRescan() that can no longer happen.
     g_driverOffSinceMs = 0;
+    // MSC: remotes are driven by the HID backend (wiimote_hid.cpp), which enables the IR pointer
+    // that SDL's Wii driver leaves off. SDL's driver stays disabled so only one side talks to them.
+    if (enabled) {
+        SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_WII, "0");
+        g_wiiDriverEnabled = false;
+        WiimoteHid::Start();
+        RT_LOG(RT_TAG_CONFIG) << "Bluetooth Wii Remote support enabled (HID backend)" << std::endl;
+        return;
+    }
+    WiimoteHid::Stop();
     if (!SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_WII, enabled ? "1" : "0")) {
         RT_LOG(RT_TAG_CONFIG) << "Failed to set " << SDL_HINT_JOYSTICK_HIDAPI_WII << ": " << SDL_GetError()
                               << std::endl;
@@ -533,6 +544,9 @@ Kind KindForName(const char* name) {
 // Kind of the SDL gamepad assigned to a game port, NotWii when empty.
 Kind KindForPort(uint32_t port) {
     if (port >= PAD_MAX_CONTROLLERS) return Kind::NotWii;
+    if (WiimoteHid::Sample hid; WiimoteHid::Read(port, hid)) {
+        return hid.hasNunchuk ? Kind::RemoteWithNunchuk : Kind::Remote;
+    }
     SDL_Gamepad* gamepad = SDL_GetGamepadFromPlayerIndex(static_cast<int>(port));
     if (gamepad == nullptr) return Kind::NotWii;
     return KindForName(SDL_GetGamepadName(gamepad));
@@ -559,6 +573,9 @@ static bool IsKpadKind(Kind kind) {
 // overlay's Draw all run there), so the port memory needs no locking.
 Kind EffectiveKind(uint32_t chan) {
     if (chan >= PAD_MAX_CONTROLLERS) return Kind::NotWii;
+    if (WiimoteHid::Sample hid; WiimoteHid::Read(chan, hid)) {
+        return hid.hasNunchuk ? Kind::RemoteWithNunchuk : Kind::Remote;
+    }
     PortMemory& memory = g_ports[chan];
     SDL_Gamepad* gamepad = SDL_GetGamepadFromPlayerIndex(static_cast<int>(chan));
     const Kind live = gamepad != nullptr ? KindForName(SDL_GetGamepadName(gamepad)) : Kind::NotWii;
@@ -617,6 +634,25 @@ int16_t ClassicStickRaw(Sint16 axis, bool invert) {
 bool ReadKpadSample(uint32_t chan, KpadSample& sample) {
     if (chan >= PAD_MAX_CONTROLLERS) {
         return false;
+    }
+    if (WiimoteHid::Sample hid; WiimoteHid::Read(chan, hid)) {
+        // Remote axes (x left, y forward, z up) to the KPAD frame used here (rest: y = -1);
+        // WPADRead/KPADRead turn these back into the raw axes.
+        sample = {};
+        sample.hold = hid.hold;
+        sample.acc[0] = -hid.acc[0];
+        sample.acc[1] = -hid.acc[2];
+        sample.acc[2] = hid.acc[1];
+        sample.hasNunchuk = hid.hasNunchuk;
+        sample.stick[0] = hid.stick[0];
+        sample.stick[1] = hid.stick[1];
+        sample.nunchukAcc[0] = -hid.nunchukAcc[0];
+        sample.nunchukAcc[1] = -hid.nunchukAcc[2];
+        sample.nunchukAcc[2] = hid.nunchukAcc[1];
+        sample.hasPointer = hid.hasPointer;
+        sample.pointer[0] = hid.pointer[0];
+        sample.pointer[1] = hid.pointer[1];
+        return true;
     }
     SDL_Gamepad* gamepad = SDL_GetGamepadFromPlayerIndex(static_cast<int>(chan));
     const Kind kind = gamepad != nullptr ? KindForName(SDL_GetGamepadName(gamepad)) : Kind::NotWii;
