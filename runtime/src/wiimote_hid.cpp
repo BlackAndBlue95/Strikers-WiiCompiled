@@ -76,6 +76,8 @@ struct Remote {
     bool needsSetup = true;       // extension/IR/report mode (re)initialisation pending
     uint64_t lastInputMs = 0;
     uint64_t lastWriteTestMs = 0;
+    uint64_t lastLogMs = 0;
+    uint32_t dataReports = 0;     // 0x37 reports since the last log line
     float lastPair[2] = {200.f, 0.f}; // last seen dot1->dot2 vector, for single-dot frames
     float smoothed[2] = {0.f, 0.f};
     bool smoothedValid = false;
@@ -328,6 +330,16 @@ void UpdatePointer(Remote& r, Sample& s) {
     s.pointer[1] = py;
 }
 
+void LogState(Remote& r, const Sample& s) {
+    int dots = 0;
+    for (int i = 0; i < 4; ++i) dots += (s.dotX[i] < 1023 && s.dotY[i] < 767) ? 1 : 0;
+    RT_LOGF(RT_TAG_CONFIG,
+            "Wii Remote %u: %u reports/2s hold=%04X dots=%d ptr=%s(%+.2f,%+.2f) acc=(%+.2f,%+.2f,%+.2f) nunchuk=%d "
+            "stick=(%+.2f,%+.2f)\n",
+            r.chan + 1, r.dataReports, s.hold, dots, s.hasPointer ? "" : "off", s.pointer[0], s.pointer[1], s.acc[0],
+            s.acc[1], s.acc[2], s.hasNunchuk ? 1 : 0, s.stick[0], s.stick[1]);
+}
+
 void HandleDataReport(Remote& r, const uint8_t* buf) {
     Sample s;
     s.connected = true;
@@ -366,6 +378,13 @@ void HandleDataReport(Remote& r, const uint8_t* buf) {
         s.nunchukAcc[2] = AccelG(r.nunchukAccel, 2, nz);
         if (!(e[5] & 0x01)) s.hold |= kWpadZ;
         if (!(e[5] & 0x02)) s.hold |= kWpadC;
+    }
+    ++r.dataReports;
+    // A line every 2 s while connected, so a tester's console.log shows what the remote sends.
+    if (SDL_GetTicks() - r.lastLogMs >= 2000) {
+        LogState(r, s);
+        r.lastLogMs = SDL_GetTicks();
+        r.dataReports = 0;
     }
     std::lock_guard<std::mutex> lock(g_mutex);
     g_samples[r.chan] = s;
@@ -537,6 +556,11 @@ void ThreadMain() {
                 HandleInput(r, buf, n);
             }
             if (!dead && r.needsSetup) Setup(r);
+            // Connected but no data reports: the reporting mode never took (logged every 3 s).
+            if (!dead && r.dataReports == 0 && SDL_GetTicks() - r.lastLogMs >= 3000) {
+                RT_LOGF(RT_TAG_CONFIG, "Wii Remote %u: connected, but no data reports (0x37) arriving\n", r.chan + 1);
+                r.lastLogMs = SDL_GetTicks();
+            }
             // Windows and the DolphinBar only report a remote that went away when it is written to
             // (Dolphin's WRITE_TEST_INTERVAL): send a rumble-off report every second.
             if (!dead && SDL_GetTicks() - r.lastWriteTestMs >= 1000) {

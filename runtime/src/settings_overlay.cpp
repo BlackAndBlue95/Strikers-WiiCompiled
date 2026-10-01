@@ -9,6 +9,7 @@
 #include "runtime_config.h"
 #include "runtime_log.h"
 #include "wii_remote_input.h"
+#include "wiimote_hid.h"
 
 #include <imgui.h>
 #include <SDL3/SDL_events.h>
@@ -346,7 +347,7 @@ void DrawWiiRemoteSettings(uint32_t selectedGamePort) {
         RuntimeConfigFile::SetWiiRemotesEnabled(g_wiiRemotesEnabled);
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Takes effect on the next launch. Turn this off if you use a Mayflash DolphinBar.");
+        ImGui::SetTooltip("Takes effect on the next launch. A Mayflash DolphinBar works too, in mode 4.");
     }
     ImGui::TextDisabled("Pairing: Windows Settings > Bluetooth > Add device, then press 1+2");
     ImGui::TextDisabled("(or the red SYNC button) on the remote. Leave the PIN empty.");
@@ -421,8 +422,35 @@ void DrawWiiRemoteSettings(uint32_t selectedGamePort) {
             ImGui::TextDisabled("button mapping above does not apply to it.");
         }
     }
-    if (kind == WiiRemoteInput::Kind::Remote || kind == WiiRemoteInput::Kind::RemoteWithNunchuk ||
-        kind == WiiRemoteInput::Kind::RemoteWithClassic) {
+    if (WiimoteHid::Sample hid; WiimoteHid::Read(selectedGamePort, hid)) {
+        // Live state straight from the remote (HID backend), for checking a setup.
+        ImGui::SeparatorText("Live input");
+        const auto held = [&](uint32_t bit, const char* on, const char* off) { return (hid.hold & bit) ? on : off; };
+        ImGui::Text("Buttons: %s %s %s %s %s %s %s  %s %s %s %s  %s %s", held(0x0800, "A", "a"), held(0x0400, "B", "b"),
+                    held(0x0200, "1", "1"), held(0x0100, "2", "2"), held(0x0010, "PLUS", "plus"),
+                    held(0x1000, "MINUS", "minus"), held(0x8000, "HOME", "home"), held(0x0008, "UP", "up"),
+                    held(0x0004, "DOWN", "down"), held(0x0001, "LEFT", "left"), held(0x0002, "RIGHT", "right"),
+                    held(0x2000, "Z", "z"), held(0x4000, "C", "c"));
+        int dots = 0;
+        for (int i = 0; i < 4; ++i) dots += (hid.dotX[i] < 1023 && hid.dotY[i] < 767) ? 1 : 0;
+        ImGui::Text("IR dots: %d   (%u,%u) (%u,%u) (%u,%u) (%u,%u)", dots, hid.dotX[0], hid.dotY[0], hid.dotX[1],
+                    hid.dotY[1], hid.dotX[2], hid.dotY[2], hid.dotX[3], hid.dotY[3]);
+        if (hid.hasPointer) {
+            ImGui::Text("Pointer: x %+.2f  y %+.2f", hid.pointer[0], hid.pointer[1]);
+        } else {
+            ImGui::Text("Pointer: off screen (no sensor bar dots seen)");
+        }
+        ImGui::Text("Accel: x %+.2f  y %+.2f  z %+.2f g", hid.acc[0], hid.acc[1], hid.acc[2]);
+        if (hid.hasNunchuk) {
+            ImGui::Text("Nunchuk: stick %+.2f %+.2f   accel %+.2f %+.2f %+.2f g", hid.stick[0], hid.stick[1],
+                        hid.nunchukAcc[0], hid.nunchukAcc[1], hid.nunchukAcc[2]);
+        } else {
+            ImGui::Text("Nunchuk: not detected");
+        }
+        ImGui::TextDisabled("Capitals = held. Lying flat, buttons up, accel reads about (0, 0, +1).");
+        ImGui::TextDisabled("Two IR dots should appear when pointing at the sensor bar.");
+    } else if (kind == WiiRemoteInput::Kind::Remote || kind == WiiRemoteInput::Kind::RemoteWithNunchuk ||
+               kind == WiiRemoteInput::Kind::RemoteWithClassic) {
         DrawWiiRemoteAccelerometer(selectedGamePort);
     }
 

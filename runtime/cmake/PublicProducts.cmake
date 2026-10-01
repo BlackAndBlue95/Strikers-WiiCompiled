@@ -75,6 +75,16 @@ endfunction()
 
 add_library(mkw_runtime_common OBJECT ${SOURCES})
 mkw_configure_object_target(mkw_runtime_common)
+# The commit this build came from (console.log's first line); refreshed every build, rewritten only
+# when it changes so nothing recompiles needlessly.
+set(MSC_BUILD_VERSION_DIR "${CMAKE_BINARY_DIR}/msc_build_version")
+add_custom_target(msc_build_version
+    COMMAND "${CMAKE_COMMAND}" -DREPO=${MKW_RUNTIME_SOURCE_DIR}/.. -DOUT=${MSC_BUILD_VERSION_DIR}/msc_build_version.h
+            -P "${MKW_RUNTIME_SOURCE_DIR}/cmake/BuildVersion.cmake"
+    BYPRODUCTS "${MSC_BUILD_VERSION_DIR}/msc_build_version.h"
+    VERBATIM)
+add_dependencies(mkw_runtime_common msc_build_version)
+target_include_directories(mkw_runtime_common PRIVATE "${MSC_BUILD_VERSION_DIR}")
 target_compile_features(mkw_runtime_common PRIVATE cxx_std_20)
 target_compile_definitions(mkw_runtime_common PRIVATE
     SDL_MAIN_HANDLED

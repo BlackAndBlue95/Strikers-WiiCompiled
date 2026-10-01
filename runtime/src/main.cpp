@@ -1,3 +1,4 @@
+#include "msc_build_version.h"
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -425,8 +426,11 @@ void InitializeProcessTranscript(int argc, char** argv) {
 
     {
         std::lock_guard<std::mutex> lock(state.fileMutex);
-        state.file << "[runtime] WiiCompiled "
-                   << (setupVersion.empty() ? "version unknown" : setupVersion) << "\n";
+        state.file << "[runtime] Strikers-WiiCompiled " << MSC_BUILD_VERSION;
+        if (!setupVersion.empty()) {
+            state.file << " (setup " << setupVersion << ")";
+        }
+        state.file << "\n";
         state.file << "[runtime] process transcript started\n";
         state.file << "[runtime] pid=" << pid << "\n";
         state.file << "[runtime] argv=";

@@ -7,3 +7,4 @@ translator/tests/Translator.Tests/TestAssets/**/*.bin binary
 *.cmd text eol=crlf
 *.bat text eol=crlf
 *.sh text eol=lf
+runtime/cmake/git_archive_version.txt export-subst
