@@ -234,8 +234,10 @@ bool ReadSample(uint32_t chan, WiiRemoteInput::KpadSample& sample) {
 } // namespace
 
 // KPADRead: fills KPADStatus[0] for `chan` from the Bluetooth remote, returns the entry count.
+void MSC_PollRemoteConnections();  // msc_game.cpp
 extern "C" int32_t KPAD__Read_HLE(uint32_t chan, uint32_t statusPtr, uint32_t count)
 {
+    MSC_PollRemoteConnections();
     if (chan >= g_channels.size() || statusPtr == 0 || count == 0) {
         return 0;
     }
