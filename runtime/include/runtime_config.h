@@ -93,6 +93,10 @@ struct RuntimeUserConfig {
     std::array<std::optional<std::string>, 12> controllerButtons;
     std::optional<bool> rumbleEnabled;
     std::optional<int32_t> muteHotkey;
+    // [mods]: controller-friendly changes to the game, all on by default.
+    std::optional<bool> modMenuNavigation;
+    std::optional<bool> modSelectionBadge;
+    std::optional<bool> modNoMegaStrikes;
     std::map<std::string, std::string> controllerExpressions;
 };
 
@@ -327,6 +331,11 @@ inline void EnsureConfigFile() {
               "# guest can observe it. Set to false to mix inline on the guest\n"
               "# thread exactly as the runtime did before.\n"
               "mix_worker = true\n\n"
+              "[mods]\n"
+              "# Controller-friendly changes (also in the F10 bar, Mods menu).\n"
+              "menu_navigation = true\n"
+              "selection_badge = true\n"
+              "no_mega_strikes = true\n\n"
               "[network]\n"
               "enabled = true\n\n"
               "[discord]\n"
@@ -414,6 +423,9 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     }
 
     config.rumbleEnabled = FindConfigValue<bool>(document, "controller", "rumble");
+    config.modMenuNavigation = FindConfigValue<bool>(document, "mods", "menu_navigation");
+    config.modSelectionBadge = FindConfigValue<bool>(document, "mods", "selection_badge");
+    config.modNoMegaStrikes = FindConfigValue<bool>(document, "mods", "no_mega_strikes");
     if (auto value = FindConfigInt(document, "audio", "mute_key")) {
         config.muteHotkey = *value;
     }
@@ -715,6 +727,23 @@ inline bool RumbleEnabled(bool fallback = true) {
 inline bool SetRumbleEnabled(bool value) {
     Mutable().rumbleEnabled = value;
     return WriteSetting("controller", "rumble", value ? "true" : "false");
+}
+
+// Mods (F10 > Mods). Each is on unless disabled.
+inline bool ModMenuNavigation() { return Get().modMenuNavigation.value_or(true); }
+inline bool ModSelectionBadge() { return Get().modSelectionBadge.value_or(true); }
+inline bool ModNoMegaStrikes() { return Get().modNoMegaStrikes.value_or(true); }
+inline bool SetModMenuNavigation(bool value) {
+    Mutable().modMenuNavigation = value;
+    return WriteSetting("mods", "menu_navigation", value ? "true" : "false");
+}
+inline bool SetModSelectionBadge(bool value) {
+    Mutable().modSelectionBadge = value;
+    return WriteSetting("mods", "selection_badge", value ? "true" : "false");
+}
+inline bool SetModNoMegaStrikes(bool value) {
+    Mutable().modNoMegaStrikes = value;
+    return WriteSetting("mods", "no_mega_strikes", value ? "true" : "false");
 }
 
 inline int32_t MuteHotkey(int32_t fallback) {

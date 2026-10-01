@@ -47,7 +47,7 @@ gamepad, with a layout that follows **Vague Rant's Classic Controller hack for t
 
 | Gamepad | Game action |
 | --- | --- |
-| Left stick | Nunchuk stick (movement), and the menu pointer |
+| Left stick | Nunchuk stick (movement) |
 | East face button | A: pass |
 | South face button / right trigger (ZR) | B: shoot |
 | North face button | C: item |
@@ -57,10 +57,31 @@ gamepad, with a layout that follows **Vague Rant's Classic Controller hack for t
 | Right shoulder (R) / right stick / D-pad | D-pad (deke, tackle) |
 | Start / Back | 1: pause |
 
-In menus, the left stick moves the on-screen pointer, which stays where you leave it.
+Menus work like a console game: the D-pad or either stick moves the selection, **A** picks and
+**B** goes back (see *Mods* below).
 
-Press **F10** in-game for the settings bar: resolution, FPS counter, volume and controller
-bindings. Settings are saved to `Config.toml` straight away.
+Press **F10** in-game for the settings bar: resolution, FPS counter, volume, controller bindings
+and mods. Settings are saved to `Config.toml` straight away.
+
+## Mods
+
+Strikers Charged was built around the Wii Remote pointer. These controller-friendly changes are
+**on by default** and can each be switched off under **F10 > Mods** (or `[mods]` in
+`Config.toml`):
+
+- **Controller menu navigation:** no pointer in menus. The D-pad and sticks move between
+  buttons (on the main ring menu, the stick picks the icon in that direction), new screens start
+  on their first option, **B** goes back, and left/right flip stages on stage select.
+- **Selection badge:** the selected button is marked with a badge in the player's colour.
+- **No Mega Strikes with controllers:** see below.
+
+> [!NOTE]
+> **Mega Strikes are disabled when you play with a controller.** Defending a Mega Strike means
+> pointing the Wii Remote at each incoming ball, which a gamepad or keyboard can't do, so the
+> shots would simply always go in. While a gamepad or keyboard is in use, every match has Mega
+> Strikes off for both sides: a fully charged captain shot becomes a normal strong shot, for you
+> and the CPU alike. Your saved game options aren't changed, and with real Wii Remotes Mega
+> Strikes work as normal. Turn the mod off under F10 > Mods if you want them back.
 
 ## Requirements
 

@@ -3,6 +3,7 @@
 #include "hle/controller_status_contract.h"
 #include "input_bindings.h"
 #include "wii_remote_input.h"
+#include "runtime_config.h"
 #include "aurora_events.h"
 
 #include <algorithm>
@@ -129,7 +130,7 @@ bool Present(uint32_t chan) {
     return ReadBoundPad(chan, pad);
 }
 
-// Menu navigation (mod): MSC's menus are pointer-only. To make them feel like a console menu, the
+// Menu navigation (mod, F10 > Mods > menu_navigation): MSC's menus are pointer-only. To make them feel like a console menu, the
 // D-pad and left-stick flicks move a highlight between buttons: the emulated pointer snaps onto the
 // nearest FEPointerRegion in that direction and the hand is hidden, so the button's own hover
 // highlight is the selection and the game's hover/click logic (A to confirm) runs unchanged. When
@@ -378,6 +379,12 @@ struct Result {
 Result Update(uint32_t chan, uint32_t dir, Point stick, bool backButton, float cursor[2]) {
     State& st = s_state[chan];
     Result r;
+    if (!RuntimeConfigFile::ModMenuNavigation()) {
+        // Off (or just switched off): give the game its pointer and hand back.
+        if (st.scene != 0 || st.hadButtons) { SetHandVisible(chan, true); st = {}; }
+        s_hasSelected[chan] = false;
+        return r;
+    }
     // A menu is up whenever live pointer buttons exist (none during matches).
     const std::vector<Button> buttons = CollectButtons(chan);
     s_hasSelected[chan] = false;
@@ -511,6 +518,7 @@ Result Update(uint32_t chan, uint32_t dir, Point stick, bool backButton, float c
 // selected button's top-left corner (corner placement keeps it tidy even where a button's hit area
 // is a bit larger than its graphic).
 void DrawHighlight() {
+    if (!RuntimeConfigFile::ModMenuNavigation() || !RuntimeConfigFile::ModSelectionBadge()) return;
     const ImVec2 display = ImGui::GetIO().DisplaySize;
     if (display.x <= 0.0f || display.y <= 0.0f) return;
     // The menu canvas (centre origin, +y up, s_scaleX/Y half extents) on screen: the whole window
@@ -571,7 +579,7 @@ void DrawHighlight() {
 
 void DrawOverlay() { MenuNav::DrawHighlight(); }
 
-// No Mega Strikes with controllers (mod): defending one means pointing at the incoming balls,
+// No Mega Strikes with controllers (mod, F10 > Mods > no_mega_strikes): defending one means pointing at the incoming balls,
 // which a non-Wii-Remote controller can't do. While any emulated remote (a gamepad or keyboard) is
 // in use, the current match's per-game settings have Mega Strikes off for both sides, the game's
 // own switch (cFielder::CanDoCaptainShootToScore checks it), so a full charge is a normal strong
@@ -584,6 +592,7 @@ constexpr uint32_t kAwayMegastrikeEnabled = 0x1Bu;     // ... +0x17
 constexpr uint32_t kUseCurGameSettings = 0x27Cu;
 
 void Apply() {
+    if (!RuntimeConfigFile::ModNoMegaStrikes()) return;
     try {
         const uint32_t info = Memory::Read32(kGameInfoManagerPtr);
         if (!info || !Memory::Read8(info + kUseCurGameSettings)) return;

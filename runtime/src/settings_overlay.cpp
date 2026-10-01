@@ -1011,6 +1011,30 @@ void DrawAudioSettings() {
     }
 }
 
+// Controller-friendly changes to the game, all on by default (Config.toml [mods]).
+void DrawModSettings() {
+    bool navigation = RuntimeConfigFile::ModMenuNavigation();
+    if (ImGui::Checkbox("Controller menu navigation", &navigation)) {
+        RuntimeConfigFile::SetModMenuNavigation(navigation);
+    }
+    ImGui::TextDisabled("Hide the pointer in menus; the D-pad and sticks move between buttons,\n"
+                        "B goes back, and left/right flip stages on stage select.");
+    ImGui::BeginDisabled(!navigation);
+    bool badge = RuntimeConfigFile::ModSelectionBadge();
+    if (ImGui::Checkbox("Selection badge", &badge)) {
+        RuntimeConfigFile::SetModSelectionBadge(badge);
+    }
+    ImGui::TextDisabled("Mark the selected button with a badge in the player's colour.");
+    ImGui::EndDisabled();
+    ImGui::Separator();
+    bool noMegaStrikes = RuntimeConfigFile::ModNoMegaStrikes();
+    if (ImGui::Checkbox("No Mega Strikes with controllers", &noMegaStrikes)) {
+        RuntimeConfigFile::SetModNoMegaStrikes(noMegaStrikes);
+    }
+    ImGui::TextDisabled("Blocking a Mega Strike needs a Wii Remote pointer. While a gamepad or\n"
+                        "keyboard is in use, matches have Mega Strikes off for both sides.");
+}
+
 void DrawGraphicsSettings() {
     g_displayMode = static_cast<int>(aurora_get_display_mode());
     if (ImGui::Checkbox("Force 16:9", &g_forceAspect169)) {
@@ -1291,6 +1315,11 @@ void DrawTopBar() {
 
     if (ImGui::BeginMenu("Graphics")) {
         DrawGraphicsSettings();
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Mods")) {
+        DrawModSettings();
         ImGui::EndMenu();
     }
 
