@@ -1089,6 +1089,18 @@ void DrawModSettings() {
     }
     ImGui::TextDisabled("Tied one goal short of the target, the target moves up: you have to\n"
                         "outscore the other side by at least 2 goals to win.");
+    bool bluePeach = RuntimeConfigFile::ModBluePeach();
+    if (ImGui::Checkbox("Blue Peach against red teams", &bluePeach)) {
+        RuntimeConfigFile::SetModBluePeach(bluePeach);
+    }
+    ImGui::TextDisabled("Peach wears her blue kit against red captains (Mario, Bowser, Bowser Jr.,\n"
+                        "Petey, Daisy, Diddy Kong) so the teams are easy to tell apart.");
+    bool shotCounter = RuntimeConfigFile::ModShotCounter();
+    if (ImGui::Checkbox("Shot counter on the results screen", &shotCounter)) {
+        RuntimeConfigFile::SetModShotCounter(shotCounter);
+    }
+    ImGui::TextDisabled("The Mega Strike goals / shots row shows white and yellow shots /\n"
+                        "red and orange shots instead.");
     bool fastStadiums = RuntimeConfigFile::ModFastStadiums();
     if (ImGui::Checkbox("All stadiums fast-paced", &fastStadiums)) {
         RuntimeConfigFile::SetModFastStadiums(fastStadiums);

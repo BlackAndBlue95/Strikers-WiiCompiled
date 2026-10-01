@@ -215,9 +215,52 @@ void FastStadiums() {
     }
 }
 
+// Shot counter: the match summary's Mega Strike row shows a team's PlayerStats +0x18 / +0x16. The
+// game tallies every shot by charge (cFielder shot: STATS_00 under 0.4 = white, STATS_01 = yellow,
+// STATS_02 from 0.8 = red/orange) in +0x00/+0x02/+0x04; with the mod those fill the Mega Strike
+// fields of the team totals both summary screens copy from (StatsTracker current and cumulative).
+constexpr uint32_t kStatsTracker = 0x806E0F58u;   // nlSingleton<StatsTracker>::s_pInstance
+constexpr uint32_t kCumulativeTeamStats = 0x04;   // TeamStats* [2]
+constexpr uint32_t kCurrentTeamStats = 0x0C;      // TeamStats [2], 0x70 each
+constexpr uint32_t kTeamTotals = 0x1C;            // TeamStats::mPlayerTotalStats
+void ShotCounter() {
+    if (!RuntimeConfigFile::ModShotCounter()) return;
+    const uint32_t tracker = Memory::Read32(kStatsTracker);
+    if (tracker == 0) return;
+    const auto fill = [](uint32_t team) {
+        if (team == 0) return;
+        const uint32_t stats = team + kTeamTotals;
+        const uint16_t white = Memory::Read16(stats + 0x00), yellow = Memory::Read16(stats + 0x02);
+        Memory::Write16(stats + 0x16, static_cast<uint16_t>(white + yellow));
+        Memory::Write16(stats + 0x18, Memory::Read16(stats + 0x04));
+    };
+    for (uint32_t side = 0; side < 2; ++side) {
+        fill(tracker + kCurrentTeamStats + side * 0x70);
+        fill(Memory::Read32(tracker + kCumulativeTeamStats + side * 4));
+    }
+}
+
+// Blue Peach: kits clash when two captains' CharacterInfo colour masks overlap, and the higher
+// colour rank switches to its _alt kit (GetAlternateCaptain / NeedsAlternateColour). Peach's mask is
+// pink only (0x04), so she stays pink against red teams. With the mod her mask also has red (0x01)
+// and her rank is the highest, so against red captains she alone switches, to blue.
+constexpr uint32_t kCharacterInfo = 0x80505944u;  // sCharacterInfo[], 0x5C per entry
+constexpr uint32_t kPeachInfo = kCharacterInfo + 5 * 0x5C;
+constexpr uint32_t kColourMask = 0x4C, kColourRank = 0x50;
+void BluePeach() {
+    static bool s_applied = false;
+    const bool want = RuntimeConfigFile::ModBluePeach();
+    if (want == s_applied) return;
+    Memory::Write32(kPeachInfo + kColourMask, want ? 0x05u : 0x04u);
+    Memory::Write32(kPeachInfo + kColourRank, want ? 240u : 5u);
+    s_applied = want;
+}
+
 void Apply() {
     try {
         UnlockEverything();
+        BluePeach();
+        ShotCounter();
         FastStadiums();
         WinByTwo();
         NkFix();

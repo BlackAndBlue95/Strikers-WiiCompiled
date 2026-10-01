@@ -102,6 +102,8 @@ struct RuntimeUserConfig {
     std::optional<bool> modWinByTwo;
     std::optional<bool> modNkFix;
     std::optional<bool> modFastStadiums;
+    std::optional<bool> modShotCounter;
+    std::optional<bool> modBluePeach;
     std::map<std::string, std::string> controllerExpressions;
 };
 
@@ -347,6 +349,8 @@ inline void EnsureConfigFile() {
               "unlock_everything = false\n"
               "win_by_two = false\n"
               "fast_stadiums = false\n"
+              "shot_counter = false\n"
+              "blue_peach = false\n"
               "# Fixes the NK bug (shots passing through Kritter after an interrupted deke/teleport).\n"
               "nk_fix = true\n\n"
               "[network]\n"
@@ -443,6 +447,8 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.modWinByTwo = FindConfigValue<bool>(document, "mods", "win_by_two");
     config.modNkFix = FindConfigValue<bool>(document, "mods", "nk_fix");
     config.modFastStadiums = FindConfigValue<bool>(document, "mods", "fast_stadiums");
+    config.modShotCounter = FindConfigValue<bool>(document, "mods", "shot_counter");
+    config.modBluePeach = FindConfigValue<bool>(document, "mods", "blue_peach");
     if (auto value = FindConfigInt(document, "audio", "mute_key")) {
         config.muteHotkey = *value;
     }
@@ -781,6 +787,16 @@ inline bool ModWinByTwo() { return Get().modWinByTwo.value_or(false); }
 inline bool SetModUnlockEverything(bool value) {
     Mutable().modUnlockEverything = value;
     return WriteSetting("mods", "unlock_everything", value ? "true" : "false");
+}
+inline bool ModBluePeach() { return Get().modBluePeach.value_or(false); }
+inline bool SetModBluePeach(bool value) {
+    Mutable().modBluePeach = value;
+    return WriteSetting("mods", "blue_peach", value ? "true" : "false");
+}
+inline bool ModShotCounter() { return Get().modShotCounter.value_or(false); }
+inline bool SetModShotCounter(bool value) {
+    Mutable().modShotCounter = value;
+    return WriteSetting("mods", "shot_counter", value ? "true" : "false");
 }
 inline bool ModFastStadiums() { return Get().modFastStadiums.value_or(false); }
 inline bool SetModFastStadiums(bool value) {
