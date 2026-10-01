@@ -477,6 +477,75 @@ Result Update(uint32_t chan, uint32_t dir, Point stick, bool backButton, float c
 }
 } // namespace MenuNav
 
+// Mega Strike defence (mod): on a Wii you block a Mega Strike by pointing at each incoming ball and
+// pressing A, which a controller can't do well. Instead the defence plays itself: each ball rolls a
+// fixed chance of being saved, and a saved ball is blocked at a random moment after it appears by
+// putting the pointer on it and pressing A in the same frame, so the game creates its catch there
+// and runs its normal block. The player's own input is left alone.
+namespace MegaAuto {
+constexpr uint32_t kBalls = 0x80572430u;       // gMegaBallIndicators[10], 0x8C each (mX, mY, ..., mActive +0x29)
+constexpr uint32_t kPointer = 0x80573498u;     // gMegaBallPointer
+constexpr uint32_t kController = 0x806E15C0u;  // gMegaBallController (cGlobalPad*, pad index +0x04)
+// The pointer is X = 400 * kpad.x + 320, Y = 300 * kpad.y + 240 on the game's 640x480 canvas.
+constexpr float kScaleX = 400.0f, kScaleY = 300.0f, kCentreX = 320.0f, kCentreY = 240.0f;
+constexpr uint32_t kSaveChancePercent = 60;
+constexpr uint64_t kMinDelayMs = 150, kDelayRangeMs = 450;
+
+struct Ball { bool active = false; uint64_t blockAtMs = 0; };  // blockAtMs 0: let it through
+struct State {
+    bool on = false;
+    Ball balls[10];
+    int pressFrames = 0;
+    uint32_t rng = 0x9E3779B9u;
+};
+State s_state[PAD_CHANMAX];
+
+bool ActiveFor(uint32_t chan) {
+    try {
+        if (!Memory::Read8(kPointer + 0x29)) return false;  // mActive
+        const uint32_t pad = Memory::Read32(kController);
+        return pad ? Memory::Read32(pad + 0x04) == chan : chan == 0;
+    } catch (...) { return false; }
+}
+
+uint32_t NextRandom(State& st) {
+    uint32_t& x = st.rng;
+    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+    return x;
+}
+
+// Returns true while the defence owns the pointer; sets pressA on the frames of a block.
+bool Update(uint32_t chan, float cursor[2], bool& pressA) {
+    State& st = s_state[chan];
+    pressA = false;
+    if (!ActiveFor(chan)) { if (st.on) st = State{}; return false; }
+    const uint64_t now = SDL_GetTicks();
+    if (!st.on) { st.on = true; st.rng ^= static_cast<uint32_t>(now) * 2654435761u; }
+    if (st.pressFrames > 0) { --st.pressFrames; pressA = true; return true; }
+    try {
+        for (uint32_t i = 0; i < 10; ++i) {
+            const uint32_t addr = kBalls + i * 0x8C;
+            Ball& b = st.balls[i];
+            const bool alive = Memory::Read8(addr + 0x29) != 0;
+            if (alive && !b.active) {
+                b.blockAtMs = (NextRandom(st) % 100 < kSaveChancePercent)
+                    ? now + kMinDelayMs + NextRandom(st) % kDelayRangeMs : 0;
+            }
+            b.active = alive;
+            if (!alive || b.blockAtMs == 0 || now < b.blockAtMs) continue;
+            // Block this one: pointer on the ball and A down this frame and the next.
+            b.blockAtMs = 0;
+            cursor[0] = std::clamp((Memory::ReadFloat32(addr) - kCentreX) / kScaleX, -1.0f, 1.0f);
+            cursor[1] = std::clamp((Memory::ReadFloat32(addr + 4) - kCentreY) / kScaleY, -1.0f, 1.0f);
+            pressA = true;
+            st.pressFrames = 1;
+            break;
+        }
+    } catch (...) {}
+    return true;
+}
+} // namespace MegaAuto
+
 // Layout follows Vague Rant's Classic Controller hack for this game (GBAtemp), by button
 // position: east=A pass, south/ZR=B shoot, north=C item, west=remote shake (big hit),
 // ZL=Z chip, L=Nunchuk shake (switch item), R/right stick/D-pad=D-pad (deke, tackle),
@@ -520,6 +589,11 @@ void ApplyCommon(uint32_t chan, WiiRemoteInput::KpadSample& sample, bool remoteS
         if (navDpad & MenuNav::kNavLeft) sample.hold |= kWLeft;
         if (navDpad & MenuNav::kNavRight) sample.hold |= kWRight;
         moveX = moveY = 0.0f;  // the pointer belongs to navigation
+    }
+    if (!menu) {
+        bool block = false;
+        if (MegaAuto::Update(chan, s_cursor[chan], block)) moveX = moveY = 0.0f;
+        if (block) sample.hold |= kWA;
     }
     s_cursor[chan][0] = std::clamp(s_cursor[chan][0] + dz(moveX) * 1.6f * dt, -1.0f, 1.0f);
     s_cursor[chan][1] = std::clamp(s_cursor[chan][1] - dz(moveY) * 1.6f * dt, -1.0f, 1.0f);
