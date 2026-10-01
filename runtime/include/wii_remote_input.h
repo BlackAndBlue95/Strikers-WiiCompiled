@@ -1,5 +1,7 @@
 #pragma once
 
+#include <dolphin/pad.h>
+
 #include <cstdint>
 
 struct PADStatus;
@@ -118,6 +120,8 @@ namespace MscEmulatedRemote {
 bool Present(uint32_t chan);
 bool Read(uint32_t chan, WiiRemoteInput::KpadSample& sample);
 void RecenterPointer(uint32_t chan);
+// The GameCube pad state (aurora port mapping and F10 bindings) for a controller channel.
+bool ReadGameCubePad(uint32_t chan, PADStatus& out);
 // Mod overlay over the game (menu selection highlight); called from settings_overlay::Draw.
 void DrawOverlay();
 }

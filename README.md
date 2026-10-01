@@ -57,27 +57,32 @@ Where to start: `runtime/src/wii_remote_input.cpp` (the real-remote path) and
 
 ## Controls
 
-Strikers Charged expects a Wii Remote and Nunchuk. This port emulates both from a regular
-gamepad, with a layout that follows **Vague Rant's Classic Controller hack for this game**
-(GBAtemp), by button position:
+Strikers Charged was built for the Wii Remote and Nunchuk. This port plays it on a regular
+controller with **Super Mario Strikers' GameCube controls**, plus Charged's extras on top. Under
+the hood it rebuilds the GameCube controller support the engine inherited from SMS, so passing,
+shooting and the rest go through the game's own GameCube button table, and the moves Charged
+turned into Wii Remote gestures are back on SMS's buttons.
 
-| Gamepad | Game action |
-| --- | --- |
-| Left stick | Nunchuk stick (movement) |
-| East face button | A: pass |
-| South face button / right trigger (ZR) | B: shoot |
-| North face button | C: item |
-| West face button | Remote shake (big hit) |
-| Left trigger (ZL) | Z: chip |
-| Left shoulder (L) | Nunchuk shake (switch item) |
-| Right shoulder (R) / right stick / D-pad | D-pad (deke, tackle) |
-| Start / Back | 1: pause |
+Face buttons follow **Nintendo's layout by position**: on a Switch-style controller the labels
+match, and on an Xbox-style pad they sit where a Switch controller's would (bottom button = B).
 
-Menus work like a console game: the D-pad or either stick moves the selection, **A** picks and
-**B** goes back (see *Mods* below).
+| Button (Nintendo position) | With the ball | Without the ball |
+| --- | --- | --- |
+| **A** (right) | Pass (with L: lob pass) | Switch player |
+| **B** (bottom) | Shoot, hold to charge (captain: Mega Strike) | Slide tackle, when the other team has the ball |
+| **Y** (left) | Deke | Big hit |
+| **X** (top) | Use item | Use item |
+| **Right stick** (C-stick) | Deke in that direction | |
+| **Right bumper** (Z) | Cycle items | Cycle items |
+| **Left trigger** (L) | Lob/chip modifier | |
+| **Right trigger** (R) | Charged extra: the character's special move | Charged extra: special move |
+| **D-pad** | Charged's D-pad moves | Charged's D-pad moves |
+| **Start** | Pause | Pause |
 
-Press **F10** in-game for the settings bar: resolution, FPS counter, volume, controller bindings
-and mods. Settings are saved to `Config.toml` straight away.
+Buttons can be rebound per controller in the **F10** settings bar, which also has resolution,
+FPS counter, volume and the mods below. Settings are saved to `Config.toml` straight away.
+
+Real Wii Remotes use the game's original controls (see *Help wanted* above).
 
 ## Mods
 
@@ -251,7 +256,8 @@ AI coding tools were used heavily in developing this port.
   Charged decompilation whose symbols make the address mapping possible (CC0).
 - **[mkw](https://github.com/riidefi/mkw)** by riidefi and contributors: the Mario Kart Wii
   decompilation, used for the MKW side of the mapping (CC0).
-- **Vague Rant**: the Classic Controller layout for this game (GBAtemp).
+- **[Super Mario Strikers decomp](https://github.com/yannicksuter/smstrikers-decomp)**: how the
+  shared engine handled GameCube controls, which made rebuilding them possible.
 - **[aurora](https://github.com/encounter/aurora)**: the GX rendering/windowing backend. MIT
   licensed.
 - **[Dawn](https://dawn.googlesource.com/dawn)**: Google's WebGPU implementation, powering
