@@ -3,8 +3,10 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include "abi_bridge.h"
 #include "hle_stubs.h"
+#include "runtime_config.h"
 #include <SDL3/SDL_timer.h>
 #include "guest_interrupt_context.h"
 #include "ppc_runtime.h"
@@ -89,8 +91,144 @@ void MSC_PollRemoteConnections()
 // controller arrived late, e.g. a Wii Remote finishing its HID setup after the title screen loaded:
 // nothing polled, so nothing called KPADRead.) Then the original loop: UpdateChannel per connected
 // channel (PlatPadManager::connected[] at +0x2F0).
+// Gameplay extras (F10 > Mods), applied once per frame from UpdatePlatPad.
+namespace FrameMods {
+constexpr uint32_t kUnlockAll = 0x806E0F98u;          // gUnlockAll: the game's unlock-everything override
+constexpr uint32_t kGameInfoManager = 0x806E0F54u;    // GameInfoManager singleton pointer
+constexpr uint32_t kUseCurGameSettings = 0x27C;       // GetCurrentSettings() returns the per-match copy
+constexpr uint32_t kCurGameLimitType = 0x04 + 0x04;   // mCurGameGameplayOptions.GameLimitType (1 = goals)
+constexpr uint32_t kCurGameGoalLimit = 0x04 + 0x0C;   // mCurGameGameplayOptions.GoalLimit
+constexpr uint32_t kGamePtr = 0x806E0C94u;            // g_pGame (non-null during a match)
+constexpr uint32_t kTeams = 0x806E0DF8u;              // g_pTeams[2]
+constexpr uint32_t kTeamScore = 0x04;                 // cTeam::m_nScore
+
+void UnlockEverything() {
+    static bool s_applied = false;
+    const bool want = RuntimeConfigFile::ModUnlockEverything();
+    if (want) {
+        Memory::Write8(kUnlockAll, 1);
+        s_applied = true;
+    } else if (s_applied) {
+        Memory::Write8(kUnlockAll, 0);
+        s_applied = false;
+    }
+}
+
+// Win by 2: every win check reads GetCurrentSettings()->GoalLimit, which for a local match is the
+// per-match copy (mUseCurGameSettings), never the saved options. Tied one short of the target, the
+// target becomes score + 2; the original is put back between matches.
+void WinByTwo() {
+    static int32_t s_original = -1;
+    static uint32_t s_info = 0;
+    const auto restore = [&] {
+        if (s_original >= 0 && s_info != 0) Memory::Write32(s_info + kCurGameGoalLimit, static_cast<uint32_t>(s_original));
+        s_original = -1;
+        s_info = 0;
+    };
+    const uint32_t info = Memory::Read32(kGameInfoManager);
+    const uint32_t game = Memory::Read32(kGamePtr);
+    if (!RuntimeConfigFile::ModWinByTwo() || info == 0 || game == 0 || Memory::Read8(info + kUseCurGameSettings) == 0 ||
+        Memory::Read32(info + kCurGameLimitType) != 1) {
+        restore();
+        return;
+    }
+    const uint32_t home = Memory::Read32(kTeams), away = Memory::Read32(kTeams + 4);
+    if (home == 0 || away == 0) return;
+    const int32_t s0 = static_cast<int32_t>(Memory::Read32(home + kTeamScore));
+    const int32_t s1 = static_cast<int32_t>(Memory::Read32(away + kTeamScore));
+    if (s_original < 0 || s_info != info || (s0 == 0 && s1 == 0)) {
+        restore();
+        s_info = info;
+        s_original = static_cast<int32_t>(Memory::Read32(info + kCurGameGoalLimit));
+    }
+    int32_t limit = static_cast<int32_t>(Memory::Read32(info + kCurGameGoalLimit));
+    if (s0 == s1 && s0 >= s_original - 1 && limit < s0 + 2) {
+        limit = s0 + 2;
+        Memory::Write32(info + kCurGameGoalLimit, static_cast<uint32_t>(limit));
+    }
+}
+
+// NK bug: action 0x21 (a fielder going through the opposing goalie, cFielder::fn_8004ED64) turns off
+// that goalie's ball collision and the ball's player/goalie collision; only the action's normal exit
+// turns them back on. Cut short (Boo deking into his own Kritter, Dry Bones teleporting behind the
+// goal), they stay off and every shot passes through Kritter. When a fielder leaves 0x21 by any
+// route, do what the exit does; and since nothing else ever disables the ball's flags, keep them on
+// whenever no fielder is in 0x21. (The goalie's own flag is also cleared briefly by goalie actions,
+// so it is only restored on that transition.)
+constexpr uint32_t kBallPtr = 0x806E0BC0u;        // g_pBall
+constexpr uint32_t kBallPhysics = 0xE8;           // cBall::m_pPhysicsBall
+constexpr uint32_t kBallCanCollidePlayer = 0x80;  // PhysicsAIBall::mbCanCollidePlayer / +0x81 goalie
+constexpr uint32_t kTeamPlayers = 0xA4;           // cTeam::m_pPlayers[5], goalie last
+constexpr uint32_t kFielderAction = 0x430;        // cFielder::m_eActionState
+constexpr uint32_t kCharPhysics = 0x20;           // cCharacter::m_pPhysicsCharacter
+constexpr uint32_t kPhysFlags = 0x98;             // PhysicsCharacter collision bitfield
+constexpr uint32_t kCanCollideWithBall = 0x40000000u;
+constexpr uint32_t kActionThroughGoalie = 0x21;
+
+void NkFix() {
+    static bool s_inAction[2][4] = {};
+    const uint32_t game = Memory::Read32(kGamePtr);
+    if (!RuntimeConfigFile::ModNkFix() || game == 0) {
+        std::memset(s_inAction, 0, sizeof(s_inAction));
+        return;
+    }
+    const uint32_t teams[2] = {Memory::Read32(kTeams), Memory::Read32(kTeams + 4)};
+    const uint32_t ball = Memory::Read32(kBallPtr);
+    if (teams[0] == 0 || teams[1] == 0 || ball == 0) return;
+    const uint32_t ballPhys = Memory::Read32(ball + kBallPhysics);
+    const auto restoreBall = [&] {
+        if (ballPhys == 0) return;
+        Memory::Write8(ballPhys + kBallCanCollidePlayer, 1);
+        Memory::Write8(ballPhys + kBallCanCollidePlayer + 1, 1);
+    };
+    bool anyInAction = false;
+    for (int t = 0; t < 2; ++t) {
+        for (int j = 0; j < 4; ++j) {
+            const uint32_t fielder = Memory::Read32(teams[t] + kTeamPlayers + j * 4);
+            const bool in = fielder != 0 && Memory::Read32(fielder + kFielderAction) == kActionThroughGoalie;
+            if (s_inAction[t][j] && !in) {
+                const uint32_t goalie = Memory::Read32(teams[1 - t] + kTeamPlayers + 4 * 4);
+                const uint32_t phys = goalie != 0 ? Memory::Read32(goalie + kCharPhysics) : 0;
+                if (phys != 0) Memory::Write32(phys + kPhysFlags, Memory::Read32(phys + kPhysFlags) | kCanCollideWithBall);
+                restoreBall();
+            }
+            s_inAction[t][j] = in;
+            anyInAction = anyInAction || in;
+        }
+    }
+    if (!anyInAction) restoreBall();
+}
+
+// All stadiums fast-paced: the pitch surface comes from the stadium's TerrainTweaks (ini/Terrain/*.ini,
+// reached through gGameTweaks.mTerrainTweaks); during a match its four values are set to
+// DryTerrain.ini's, the fast surface. Each TweakFloatBinding keeps its value pointer at +0x0C.
+constexpr uint32_t kGameTweaks = 0x8056CF08u;     // gGameTweaks
+constexpr uint32_t kTerrainTweaks = 0x04;         // GameTweaks::mTerrainTweaks
+void FastStadiums() {
+    if (!RuntimeConfigFile::ModFastStadiums() || Memory::Read32(kGamePtr) == 0) return;
+    const uint32_t terrain = Memory::Read32(kGameTweaks + kTerrainTweaks);
+    if (terrain == 0) return;
+    static constexpr float kDry[4] = {0.65f, 0.0f, 0.2f, 0.6f}; // Speed, Slipperyness, Friction, Bounce
+    for (uint32_t i = 0; i < 4; ++i) {
+        const uint32_t value = Memory::Read32(terrain + 0x04 + i * 0x10 + 0x0C);
+        if (value != 0) Memory::WriteFloat32(value, kDry[i]);
+    }
+}
+
+void Apply() {
+    try {
+        UnlockEverything();
+        FastStadiums();
+        WinByTwo();
+        NkFix();
+    } catch (const Memory::AccessViolation&) {
+    }
+}
+} // namespace FrameMods
+
 extern "C" void MSC_UpdatePlatPad_8037537C(CpuContext* ctx)
 {
+    FrameMods::Apply();
     constexpr uint32_t kConnected = 0x2F0;
     constexpr uint32_t kUpdateChannel = 0x803753D8u; // PlatPadManager::UpdateChannel(int)
     const uint32_t manager = ctx->gpr[3];

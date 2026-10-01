@@ -98,6 +98,10 @@ struct RuntimeUserConfig {
     std::optional<bool> modMenuNavigation;
     std::optional<bool> modSelectionBadge;
     std::optional<bool> modNoMegaStrikes;
+    std::optional<bool> modUnlockEverything;
+    std::optional<bool> modWinByTwo;
+    std::optional<bool> modNkFix;
+    std::optional<bool> modFastStadiums;
     std::map<std::string, std::string> controllerExpressions;
 };
 
@@ -338,7 +342,13 @@ inline void EnsureConfigFile() {
               "# Controller-friendly changes (also in the F10 bar, Mods menu).\n"
               "menu_navigation = true\n"
               "selection_badge = false\n"
-              "no_mega_strikes = true\n\n"
+              "no_mega_strikes = true\n"
+              "# Gameplay extras (off by default).\n"
+              "unlock_everything = false\n"
+              "win_by_two = false\n"
+              "fast_stadiums = false\n"
+              "# Fixes the NK bug (shots passing through Kritter after an interrupted deke/teleport).\n"
+              "nk_fix = true\n\n"
               "[network]\n"
               "enabled = true\n\n"
               "[discord]\n"
@@ -429,6 +439,10 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.modMenuNavigation = FindConfigValue<bool>(document, "mods", "menu_navigation");
     config.modSelectionBadge = FindConfigValue<bool>(document, "mods", "selection_badge");
     config.modNoMegaStrikes = FindConfigValue<bool>(document, "mods", "no_mega_strikes");
+    config.modUnlockEverything = FindConfigValue<bool>(document, "mods", "unlock_everything");
+    config.modWinByTwo = FindConfigValue<bool>(document, "mods", "win_by_two");
+    config.modNkFix = FindConfigValue<bool>(document, "mods", "nk_fix");
+    config.modFastStadiums = FindConfigValue<bool>(document, "mods", "fast_stadiums");
     if (auto value = FindConfigInt(document, "audio", "mute_key")) {
         config.muteHotkey = *value;
     }
@@ -760,6 +774,27 @@ inline bool SetModSelectionBadge(bool value) {
 inline bool SetModNoMegaStrikes(bool value) {
     Mutable().modNoMegaStrikes = value;
     return WriteSetting("mods", "no_mega_strikes", value ? "true" : "false");
+}
+// Gameplay extras, off unless enabled.
+inline bool ModUnlockEverything() { return Get().modUnlockEverything.value_or(false); }
+inline bool ModWinByTwo() { return Get().modWinByTwo.value_or(false); }
+inline bool SetModUnlockEverything(bool value) {
+    Mutable().modUnlockEverything = value;
+    return WriteSetting("mods", "unlock_everything", value ? "true" : "false");
+}
+inline bool ModFastStadiums() { return Get().modFastStadiums.value_or(false); }
+inline bool SetModFastStadiums(bool value) {
+    Mutable().modFastStadiums = value;
+    return WriteSetting("mods", "fast_stadiums", value ? "true" : "false");
+}
+inline bool ModNkFix() { return Get().modNkFix.value_or(true); }
+inline bool SetModNkFix(bool value) {
+    Mutable().modNkFix = value;
+    return WriteSetting("mods", "nk_fix", value ? "true" : "false");
+}
+inline bool SetModWinByTwo(bool value) {
+    Mutable().modWinByTwo = value;
+    return WriteSetting("mods", "win_by_two", value ? "true" : "false");
 }
 
 inline int32_t MuteHotkey(int32_t fallback) {

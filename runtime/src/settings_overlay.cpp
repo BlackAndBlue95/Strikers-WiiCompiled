@@ -1053,8 +1053,8 @@ void DrawModSettings() {
     if (ImGui::Checkbox("Controller menu navigation", &navigation)) {
         RuntimeConfigFile::SetModMenuNavigation(navigation);
     }
-    ImGui::TextDisabled("Hide the pointer in menus; the D-pad and sticks move between buttons,\n"
-                        "B goes back, and left/right flip stages on stage select.");
+    ImGui::TextDisabled("The D-pad and sticks move between buttons, B goes back, and L/R flip\n"
+                        "pages such as stages on stage select.");
     ImGui::BeginDisabled(!navigation);
     bool badge = RuntimeConfigFile::ModSelectionBadge();
     if (ImGui::Checkbox("Selection badge", &badge)) {
@@ -1069,6 +1069,32 @@ void DrawModSettings() {
     }
     ImGui::TextDisabled("Blocking a Mega Strike needs a Wii Remote pointer. While a gamepad or\n"
                         "keyboard is in use, matches have Mega Strikes off for both sides.");
+    bool nkFix = RuntimeConfigFile::ModNkFix();
+    if (ImGui::Checkbox("Fix the NK bug", &nkFix)) {
+        RuntimeConfigFile::SetModNkFix(nkFix);
+    }
+    ImGui::TextDisabled("A deke or teleport through the goalie that gets cut short (Boo deking into\n"
+                        "his own Kritter, Dry Bones teleporting behind the goal) no longer leaves\n"
+                        "every shot passing through Kritter for the rest of the match.");
+    ImGui::SeparatorText("Gameplay extras");
+    bool unlockEverything = RuntimeConfigFile::ModUnlockEverything();
+    if (ImGui::Checkbox("Unlock everything", &unlockEverything)) {
+        RuntimeConfigFile::SetModUnlockEverything(unlockEverything);
+    }
+    ImGui::TextDisabled("All characters, stadiums and cheats, using the game's own unlock-all\n"
+                        "switch. Your save is not changed; turn it off to see your own progress.");
+    bool winByTwo = RuntimeConfigFile::ModWinByTwo();
+    if (ImGui::Checkbox("Win by 2 (first-to-X goal matches)", &winByTwo)) {
+        RuntimeConfigFile::SetModWinByTwo(winByTwo);
+    }
+    ImGui::TextDisabled("Tied one goal short of the target, the target moves up: you have to\n"
+                        "outscore the other side by at least 2 goals to win.");
+    bool fastStadiums = RuntimeConfigFile::ModFastStadiums();
+    if (ImGui::Checkbox("All stadiums fast-paced", &fastStadiums)) {
+        RuntimeConfigFile::SetModFastStadiums(fastStadiums);
+    }
+    ImGui::TextDisabled("Every pitch plays like the fast, dry ones such as Bowser Stadium (the game's\n"
+                        "DryTerrain surface). Takes effect from the next match when turned off.");
 }
 
 void DrawGraphicsSettings() {
