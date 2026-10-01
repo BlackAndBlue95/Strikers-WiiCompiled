@@ -3,6 +3,7 @@
 #include "hle/controller_status_contract.h"
 #include "input_bindings.h"
 #include "wii_remote_input.h"
+#include "aurora_events.h"
 
 #include <algorithm>
 #include <cmath>
@@ -15,6 +16,8 @@
 #include <vector>
 
 #include <SDL3/SDL_gamepad.h>
+#include <imgui.h>
+#include <cfloat>
 #include <dolphin/pad.h>
 
 namespace {
@@ -182,6 +185,14 @@ struct State {
     uint32_t sceneWhenEmpty = 0;
 };
 State s_state[PAD_CHANMAX];
+// The selected button per pad, for the highlight overlay (DrawHighlight).
+Button s_selected[PAD_CHANMAX];
+bool s_hasSelected[PAD_CHANMAX]{};
+void SelectAt(uint32_t chan, const std::vector<Button>& buttons, Point centre) {
+    for (const Button& b : buttons) {
+        if (b.centre.x == centre.x && b.centre.y == centre.y) { s_selected[chan] = b; s_hasSelected[chan] = true; return; }
+    }
+}
 // Screen units per KPAD unit. The game maps KPAD pos to screen as (x * w/2, -y * h/2); these start at
 // 4:3 values and are refined from where the pointer actually lands, so widescreen needs no special case.
 float s_scaleX = 320.0f, s_scaleY = 240.0f;
@@ -344,6 +355,7 @@ void SetHandVisible(uint32_t chan, bool visible) {
     } catch (...) {}
 }
 
+void SelectAt(uint32_t chan, const std::vector<Button>& buttons, Point centre);
 void SnapTo(State& st, Point goal, float cursor[2]) {
     st.goal = goal;
     st.settleFrames = 10;
@@ -365,6 +377,7 @@ Result Update(uint32_t chan, uint32_t dir, Point stick, bool backButton, float c
     Result r;
     // A menu is up whenever live pointer buttons exist (none during matches).
     const std::vector<Button> buttons = CollectButtons(chan);
+    s_hasSelected[chan] = false;
     if (buttons.empty()) { const uint32_t scene = CurrentScene(); st = {}; st.sceneWhenEmpty = scene; return r; }
     r.menu = true;
     // One direction at a time; first press moves at once, holding repeats.
@@ -380,6 +393,15 @@ Result Update(uint32_t chan, uint32_t dir, Point stick, bool backButton, float c
 
     SetHandVisible(chan, false);
     const Point at = PointerPosition(chan);
+    // The marker follows the button being moved to (st.goal) while a snap settles, else whatever
+    // the pointer rests on.
+    if (st.settleFrames > 0) {
+        SelectAt(chan, buttons, st.goal);
+    } else {
+        for (const Button& b : buttons) {
+            if (b.Contains(at)) { s_selected[chan] = b; s_hasSelected[chan] = true; break; }
+        }
+    }
     // A new screen (another scene on top, or buttons appearing after none) starts on its default
     // selection (first in reading order), wherever the pointer was left.
     const bool stageSelectScreen = CurrentSceneVtable() == kStadiumSelectVtable;
@@ -390,6 +412,7 @@ Result Update(uint32_t chan, uint32_t dir, Point stick, bool backButton, float c
         st.scene = scene;
         st.hadButtons = true;
         SnapTo(st, PickDefault(buttons, stageSelectScreen), cursor);
+        SelectAt(chan, buttons, st.goal);
         return r;
     }
     // Stage select pages with +/-; let left/right do that instead of moving between buttons.
@@ -405,7 +428,7 @@ Result Update(uint32_t chan, uint32_t dir, Point stick, bool backButton, float c
     // with the game's own pause button instead.
     if (backPressed) {
         const auto back = std::find_if(buttons.begin(), buttons.end(), [](const Button& b) { return b.back; });
-        if (back != buttons.end()) { SnapTo(st, back->centre, cursor); st.backFrames = 30; }
+        if (back != buttons.end()) { SnapTo(st, back->centre, cursor); SelectAt(chan, buttons, st.goal); st.backFrames = 30; }
         else if (st.overlay) { st.pauseFrames = 4; }
     }
     if (st.pauseFrames > 0) { --st.pauseFrames; r.pressPause = st.pauseFrames >= 2; }
@@ -449,12 +472,13 @@ Result Update(uint32_t chan, uint32_t dir, Point stick, bool backButton, float c
                 if (diff < bestDiff) { bestDiff = diff; best = b; }
             }
             if (best && !best->Contains(at) && !(st.settleFrames > 0 && st.goal.x == best->centre.x && st.goal.y == best->centre.y))
-                SnapTo(st, best->centre, cursor);
+            { SnapTo(st, best->centre, cursor); SelectAt(chan, buttons, st.goal); }
         }
     }
     Point goal{};
     if (ring.empty() && step && PickInDirection(buttons, at, dir, goal)) {
         SnapTo(st, goal, cursor);
+        SelectAt(chan, buttons, st.goal);
         return r;
     }
     if (st.settleFrames > 0) {
@@ -472,10 +496,72 @@ Result Update(uint32_t chan, uint32_t dir, Point stick, bool backButton, float c
     }
     // Keep something selected: if the pointer rests on no button, select the default.
     const bool onButton = std::any_of(buttons.begin(), buttons.end(), [&](const Button& b) { return b.Contains(at); });
-    if (!onButton) { SnapTo(st, PickDefault(buttons, stageSelect), cursor); return r; }
+    if (!onButton) { SnapTo(st, PickDefault(buttons, stageSelect), cursor); SelectAt(chan, buttons, st.goal); return r; }
     return r;
 }
+// Selection marker: a round badge with the player number, in that player's colour, on the
+// selected button's top-left corner (corner placement keeps it tidy even where a button's hit area
+// is a bit larger than its graphic).
+void DrawHighlight() {
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    if (display.x <= 0.0f || display.y <= 0.0f) return;
+    // The menu canvas (centre origin, +y up, s_scaleX/Y half extents) on screen: the whole window
+    // with dynamic aspect, else a centred 4:3 (or forced 16:9) fit.
+    ImVec2 origin(0, 0), size = display;
+    if (!g_dynamicAspectRatioEnabled) {
+        const float aspect = MkwForceAspect169Requested() ? 16.0f / 9.0f : 4.0f / 3.0f;
+        if (display.x / display.y > aspect) { size.x = display.y * aspect; origin.x = (display.x - size.x) * 0.5f; }
+        else { size.y = display.x / aspect; origin.y = (display.y - size.y) * 0.5f; }
+    }
+    const auto toScreen = [&](float x, float y) {
+        return ImVec2(origin.x + (x / (2.0f * s_scaleX) + 0.5f) * size.x, origin.y + (0.5f - y / (2.0f * s_scaleY)) * size.y);
+    };
+    static const ImU32 kPlayerColours[PAD_CHANMAX] = {
+        IM_COL32(40, 128, 200, 255), IM_COL32(215, 60, 55, 255), IM_COL32(70, 170, 70, 255), IM_COL32(235, 185, 30, 255)};
+    const float r = size.y * 0.024f;
+    const float bob = std::sin(static_cast<float>(SDL_GetTicks()) * 0.006f) * r * 0.08f;
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    ImFont* font = ImGui::GetFont();
+    static bool s_wasShowing[PAD_CHANMAX]{};
+    for (uint32_t chan = 0; chan < PAD_CHANMAX; ++chan) {
+        if (!s_hasSelected[chan]) { s_wasShowing[chan] = false; continue; }
+        const bool appearing = !s_wasShowing[chan];
+        s_wasShowing[chan] = true;
+        const Button& b = s_selected[chan];
+        // Top-left corner, turned with the region on rotated (ring) buttons.
+        float cx = b.minX, cy = b.maxY;
+        if (b.rot != 0.0f) {
+            const float dx = cx - b.pivotX, dy = cy - b.pivotY, cs = std::cos(b.rot), sn = std::sin(b.rot);
+            cx = b.pivotX + dx * cs - dy * sn;
+            cy = b.pivotY + dx * sn + dy * cs;
+        }
+        ImVec2 target = toScreen(cx, cy);
+        target.x += r * 0.35f;
+        target.y += r * 0.35f;
+        // Some hit areas (choose-sides cards) reach past the screen; keep the badge visible.
+        const float margin = r * 1.3f;
+        target.x = std::clamp(target.x, origin.x + margin, origin.x + size.x - margin);
+        target.y = std::clamp(target.y, origin.y + margin, origin.y + size.y - margin);
+        // Glide at display rate (game frames can be 30 fps); jump when a marker first appears.
+        static ImVec2 shown[PAD_CHANMAX];
+        static bool showing[PAD_CHANMAX]{};
+        if (appearing || !showing[chan]) { shown[chan] = target; showing[chan] = true; }
+        const float t = 1.0f - std::exp(-ImGui::GetIO().DeltaTime * 24.0f);
+        shown[chan].x += (target.x - shown[chan].x) * t;
+        shown[chan].y += (target.y - shown[chan].y) * t;
+        const ImVec2 c(shown[chan].x, shown[chan].y + bob);
+        dl->AddCircleFilled(ImVec2(c.x + r * 0.08f, c.y + r * 0.14f), r * 1.08f, IM_COL32(0, 0, 0, 90), 32);  // shadow
+        dl->AddCircleFilled(c, r, IM_COL32(255, 255, 255, 255), 32);
+        dl->AddCircleFilled(c, r * 0.80f, kPlayerColours[chan], 32);
+        char label[2] = {static_cast<char>('1' + chan), 0};
+        const float textSize = r * 1.25f;
+        const ImVec2 ts = font->CalcTextSizeA(textSize, FLT_MAX, 0.0f, label);
+        dl->AddText(font, textSize, ImVec2(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f), IM_COL32(255, 255, 255, 255), label);
+    }
+}
 } // namespace MenuNav
+
+void DrawOverlay() { MenuNav::DrawHighlight(); }
 
 // Mega Strike defence (mod): on a Wii you block a Mega Strike by pointing at each incoming ball and
 // pressing A, which a controller can't do well. Instead the defence plays itself: each ball rolls a

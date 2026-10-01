@@ -118,4 +118,6 @@ namespace MscEmulatedRemote {
 bool Present(uint32_t chan);
 bool Read(uint32_t chan, WiiRemoteInput::KpadSample& sample);
 void RecenterPointer(uint32_t chan);
+// Mod overlay over the game (menu selection highlight); called from settings_overlay::Draw.
+void DrawOverlay();
 }

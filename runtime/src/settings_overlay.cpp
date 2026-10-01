@@ -1493,6 +1493,7 @@ void Draw() noexcept {
     if (!StartupScreenVisible()) {
         DrawShaderCompilationStatus();
     }
+    MscEmulatedRemote::DrawOverlay();
     DrawFpsOverlay();
     DrawTopBar();
     DrawExitPrompt();
