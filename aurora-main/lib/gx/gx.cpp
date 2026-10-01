@@ -443,6 +443,9 @@ DynamicPaletteKey make_dynamic_palette_key(const GXTexObj_& obj, const GXState::
   };
 }
 
+// Source keys name the bytes by location and shape only. The per-object data version restarts or
+// climbs whenever a game re-initialises the same GXTexObj (e.g. a stack object per draw), so keying on
+// it re-uploaded identical pixels every bind; source entries are digest-validated against the bytes.
 StaticTextureKey make_static_texture_key(const GXTexObj_& obj) {
   return {
       .data = obj.data,
@@ -450,17 +453,16 @@ StaticTextureKey make_static_texture_key(const GXTexObj_& obj) {
       .height = obj.height(),
       .mips = obj.mip_count(),
       .format = obj.format(),
-      .texDataVersion = obj.texDataVersion,
   };
 }
 
 StaticPaletteTextureKey make_static_palette_texture_key(const GXTexObj_& obj, const GXTlutObj_& tlut) {
+  // Versionless like make_static_texture_key: the palette's object version changes with every re-init.
   return {
       .texture = make_static_texture_key(obj),
       .tlutData = tlut.data,
       .tlutFormat = static_cast<u32>(tlut.format),
       .tlutEntries = tlut.numEntries,
-      .tlutDataVersion = tlut.tlutDataVersion,
   };
 }
 
@@ -992,14 +994,14 @@ void evict_texture_object(u32 texObjId) noexcept {
     clear_texture_dependency(texObjId, it->second.tlutObjId);
     s_textureObjectCaches.erase(it);
   }
+  // Source-cache entries are keyed and digest-validated by content and may be shared by many objects
+  // (a game re-initialising one stack GXTexObj destroys the previous host object on every bind), so
+  // destroying one object must not drop them; the size-bounded sweeps retire unused ones.
   if (const auto it = s_texObjSourceKeys.find(texObjId); it != s_texObjSourceKeys.end()) {
-    s_staticTextureSourceCache.erase(it->second);
     s_texObjSourceKeys.erase(it);
     s_texObjSourceKeyMemo.forget(texObjId);
-    clear_static_source_front_cache();
   }
   if (const auto it = s_texObjPaletteSourceKeys.find(texObjId); it != s_texObjPaletteSourceKeys.end()) {
-    s_staticPaletteTextureSourceCache.erase(it->second);
     s_texObjPaletteSourceKeys.erase(it);
     s_texObjPaletteSourceKeyMemo.forget(texObjId);
   }
@@ -1017,8 +1019,8 @@ void evict_tlut_object(u32 tlutObjId) noexcept {
   if (const auto it = s_tlutObjectCaches.find(tlutObjId); it != s_tlutObjectCaches.end()) {
     for (const u32 texObjId : it->second.staticTextureUsers) {
       s_textureObjectCaches.erase(texObjId);
+      // The content-keyed source entry stays: it is digest-validated on reuse (see evict_texture_object).
       if (const auto keyIt = s_texObjPaletteSourceKeys.find(texObjId); keyIt != s_texObjPaletteSourceKeys.end()) {
-        s_staticPaletteTextureSourceCache.erase(keyIt->second);
         s_texObjPaletteSourceKeys.erase(keyIt);
         s_texObjPaletteSourceKeyMemo.forget(texObjId);
       }
