@@ -32,6 +32,7 @@ constexpr uint32_t kMaxRemotes = 4;
 constexpr size_t kReportSize = 22;            // largest input/output report incl. the id
 
 // Output reports.
+constexpr uint8_t kOutRumble = 0x10;
 constexpr uint8_t kOutLeds = 0x11;
 constexpr uint8_t kOutReportMode = 0x12;
 constexpr uint8_t kOutIrPixelClock = 0x13;
@@ -74,6 +75,7 @@ struct Remote {
     bool extensionAttached = false; // status report flag (InputReportStatus::extension)
     bool needsSetup = true;       // extension/IR/report mode (re)initialisation pending
     uint64_t lastInputMs = 0;
+    uint64_t lastWriteTestMs = 0;
     float lastPair[2] = {200.f, 0.f}; // last seen dot1->dot2 vector, for single-dot frames
     float smoothed[2] = {0.f, 0.f};
     bool smoothedValid = false;
@@ -444,8 +446,16 @@ void Connect(std::vector<std::unique_ptr<Remote>>& remotes, const SDL_hid_device
     r->lastInputMs = SDL_GetTicks();
     // Player LED, then a status request: the reply says whether an extension is attached.
     Send(*r, {kOutLeds, static_cast<uint8_t>(0x10 << chan)});
+    // Windows keeps interfaces for paired remotes that are switched off, and a DolphinBar exposes
+    // all four slots whether or not a remote is in them; a write to an empty one fails at once
+    // (ERROR_GEN_FAILURE / EPIPE, per Dolphin), so only a remote that answers is really there.
     uint8_t status[kReportSize];
-    const auto probe = [&] { return Send(*r, {kOutStatusRequest, 0x00}) && WaitFor(*r, kInStatus, status, 300); };
+    bool writeAccepted = false;
+    const auto probe = [&] {
+        if (!Send(*r, {kOutStatusRequest, 0x00})) return false;
+        writeAccepted = true;
+        return WaitFor(*r, kInStatus, status, 300);
+    };
     bool answered = probe();
     if (!answered) {
         SDL_Delay(100); // Dolphin retries once: a fresh connection may need a moment to settle
@@ -453,8 +463,9 @@ void Connect(std::vector<std::unique_ptr<Remote>>& remotes, const SDL_hid_device
     }
     if (answered) r->extensionAttached = (status[3] & 0x02) != 0;
     if (!answered) {
-        // Windows lists paired remotes that are switched off; only one that answers is there.
-        g_cooldowns.push_back({info->path, SDL_GetTicks() + 15000});
+        // A failed write costs nothing to retry next scan; an accepted write that nobody answers
+        // cost a timeout, so that path rests for a while.
+        if (writeAccepted) g_cooldowns.push_back({info->path, SDL_GetTicks() + 15000});
         ReleaseChannel(r->chan);
         SDL_hid_close(device);
         return;
@@ -526,6 +537,12 @@ void ThreadMain() {
                 HandleInput(r, buf, n);
             }
             if (!dead && r.needsSetup) Setup(r);
+            // Windows and the DolphinBar only report a remote that went away when it is written to
+            // (Dolphin's WRITE_TEST_INTERVAL): send a rumble-off report every second.
+            if (!dead && SDL_GetTicks() - r.lastWriteTestMs >= 1000) {
+                r.lastWriteTestMs = SDL_GetTicks();
+                if (!Send(r, {kOutRumble, 0x00})) dead = true;
+            }
             // Continuous reporting means silence is a remote that went away (or was turned off).
             if (!dead && SDL_GetTicks() - r.lastInputMs > 3000) dead = true;
             if (dead) {

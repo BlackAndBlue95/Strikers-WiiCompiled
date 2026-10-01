@@ -53,6 +53,10 @@ along with the accelerometers and the Nunchuk. Pair the remote in your system's 
 (press 1+2 or the red SYNC button, leave any PIN empty), and it takes the first free player port.
 You need a sensor bar (or any IR source) for the pointer.
 
+**Mayflash DolphinBar:** use it in **mode 4**, its Wii Remote mode (the same mode Dolphin needs),
+and sync the remotes to the bar. In the other modes it presents remotes as mouse, keyboard or
+gamepad input, which the game can't use as Wii Remotes.
+
 This is new and has had little testing, so reports are very welcome. `console.log` lists each step
 ("Wii Remote connected on port 1", "Nunchuk connected", "IR camera setup failed", ...). Known gaps:
 

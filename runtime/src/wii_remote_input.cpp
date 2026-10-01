@@ -425,6 +425,13 @@ void ConfigureSdlHints(bool enabled) {
     // that SDL's Wii driver leaves off. SDL's driver stays disabled so only one side talks to them.
     if (enabled) {
         SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_WII, "0");
+        // Keep SDL's joystick layer off the remotes' HID interfaces too: a Mayflash DolphinBar in
+        // mode 4 exposes four of them as 057E:0306, which SDL otherwise lists as a generic
+        // "Mayflash Wiimote PC Adapter" gamepad (raw HID access is unaffected by this list).
+        std::string ignored = SDL_GetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES) ? SDL_GetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES) : "";
+        if (!ignored.empty()) ignored += ",";
+        ignored += "0x057E/0x0306,0x057E/0x0330";
+        SDL_SetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES, ignored.c_str());
         g_wiiDriverEnabled = false;
         WiimoteHid::Start();
         RT_LOG(RT_TAG_CONFIG) << "Bluetooth Wii Remote support enabled (HID backend)" << std::endl;
