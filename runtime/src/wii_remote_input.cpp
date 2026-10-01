@@ -652,6 +652,11 @@ bool ReadKpadSample(uint32_t chan, KpadSample& sample) {
         sample.hasPointer = hid.hasPointer;
         sample.pointer[0] = hid.pointer[0];
         sample.pointer[1] = hid.pointer[1];
+        sample.hasDots = true;
+        for (int i = 0; i < 4; ++i) {
+            sample.dotX[i] = hid.dotX[i];
+            sample.dotY[i] = hid.dotY[i];
+        }
         return true;
     }
     SDL_Gamepad* gamepad = SDL_GetGamepadFromPlayerIndex(static_cast<int>(chan));

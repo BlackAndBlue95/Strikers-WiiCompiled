@@ -17,8 +17,11 @@
 #include <thread>
 #include <vector>
 
-// Protocol reference: Dolphin (Source/Core/Core/HW/WiimoteReal, WiimoteEmu/Camera.cpp,
-// WiimoteEmu/Extension) and https://wiibrew.org/wiki/Wiimote.
+// Protocol details checked against Dolphin (dolphin-emu/dolphin 771fb15): WiimoteReal (connection
+// probing, I/O), WiimoteCommon (report and calibration layouts) and WiimoteEmu (IR camera registers
+// and image orientation, extension encryption/identification, Nunchuk data and calibration).
+// Dolphin passes real remotes through to the emulated game, whose WPAD code programs them; this
+// driver does that programming itself, following the console's IR setup order Dolphin documents.
 namespace WiimoteHid {
 namespace {
 
@@ -68,6 +71,7 @@ struct Remote {
     AccelCalibration nunchukAccel;
     StickCalibration stick;
     bool hasNunchuk = false;
+    bool extensionAttached = false; // status report flag (InputReportStatus::extension)
     bool needsSetup = true;       // extension/IR/report mode (re)initialisation pending
     uint64_t lastInputMs = 0;
     float lastPair[2] = {200.f, 0.f}; // last seen dot1->dot2 vector, for single-dot frames
@@ -177,6 +181,7 @@ void ReadAccelCalibration(Remote& r) {
 // Initialises the extension unencrypted (0x55 to A400F0, 0x00 to A400FB) and identifies it.
 void SetupExtension(Remote& r) {
     r.hasNunchuk = false;
+    if (!r.extensionAttached) return;
     if (!WriteRegister8(r, 0xA400F0, 0x55) || !WriteRegister8(r, 0xA400FB, 0x00)) {
         RT_LOGF(RT_TAG_CONFIG, "Wii Remote %u: extension init failed\n", r.chan + 1);
         return;
@@ -191,9 +196,10 @@ void SetupExtension(Remote& r) {
         r.hasNunchuk = true;
         uint8_t cal[14] = {};
         if (ReadMemory(r, kSpaceRegister, 0xA40020, cal, sizeof(cal)) && cal[0] != 0 && cal[0] != 0xFF) {
+            // Same packing as the remote's own calibration points: low bits z 0-1, y 2-3, x 4-5.
             for (int i = 0; i < 3; ++i) {
-                r.nunchukAccel.zero[i] = static_cast<float>((cal[i] << 2) | ((cal[3] >> (6 - 2 * i)) & 3));
-                r.nunchukAccel.oneG[i] = static_cast<float>((cal[4 + i] << 2) | ((cal[7] >> (6 - 2 * i)) & 3));
+                r.nunchukAccel.zero[i] = static_cast<float>((cal[i] << 2) | ((cal[3] >> (4 - 2 * i)) & 3));
+                r.nunchukAccel.oneG[i] = static_cast<float>((cal[4 + i] << 2) | ((cal[7] >> (4 - 2 * i)) & 3));
             }
             for (int axis = 0; axis < 2; ++axis) {
                 const float mx = cal[8 + axis * 3], mn = cal[9 + axis * 3], ce = cal[10 + axis * 3];
@@ -211,15 +217,27 @@ void SetupExtension(Remote& r) {
     }
 }
 
-// IR camera in basic mode (10 bytes for 4 dots), Wii sensitivity level 3.
+// Sends an enable-feature report (0x13 camera, 0x1A camera logic) with the ack bit set and waits
+// for the acknowledgement: bit 2 enable, bit 1 ack, bit 0 rumble (WiimoteCommon).
+bool EnableFeature(Remote& r, uint8_t report) {
+    if (!Send(r, {report, 0x06})) return false;
+    uint8_t ack[kReportSize];
+    for (int tries = 0; tries < 4; ++tries) {
+        if (!WaitFor(r, kInAck, ack, 250)) return false;
+        if (ack[3] == report) return ack[4] == 0;
+    }
+    return false;
+}
+
+// IR camera in basic mode (10 bytes for 4 dots), Wii sensitivity level 3. The camera only answers
+// on its bus once report 0x13 enabled it, and only produces dots while 0x30 holds 0x08; the
+// console writes 0x01 there before changing sensitivity and mode (WiimoteEmu/Camera.cpp).
 bool SetupIr(Remote& r) {
     static constexpr uint8_t kSensitivity1[9] = {0x02, 0x00, 0x00, 0x71, 0x01, 0x00, 0xAA, 0x00, 0x64};
     static constexpr uint8_t kSensitivity2[2] = {0x63, 0x03};
-    bool ok = Send(r, {kOutIrPixelClock, 0x04});
-    SDL_Delay(20);
-    ok = ok && Send(r, {kOutIrLogic, 0x04});
-    SDL_Delay(20);
-    ok = ok && WriteRegister8(r, 0xB00030, 0x08);
+    bool ok = EnableFeature(r, kOutIrPixelClock);
+    ok = ok && EnableFeature(r, kOutIrLogic);
+    ok = ok && WriteRegister8(r, 0xB00030, 0x01);
     ok = ok && WriteRegister(r, 0xB00000, kSensitivity1, sizeof(kSensitivity1));
     ok = ok && WriteRegister(r, 0xB0001A, kSensitivity2, sizeof(kSensitivity2));
     ok = ok && WriteRegister8(r, 0xB00033, 0x01);
@@ -243,7 +261,7 @@ float AccelG(const AccelCalibration& cal, int axis, float raw) {
 }
 
 // The KPAD pointer from the sensor bar's two dots: their midpoint, with the remote's roll taken
-// out using the dots themselves (the bar is level), mapped the way WPADRead writes it back.
+// out using the dots themselves (the bar is level).
 void UpdatePointer(Remote& r, Sample& s) {
     float x[4], y[4];
     int n = 0;
@@ -277,7 +295,7 @@ void UpdatePointer(Remote& r, Sample& s) {
         dy = r.lastPair[1];
         const float ax = x[0] + dx * 0.5f, ay = y[0] + dy * 0.5f;
         const float bx = x[0] - dx * 0.5f, by = y[0] - dy * 0.5f;
-        const float px = 512.f - r.smoothed[0] * 384.f, py = 384.f - r.smoothed[1] * 288.f;
+        const float px = 512.f + r.smoothed[0] * 384.f, py = 384.f - r.smoothed[1] * 288.f;
         const bool useA = (ax - px) * (ax - px) + (ay - py) * (ay - py) <= (bx - px) * (bx - px) + (by - py) * (by - py);
         mx = useA ? ax : bx;
         my = useA ? ay : by;
@@ -291,7 +309,9 @@ void UpdatePointer(Remote& r, Sample& s) {
     const float c = std::cos(-angle), sn = std::sin(-angle);
     const float ox = mx - 512.f, oy = my - 384.f;
     const float rx = ox * c - oy * sn, ry = ox * sn + oy * c;
-    float px = std::clamp(-rx / 384.f, -1.25f, 1.25f);
+    // The camera image is mirrored (Dolphin's camera: x = (1 - ndc.x) * 512, y = (1 - ndc.y) * 384),
+    // so turning the remote right moves the dots right and pointing up moves them down.
+    float px = std::clamp(rx / 384.f, -1.25f, 1.25f);
     float py = std::clamp(-ry / 288.f, -1.25f, 1.25f);
     // Light smoothing against camera jitter (KPAD smooths its pointer too).
     if (r.smoothedValid) {
@@ -357,8 +377,9 @@ void HandleInput(Remote& r, const uint8_t* buf, int len) {
         if (len >= 22) HandleDataReport(r, buf);
         break;
     case kInStatus: {
-        // Sent on request and whenever an extension is plugged in or out; the remote then drops
-        // back to button-only reporting, so the whole setup is redone.
+        // Sent whenever an extension is plugged in or out; the remote then stops data reporting
+        // until the mode is set again, so the whole setup is redone.
+        if (len >= 4) r.extensionAttached = (buf[3] & 0x02) != 0;
         r.needsSetup = true;
         break;
     }
@@ -387,6 +408,20 @@ void ReleaseChannel(uint32_t chan) {
     g_samples[chan] = {};
 }
 
+// Paths that did not answer recently. A paired remote that is switched off can still accept the
+// write on some stacks, and waiting on it every scan would stall the connected remotes' input.
+struct Cooldown {
+    std::string path;
+    uint64_t untilMs;
+};
+std::vector<Cooldown> g_cooldowns;
+
+bool CoolingDown(const char* path) {
+    const uint64_t now = SDL_GetTicks();
+    std::erase_if(g_cooldowns, [&](const Cooldown& c) { return c.untilMs <= now; });
+    return std::ranges::any_of(g_cooldowns, [&](const Cooldown& c) { return c.path == path; });
+}
+
 bool IsOpen(const std::vector<std::unique_ptr<Remote>>& remotes, const char* path) {
     for (const auto& r : remotes) {
         if (r->path == path) return true;
@@ -410,8 +445,16 @@ void Connect(std::vector<std::unique_ptr<Remote>>& remotes, const SDL_hid_device
     // Player LED, then a status request: the reply says whether an extension is attached.
     Send(*r, {kOutLeds, static_cast<uint8_t>(0x10 << chan)});
     uint8_t status[kReportSize];
-    if (!Send(*r, {kOutStatusRequest, 0x00}) || !WaitFor(*r, kInStatus, status, 600)) {
+    const auto probe = [&] { return Send(*r, {kOutStatusRequest, 0x00}) && WaitFor(*r, kInStatus, status, 300); };
+    bool answered = probe();
+    if (!answered) {
+        SDL_Delay(100); // Dolphin retries once: a fresh connection may need a moment to settle
+        answered = probe();
+    }
+    if (answered) r->extensionAttached = (status[3] & 0x02) != 0;
+    if (!answered) {
         // Windows lists paired remotes that are switched off; only one that answers is there.
+        g_cooldowns.push_back({info->path, SDL_GetTicks() + 15000});
         ReleaseChannel(r->chan);
         SDL_hid_close(device);
         return;
@@ -436,12 +479,22 @@ void Disconnect(std::vector<std::unique_ptr<Remote>>& remotes, size_t index) {
     g_connected.store(static_cast<uint32_t>(remotes.size()));
 }
 
+// Dolphin's test: a known id, or a product name starting "Nintendo RVL-CNT" (the Wii checks just
+// that prefix too), which also covers third-party remotes. The Wii U Pro Controller shares 0330 but
+// is "Nintendo RVL-CNT-01-UC" and is not a Wii Remote.
+bool IsWiiRemote(const SDL_hid_device_info* info) {
+    std::wstring name = info->product_string != nullptr ? info->product_string : L"";
+    if (name.find(L"-UC") != std::wstring::npos) return false;
+    if (name.rfind(L"Nintendo RVL-CNT", 0) == 0) return true;
+    return info->vendor_id == kNintendoVid && (info->product_id == kPidRvlCnt01 || info->product_id == kPidRvlCnt01Tr);
+}
+
 void Scan(std::vector<std::unique_ptr<Remote>>& remotes) {
     if (remotes.size() >= kMaxRemotes) return;
-    SDL_hid_device_info* list = SDL_hid_enumerate(kNintendoVid, 0);
+    SDL_hid_device_info* list = SDL_hid_enumerate(0, 0);
     for (SDL_hid_device_info* info = list; info != nullptr; info = info->next) {
-        if (info->product_id != kPidRvlCnt01 && info->product_id != kPidRvlCnt01Tr) continue;
-        if (info->path == nullptr || IsOpen(remotes, info->path)) continue;
+        if (!IsWiiRemote(info)) continue;
+        if (info->path == nullptr || IsOpen(remotes, info->path) || CoolingDown(info->path)) continue;
         Connect(remotes, info);
         if (remotes.size() >= kMaxRemotes) break;
     }
@@ -468,11 +521,8 @@ void ThreadMain() {
             // Drain everything queued; the remote reports roughly every 10 ms.
             for (int k = 0; k < 16; ++k) {
                 const int n = ReadReport(r, buf, k == 0 ? 4 : 0);
-                if (n < 0) {
-                    dead = true;
-                    break;
-                }
-                if (n == 0) break;
+                if (n <= 0) break; // errors count as no data, like Dolphin; silence times it out
+
                 HandleInput(r, buf, n);
             }
             if (!dead && r.needsSetup) Setup(r);

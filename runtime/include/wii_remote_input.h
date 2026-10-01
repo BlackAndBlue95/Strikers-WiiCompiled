@@ -54,8 +54,11 @@ struct KpadSample {
     int16_t clRStickRaw[2] = {};
     uint8_t clTriggerL = 0;      // 0..255; SDL only exposes the digital click
     uint8_t clTriggerR = 0;
-    bool hasPointer = false;     // MSC: emulated IR pointer
+    bool hasPointer = false;     // MSC: IR pointer (real, or emulated for gamepads)
     float pointer[2] = {};       // KPAD pos, -1..1, +y down
+    bool hasDots = false;        // real remote: the camera's own dots (1024x768, 0x3FF = none)
+    uint16_t dotX[4] = {0x3FF, 0x3FF, 0x3FF, 0x3FF};
+    uint16_t dotY[4] = {0x3FF, 0x3FF, 0x3FF, 0x3FF};
 };
 
 // What the game should see on `chan`: the controller SDL has there right now,
