@@ -6,14 +6,15 @@
 #   ./build.sh "/path/to/extracted/game" # or a folder extracted with Dolphin (sys/ + files/)
 #   ./build.sh --skip-translate          # recompile the runtime only
 #
-# Everything this produces (Assets/, generated/, build-*/) stays on your machine and is gitignored.
+# The game files are installed into the app's data folder (next to Config.toml and saves), so the
+# original image/folder isn't needed afterwards. Build output (Assets/, generated/, build-*/) stays
+# in the repo, gitignored.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
 PROJECT="projects/mscharged/recomp.yml"
 TRANSLATOR_DLL="translator/src/Translator.Cli/bin/Release/net8.0/Translator.Cli.dll"
 EXE_NAME="Strikers-WiiCompiled"
-GAME_DIR="$REPO/Assets/Game"   # where a disc image gets extracted
 # nodtool (https://github.com/encounter/nod) reads Wii disc images; pinned by version and hash.
 NOD_VERSION="v2.0.0-alpha.10"
 cd "$REPO"
@@ -58,6 +59,9 @@ case "$(uname -s)" in
             SHA256() { sha256sum "$1" | cut -d' ' -f1; } ;;
     *) fail "unsupported OS; on Windows run build.cmd" ;;
 esac
+# Like WiiCompiled's installer, the game files are installed next to the config and saves, so the
+# original disc image or folder isn't needed once the build is done.
+GAME_DIR="$APP_DIR/Game"
 
 need dotnet "Install the .NET 8 SDK."
 need cmake "Install CMake 3.25 or newer."
@@ -114,10 +118,10 @@ fetch_nodtool() {
 }
 
 extract_image() {
-    local image="$1" stage="$REPO/Assets/.extract-$$" dol root
+    local image="$1" stage="$APP_DIR/.extract-$$" dol root
     step "Extracting your disc image (a few minutes)"
     fetch_nodtool
-    rm -rf "$stage"; mkdir -p "$REPO/Assets"
+    rm -rf "$stage"; mkdir -p "$APP_DIR"
     trap "rm -rf '$stage'" EXIT
     logged extract.log "$NODTOOL" extract "$image" "$stage"
     dol="$(find "$stage" -type f -path '*/sys/main.dol' | head -1)"
@@ -136,8 +140,18 @@ if [ -z "$GAME" ] && [ "$SKIP_TRANSLATE" -eq 0 ] && [ ! -f Assets/main.dol ]; th
 fi
 if [ -n "$GAME" ]; then
     if [ -d "$GAME" ]; then
-        DISC_ROOT="$(disc_root_of "$GAME")" \
+        SOURCE_ROOT="$(disc_root_of "$GAME")" \
             || fail "$GAME doesn't look like an extracted disc (expected sys/main.dol and files/ in it or in DATA/)"
+        check_dol "$SOURCE_ROOT/sys/main.dol"
+        if [ ! "$SOURCE_ROOT" -ef "$GAME_DIR" ]; then
+            step "Installing the game files"
+            mkdir -p "$APP_DIR"
+            rm -rf "$GAME_DIR.tmp"
+            cp -R "$SOURCE_ROOT" "$GAME_DIR.tmp" && find "$GAME_DIR.tmp" -name .DS_Store -delete
+            rm -rf "$GAME_DIR"; mv "$GAME_DIR.tmp" "$GAME_DIR"
+            echo "    installed to $GAME_DIR"
+        fi
+        DISC_ROOT="$GAME_DIR"
     elif [ -f "$GAME" ]; then
         if DISC_ROOT="$(disc_root_of "$GAME_DIR")" && [ "$(SHA256 "$DISC_ROOT/sys/main.dol")" = "$EXPECTED_DOL_SHA" ]; then
             echo "    using the already-extracted game in $GAME_DIR"

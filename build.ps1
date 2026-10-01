@@ -5,7 +5,9 @@
 #   build.cmd "C:\path\to\extracted\game"       # or a folder extracted with Dolphin (sys\ + files\)
 #   build.cmd -SkipTranslate                    # recompile the runtime only
 #
-# Everything this produces (Assets\, generated\, build-windows\) stays on your machine and is gitignored.
+# The game files are installed into the app's data folder (next to Config.toml and saves), so the
+# original image/folder isn't needed afterwards. Build output (Assets\, generated\, build-windows\)
+# stays in the repo, gitignored.
 param(
     [Parameter(Position = 0)] [string] $Disc = "",
     [switch] $SkipTranslate,
@@ -19,7 +21,9 @@ $TranslatorDll = 'translator/src/Translator.Cli/bin/Release/net8.0/Translator.Cl
 $BuildDir = Join-Path $Repo 'build-windows'
 $AppDir = Join-Path $env:LOCALAPPDATA 'MSCRecomp'
 $ExeName = 'Strikers-WiiCompiled.exe'
-$GameDir = Join-Path $Repo 'Assets/Game'   # where a disc image gets extracted
+# Like WiiCompiled's installer, the game files are installed next to the config and saves, so the
+# original disc image or folder isn't needed once the build is done.
+$GameDir = Join-Path $AppDir 'Game'
 # nodtool (https://github.com/encounter/nod) reads Wii disc images; pinned by version and hash.
 $NodVersion = 'v2.0.0-alpha.10'
 $NodBuilds = @{
@@ -95,9 +99,9 @@ function Get-NodTool {
 function Expand-DiscImage([string] $Image) {
     Step 'Extracting your disc image (a few minutes)'
     $nodtool = Get-NodTool
-    $stage = Join-Path $Repo "Assets/.extract-$PID"
+    $stage = Join-Path $AppDir ".extract-$PID"
     if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
-    New-Item -ItemType Directory -Force (Join-Path $Repo 'Assets') | Out-Null
+    New-Item -ItemType Directory -Force $AppDir | Out-Null
     try {
         Logged 'extract.log' $nodtool @('extract', $Image, $stage)
         $dol = Get-ChildItem $stage -Recurse -File -Filter 'main.dol' | Where-Object { $_.Directory.Name -eq 'sys' } | Select-Object -First 1
@@ -125,8 +129,20 @@ if (-not $Disc -and -not $SkipTranslate -and -not (Test-Path (Join-Path $Repo 'A
 $DiscRoot = $null
 if ($Disc) {
     if (Test-Path $Disc -PathType Container) {
-        $DiscRoot = Get-DiscRoot $Disc
-        if (-not $DiscRoot) { Fail "$Disc doesn't look like an extracted disc (expected sys\main.dol and files\ in it or in DATA\)" }
+        $sourceRoot = Get-DiscRoot $Disc
+        if (-not $sourceRoot) { Fail "$Disc doesn't look like an extracted disc (expected sys\main.dol and files\ in it or in DATA\)" }
+        Assert-Dol (Join-Path $sourceRoot 'sys/main.dol')
+        if ([IO.Path]::GetFullPath($sourceRoot).TrimEnd('\') -ne [IO.Path]::GetFullPath($GameDir).TrimEnd('\')) {
+            Step 'Installing the game files'
+            New-Item -ItemType Directory -Force $AppDir | Out-Null
+            $tmp = "$GameDir.tmp"
+            if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+            Copy-Item $sourceRoot $tmp -Recurse
+            if (Test-Path $GameDir) { Remove-Item $GameDir -Recurse -Force }
+            Move-Item $tmp $GameDir
+            Write-Host "    installed to $GameDir"
+        }
+        $DiscRoot = $GameDir
     } elseif (Test-Path $Disc -PathType Leaf) {
         $existing = Get-DiscRoot $GameDir
         if ($existing -and ((Get-Sha (Join-Path $existing 'sys/main.dol')) -eq $ExpectedDolSha)) {

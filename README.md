@@ -153,21 +153,27 @@ extracted with Dolphin works in place of an image.
 
 The script:
 
-1. extracts your disc image into `Assets/Game` with [nodtool](https://github.com/encounter/nod)
-   (downloaded once, pinned by version and checksum),
+1. installs the game files into the app's data folder (see the table below), extracting a disc
+   image with [nodtool](https://github.com/encounter/nod) (downloaded once, pinned by version
+   and checksum),
 2. checks and copies `sys/main.dol` to `Assets/main.dol`,
 3. builds the translator,
 4. statically translates the game code to C++ under `generated/`,
 5. compiles the runtime and translated code with CMake + Ninja + Clang into
    `build-windows/`, `build-linux/` or `build-macos/`,
-6. points the runtime's `Config.toml` at the game files.
+6. points the runtime's `Config.toml` at the installed game files.
+
+Like a WiiCompiled install, you **don't need the original disc image or folder afterwards**: the
+game reads its files from the data folder. (Keep your dump backed up somewhere if you ever want
+to reinstall.)
 
 The first build takes a while (translation is a few minutes, and compiling the translated code
 and fetching the graphics dependencies can take much longer on slower machines). Logs for every
 step are written to the build folder. Later runs are incremental.
 
-Then run `build-<platform>/Strikers-WiiCompiled` (`Strikers-WiiCompiled.exe` on Windows). Config, saves and caches
-live in a `MSCRecomp` folder, separate from any Mario Kart Wii WiiCompiled install:
+Then run `build-<platform>/Strikers-WiiCompiled` (`Strikers-WiiCompiled.exe` on Windows). The game
+files (`Game/`), config, saves and caches live in a `MSCRecomp` folder, separate from any Mario
+Kart Wii WiiCompiled install:
 
 | Platform | Location |
 | --- | --- |
@@ -176,9 +182,9 @@ live in a `MSCRecomp` folder, separate from any Mario Kart Wii WiiCompiled insta
 | macOS | `~/Library/Application Support/MSCRecomp` |
 
 > [!IMPORTANT]
-> Everything the build produces (`Assets/`, `generated/`, `build-*/`) contains or is derived from
-> game code, and is gitignored. Don't commit it, upload it or share builds. Everyone builds from
-> their own copy.
+> The installed game files and everything the build produces (`Assets/`, `generated/`, `build-*/`)
+> contain or are derived from the game, and the build output is gitignored. Don't commit it, upload
+> it or share builds. Everyone builds from their own copy.
 
 ### Developing
 
