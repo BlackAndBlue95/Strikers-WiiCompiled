@@ -17,7 +17,8 @@ constexpr int32_t k_mappingsFileVersion = 3;
 // Strikers-WiiCompiled: face buttons follow Nintendo's layout by position (A right, B bottom,
 // X top, Y left; SDL reports positions), so a Switch-style pad's labels match Super Mario
 // Strikers' GameCube buttons, and on any other pad they sit where a Switch controller's would.
-// The real GameCube pad tables below keep their own mapping.
+// The real GameCube pad tables below keep their own mapping: SDL reports the left-hand B as
+// WEST and the right-hand X as EAST.
 std::array<PADButtonMapping, PAD_BUTTON_COUNT> g_defaultButtonsStandard{{
     {SDL_GAMEPAD_BUTTON_SOUTH, PAD_BUTTON_B},
     {SDL_GAMEPAD_BUTTON_EAST, PAD_BUTTON_A},
@@ -110,8 +111,8 @@ std::array<PADButtonMapping, PAD_BUTTON_COUNT> g_defaultButtonsPS5{{
 
 std::array<PADButtonMapping, PAD_BUTTON_COUNT> g_defaultButtonsGamecube{{
     {SDL_GAMEPAD_BUTTON_SOUTH, PAD_BUTTON_A},
-    {SDL_GAMEPAD_BUTTON_EAST, PAD_BUTTON_B},
-    {SDL_GAMEPAD_BUTTON_WEST, PAD_BUTTON_X},
+    {SDL_GAMEPAD_BUTTON_EAST, PAD_BUTTON_X},
+    {SDL_GAMEPAD_BUTTON_WEST, PAD_BUTTON_B},
     {SDL_GAMEPAD_BUTTON_NORTH, PAD_BUTTON_Y},
     {SDL_GAMEPAD_BUTTON_START, PAD_BUTTON_START},
     {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, PAD_TRIGGER_Z},
@@ -125,8 +126,8 @@ std::array<PADButtonMapping, PAD_BUTTON_COUNT> g_defaultButtonsGamecube{{
 
 std::array<PADButtonMapping, PAD_BUTTON_COUNT> g_defaultButtonsNSOGamecube{{
     {SDL_GAMEPAD_BUTTON_SOUTH, PAD_BUTTON_A},
-    {SDL_GAMEPAD_BUTTON_EAST, PAD_BUTTON_B},
-    {SDL_GAMEPAD_BUTTON_WEST, PAD_BUTTON_X},
+    {SDL_GAMEPAD_BUTTON_EAST, PAD_BUTTON_X},
+    {SDL_GAMEPAD_BUTTON_WEST, PAD_BUTTON_B},
     {SDL_GAMEPAD_BUTTON_NORTH, PAD_BUTTON_Y},
     {SDL_GAMEPAD_BUTTON_START, PAD_BUTTON_START},
     {SDL_GAMEPAD_BUTTON_BACK, PAD_TRIGGER_Z},
@@ -639,6 +640,12 @@ void __PADLoadMapping(aurora::input::GameController* controller) /*  NOLINT(*-re
     aurora::input::Log.warn("__PADLoadMapping port={}: corrupt button data in file, resetting buttons to defaults",
                             playerIndex);
     __PADSetDefaultMapping(controller);
+  }
+  // Strikers-WiiCompiled: a GameCube pad on the adapter already has the game's own buttons, so its
+  // mapping is fixed (the settings bar offers no rebinding for it). Files saved by earlier builds,
+  // with B and X swapped, would otherwise keep overriding it; dead zones and sticks still load.
+  if (controller->m_isGameCube) {
+    controller->m_buttonMapping = g_defaultButtonsGamecube;
   }
   reset_alt_button_mapping(controller);
 }
