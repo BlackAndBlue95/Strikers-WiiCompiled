@@ -702,6 +702,31 @@ void ApplyCommon(uint32_t chan, WiiRemoteInput::KpadSample& sample, uint32_t nav
     sample.pointer[1] = s_cursor[chan][1];
 }
 
+// A real Wii Remote with no IR pointer (no sensor bar in view): its D-pad and Nunchuk stick drive
+// the same menu navigation gamepads use, A confirms and B goes back. With the pointer visible the
+// remote works like on the console and nothing here runs.
+void ApplyRemoteMenuNav(uint32_t chan, WiiRemoteInput::KpadSample& sample) {
+    if (chan >= PAD_CHANMAX) return;
+    uint32_t navDpad = 0;
+    if (sample.hold & kWUp) navDpad |= MenuNav::kNavUp;
+    if (sample.hold & kWDown) navDpad |= MenuNav::kNavDown;
+    if (sample.hold & kWLeft) navDpad |= MenuNav::kNavLeft;
+    if (sample.hold & kWRight) navDpad |= MenuNav::kNavRight;
+    const MenuNav::Point stick{sample.stick[0], sample.stick[1]};
+    uint32_t nav = navDpad;
+    if (stick.y > 0.6f) nav |= MenuNav::kNavUp;
+    if (stick.y < -0.6f) nav |= MenuNav::kNavDown;
+    if (stick.x < -0.6f) nav |= MenuNav::kNavLeft;
+    if (stick.x > 0.6f) nav |= MenuNav::kNavRight;
+    const MenuNav::Result r = MenuNav::Update(chan, nav, stick, (sample.hold & kWB) != 0, 0, s_cursor[chan]);
+    if (!r.menu) return;
+    if (r.pressA) sample.hold |= kWA;
+    if (r.pressPause) sample.hold |= kWOne;
+    sample.hasPointer = !r.hidePointer;
+    sample.pointer[0] = s_cursor[chan][0];
+    sample.pointer[1] = s_cursor[chan][1];
+}
+
 // Every controller (gamepad or keyboard) reaches the game through aurora's GameCube pad for its
 // port, so F10 bindings apply and face buttons sit where a GameCube controller's do (A bottom,
 // B left, X right, Y top). In matches the game reads that GameCube state directly: the emulated

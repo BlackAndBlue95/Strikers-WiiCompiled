@@ -123,6 +123,8 @@ namespace MscEmulatedRemote {
 bool Present(uint32_t chan);
 bool Read(uint32_t chan, WiiRemoteInput::KpadSample& sample);
 void RecenterPointer(uint32_t chan);
+// Menu navigation for a real Wii Remote that has no IR pointer (D-pad / Nunchuk stick, A, B).
+void ApplyRemoteMenuNav(uint32_t chan, WiiRemoteInput::KpadSample& sample);
 // The GameCube pad state (aurora port mapping and F10 bindings) for a controller channel.
 bool ReadGameCubePad(uint32_t chan, PADStatus& out);
 // Mod overlay over the game (menu selection highlight); called from settings_overlay::Draw.

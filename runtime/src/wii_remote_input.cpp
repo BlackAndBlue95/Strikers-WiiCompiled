@@ -664,6 +664,7 @@ bool ReadKpadSample(uint32_t chan, KpadSample& sample) {
             sample.dotX[i] = hid.dotX[i];
             sample.dotY[i] = hid.dotY[i];
         }
+        if (!sample.hasPointer) MscEmulatedRemote::ApplyRemoteMenuNav(chan, sample);
         return true;
     }
     SDL_Gamepad* gamepad = SDL_GetGamepadFromPlayerIndex(static_cast<int>(chan));
