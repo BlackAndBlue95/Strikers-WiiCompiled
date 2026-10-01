@@ -83,6 +83,30 @@ void MSC_PollRemoteConnections()
     }
 }
 
+// UpdatePlatPad: the game only polls channels whose `connected` flag its WPAD connect callback set,
+// so a controller that appears after boot has to be announced from here, which runs every frame
+// whether or not anything is connected. (Announcing it from KPADRead alone never fired when the only
+// controller arrived late, e.g. a Wii Remote finishing its HID setup after the title screen loaded:
+// nothing polled, so nothing called KPADRead.) Then the original loop: UpdateChannel per connected
+// channel (PlatPadManager::connected[] at +0x2F0).
+extern "C" void MSC_UpdatePlatPad_8037537C(CpuContext* ctx)
+{
+    constexpr uint32_t kConnected = 0x2F0;
+    constexpr uint32_t kUpdateChannel = 0x803753D8u; // PlatPadManager::UpdateChannel(int)
+    const uint32_t manager = ctx->gpr[3];
+    MSC_PollRemoteConnections();
+    const uint32_t savedLr = ctx->lr;
+    for (uint32_t chan = 0; chan < 4; ++chan) {
+        if (Memory::Read8(manager + kConnected + chan) != 0) {
+            ctx->gpr[3] = manager;
+            ctx->gpr[4] = chan;
+            InvokeIndirectCpu(kUpdateChannel, ctx);
+        }
+    }
+    ctx->lr = savedLr;
+}
+PPC_NATIVE_OVERRIDE_VOID(8037537C, MSC_UpdatePlatPad_8037537C, (CpuContext* ctx), (ctx));
+
 // OSYieldThread: on hardware the AI DMA interrupt keeps firing while a thread yield-spins
 // (e.g. DestroyFEState waiting for audio to go idle). Here audio only pumps when the
 // scheduler idles, and a yield-spinning main thread never lets it idle, so voices never stop.

@@ -790,7 +790,12 @@ void DrawControllerSettings() {
     }
     ImGui::Separator();
     const char* currentName = PADGetName(selectedGamePort);
-    ImGui::Text("Assigned: %s", currentName != nullptr ? currentName : "None");
+    if (WiimoteHid::Sample hid; currentName == nullptr && WiimoteHid::Read(selectedGamePort, hid)) {
+        // Real remotes are driven over HID, outside SDL's controller list.
+        ImGui::Text("Assigned: %s (Bluetooth HID)", hid.hasNunchuk ? "Wii Remote + Nunchuk" : "Wii Remote");
+    } else {
+        ImGui::Text("Assigned: %s", currentName != nullptr ? currentName : "None");
+    }
     if (ImGui::MenuItem("Unassign controller")) {
         PADClearPort(selectedGamePort);
         g_configuredControllerIndices.fill(std::numeric_limits<int32_t>::min());
