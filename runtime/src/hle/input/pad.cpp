@@ -185,6 +185,9 @@ struct State {
     uint32_t sceneWhenEmpty = 0;
 };
 State s_state[PAD_CHANMAX];
+// Player 1 always navigates; other pads join in once they're used, so an idle second
+// controller doesn't snap its pointer around or show a badge in menus player 1 is driving.
+bool s_engaged[PAD_CHANMAX] = {true, false, false, false};
 // The selected button per pad, for the highlight overlay (DrawHighlight).
 Button s_selected[PAD_CHANMAX];
 bool s_hasSelected[PAD_CHANMAX]{};
@@ -378,6 +381,11 @@ Result Update(uint32_t chan, uint32_t dir, Point stick, bool backButton, float c
     // A menu is up whenever live pointer buttons exist (none during matches).
     const std::vector<Button> buttons = CollectButtons(chan);
     s_hasSelected[chan] = false;
+    if (dir || backButton || std::hypot(stick.x, stick.y) > 0.5f) s_engaged[chan] = true;
+    if (!s_engaged[chan]) {  // idle extra pad: don't move its pointer, but keep its hand hidden
+        if (!buttons.empty()) SetHandVisible(chan, false);
+        return r;
+    }
     if (buttons.empty()) { const uint32_t scene = CurrentScene(); st = {}; st.sceneWhenEmpty = scene; return r; }
     r.menu = true;
     // One direction at a time; first press moves at once, holding repeats.
