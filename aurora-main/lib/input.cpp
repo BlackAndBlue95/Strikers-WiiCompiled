@@ -273,6 +273,8 @@ bool is_instance_claimed(const std::array<Uint32, PAD_MAX_CONTROLLERS>& claimedC
          claimedControllers.begin() + claimedCount;
 }
 
+void ensure_player_index(GameController& controller) noexcept;
+
 void apply_port_preferences() noexcept {
   ensure_port_preferences_loaded();
   if (!std::any_of(g_portPreferences.begin(), g_portPreferences.end(),
@@ -325,6 +327,14 @@ void apply_port_preferences() noexcept {
     if (fallbackController != nullptr) {
       assign_player_index(*fallbackController, static_cast<int32_t>(port));
       claimedControllers[claimedCount++] = fallbackInstance;
+    }
+  }
+
+  // A controller pushed off a configured port (SDL handed a second pad the same default index)
+  // would otherwise stay portless: give it the next free port, as for a newly connected one.
+  for (auto& [instance, controller] : g_GameControllers) {
+    if (effective_player_index(controller) < 0) {
+      ensure_player_index(controller);
     }
   }
 }
