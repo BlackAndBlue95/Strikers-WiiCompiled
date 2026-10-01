@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <set>
+#include <string>
 #include <vector>
 #include "abi_bridge.h"
 #include "hle_stubs.h"
@@ -504,6 +506,117 @@ void Apply() {
     }
 }
 } // namespace FrameMods
+
+// Missing away-kit images. Sidekick select loads "fe/sidekick_images/{position,attributes}_<sidekick>
+// _<captain>_alt" from art/fe/sidekicksui.res whenever a captain wears the away kit, but the disc
+// only has them for the captains the game can switch: Peach has a blue kit and every other blue
+// texture, yet no captain shares her pink, so her _alt portraits were never made. Forced into blue
+// (kit choice, Blue Peach) she made BundleFile look up 16 missing files; AsyncImage then allocated
+// an uninitialised length and read from directory entry -1, and the game crashed. The two by-name
+// lookups below are the originals (nlBundleFile.cpp) except that a missing "<name>_alt" falls back
+// to "<name>": the home-kit portrait.
+namespace {
+constexpr uint32_t kBundleNumFiles = 0x04, kBundleFile = 0x10, kBundleDirectory = 0x20;  // BundleFile
+constexpr uint32_t kBundleEntrySize = 12;  // BundleFileDirectoryEntry {hash, block, length}
+constexpr uint32_t kNotFound = ~0u;
+
+// BundleFile::HashFilename: lower case, backslashes as slashes, nlStringHash.
+uint32_t BundleHash(const std::string& name)
+{
+    uint32_t h = 0xFFFFFFFFu;
+    for (char c : name) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c | 0x20);
+        if (c == '\\') c = '/';
+        h += h << 5;
+        h += static_cast<unsigned char>(c);
+    }
+    return h;
+}
+
+uint32_t BundleFindHash(uint32_t bundle, uint32_t hash)
+{
+    const uint32_t count = Memory::Read32(bundle + kBundleNumFiles), directory = Memory::Read32(bundle + kBundleDirectory);
+    for (uint32_t i = 0; i < count; ++i) {
+        if (Memory::Read32(directory + i * kBundleEntrySize) == hash) return i;
+    }
+    return kNotFound;
+}
+
+// The directory index for a file name, with the "_alt" fallback.
+uint32_t BundleFindName(uint32_t bundle, uint32_t namePtr, bool printError)
+{
+    std::string name;
+    for (uint32_t i = 0; i < 255; ++i) {
+        const char c = static_cast<char>(Memory::Read8(namePtr + i));
+        if (c == 0) break;
+        name.push_back(c);
+    }
+    uint32_t index = BundleFindHash(bundle, BundleHash(name));
+    if (index != kNotFound) return index;
+    static std::set<std::string> s_reported;
+    const bool first = s_reported.insert(name).second;
+    if (name.size() > 4 && name.compare(name.size() - 4, 4, "_alt") == 0) {
+        index = BundleFindHash(bundle, BundleHash(name.substr(0, name.size() - 4)));
+        if (index != kNotFound) {
+            if (first) RT_LOGF(RT_TAG_HLE, "%s is not on the disc: using the home kit's image\n", name.c_str());
+            return index;
+        }
+    }
+    if (printError && first) RT_LOGF(RT_TAG_HLE, "Bundle file not found: %s\n", name.c_str());
+    return kNotFound;
+}
+} // namespace
+
+// bool BundleFile::GetFileInfo(const char* filename, BundleFileDirectoryEntry* entry, bool printError)
+extern "C" void MSC_BundleFileGetFileInfo_802BE030(CpuContext* ctx)
+{
+    const uint32_t bundle = ctx->gpr[3], entry = ctx->gpr[5];
+    const uint32_t index = BundleFindName(bundle, ctx->gpr[4], (ctx->gpr[6] & 0xFF) != 0);
+    bool found = false;
+    if (index < Memory::Read32(bundle + kBundleNumFiles)) {
+        const uint32_t from = Memory::Read32(bundle + kBundleDirectory) + index * kBundleEntrySize;
+        for (uint32_t i = 0; i < kBundleEntrySize; i += 4) Memory::Write32(entry + i, Memory::Read32(from + i));
+        found = true;
+    }
+    ctx->gpr[3] = found ? 1u : 0u;
+}
+PPC_NATIVE_OVERRIDE_VOID(802BE030, MSC_BundleFileGetFileInfo_802BE030, (CpuContext* ctx), (ctx));
+
+// void BundleFile::ReadFileAsync(const char* filename, void* buffer, unsigned long size,
+//                                FileReadAsyncCallback callback, unsigned long userParam)
+extern "C" void MSC_BundleFileReadFileAsync_802BE34C(CpuContext* ctx)
+{
+    constexpr uint32_t kNlMalloc = 0x802AA79Cu;              // nlMalloc(size, alignment, fromEnd)
+    constexpr uint32_t kNlSeek = 0x80367824u;                // nlSeek(file, offset, origin)
+    constexpr uint32_t kNlReadAsync = 0x80367720u;           // nlReadAsync(file, buffer, size, cb, param, 0)
+    constexpr uint32_t kCbFileReadAsyncCallback = 0x802BDC38u;
+    const uint32_t bundle = ctx->gpr[3], buffer = ctx->gpr[5], size = ctx->gpr[6];
+    const uint32_t callback = ctx->gpr[7], userParam = ctx->gpr[8];
+    const uint32_t index = BundleFindName(bundle, ctx->gpr[4], true);  // not found: entry -1, as the original
+    const uint32_t savedLr = ctx->lr;
+    ctx->gpr[3] = 8;
+    ctx->gpr[4] = 8;
+    ctx->gpr[5] = 1;
+    InvokeIndirectCpu(kNlMalloc, ctx);
+    const uint32_t data = ctx->gpr[3];  // AsyncReadCallbackData {callback, userParam}
+    Memory::Write32(data, callback);
+    Memory::Write32(data + 4, userParam);
+    const uint32_t entry = Memory::Read32(bundle + kBundleDirectory) + index * kBundleEntrySize;
+    const uint32_t file = Memory::Read32(bundle + kBundleFile);
+    ctx->gpr[3] = file;
+    ctx->gpr[4] = Memory::Read32(entry + 4) * Memory::Read32(bundle);  // block * nSectorSize
+    ctx->gpr[5] = 0;
+    InvokeIndirectCpu(kNlSeek, ctx);
+    ctx->gpr[3] = file;
+    ctx->gpr[4] = buffer;
+    ctx->gpr[5] = size;
+    ctx->gpr[6] = kCbFileReadAsyncCallback;
+    ctx->gpr[7] = data;
+    ctx->gpr[8] = 0;
+    InvokeIndirectCpu(kNlReadAsync, ctx);
+    ctx->lr = savedLr;
+}
+PPC_NATIVE_OVERRIDE_VOID(802BE34C, MSC_BundleFileReadFileAsync_802BE34C, (CpuContext* ctx), (ctx));
 
 extern "C" void MSC_UpdatePlatPad_8037537C(CpuContext* ctx)
 {
