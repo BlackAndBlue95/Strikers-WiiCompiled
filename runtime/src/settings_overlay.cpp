@@ -260,9 +260,11 @@ void ApplyConfiguredMappings() {
         // they describe whatever pad the user set them up with (usually an Xbox
         // layout: a = south). A Wii U Pro Controller has a fixed, known layout
         // (A on the east position) that aurora already maps by name; applying
-        // the shared bindings on top swaps A/B and X/Y. (Wii Remotes with any
-        // extension never reach the PAD layer: the game reads them through KPAD.)
-        if (WiiRemoteInput::KindForPort(port) == WiiRemoteInput::Kind::WiiUPro) {
+        // the shared bindings on top swaps A/B and X/Y. A GameCube pad on the
+        // adapter is the same: its buttons are the game's own and aurora's mapping
+        // for it is fixed. (Wii Remotes with any extension never reach the PAD
+        // layer: the game reads them through KPAD.)
+        if (WiiRemoteInput::KindForPort(port) == WiiRemoteInput::Kind::WiiUPro || PADIsGCAdapter(port)) {
             continue;
         }
 
@@ -821,6 +823,16 @@ void DrawControllerSettings() {
             ImGui::PopID();
         }
         ImGui::EndMenu();
+    }
+
+    // A GameCube pad on the adapter (WUP-028 or Wii U mode) has the game's own buttons, so its
+    // mapping is fixed (see __PADLoadMapping); presets and per-button rebinding would only break it.
+    if (PADIsGCAdapter(selectedGamePort)) {
+        ImGui::SeparatorText("Button mapping");
+        ImGui::TextDisabled("GameCube controller: its buttons are the game's own, so no mapping is needed.");
+        DrawExpressionSettings();
+        DrawRumbleSettings();
+        return;
     }
 
     uint32_t mappingCount = 0;
