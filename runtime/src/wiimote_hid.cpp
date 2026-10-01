@@ -25,6 +25,13 @@
 namespace WiimoteHid {
 namespace {
 
+// Camera pixels per unit of KPAD pointer position. Dolphin's emulated remote (Dynamics.cpp
+// EmulatePoint + Camera.cpp GetCameraPoints, default pointing range) moves the sensor bar's dots
+// about 605 px horizontally and 480 px vertically from the image centre for a pointer at +/-1, and
+// in the opposite direction: aiming right moves the dots left, aiming up moves them up.
+constexpr float kPointerPixelsX = 605.f;
+constexpr float kPointerPixelsY = 480.f;
+
 constexpr uint16_t kNintendoVid = 0x057E;
 constexpr uint16_t kPidRvlCnt01 = 0x0306;    // original Wii Remote
 constexpr uint16_t kPidRvlCnt01Tr = 0x0330;  // Wii Remote Plus (MotionPlus inside)
@@ -299,7 +306,7 @@ void UpdatePointer(Remote& r, Sample& s) {
         dy = r.lastPair[1];
         const float ax = x[0] + dx * 0.5f, ay = y[0] + dy * 0.5f;
         const float bx = x[0] - dx * 0.5f, by = y[0] - dy * 0.5f;
-        const float px = 512.f + r.smoothed[0] * 384.f, py = 384.f - r.smoothed[1] * 288.f;
+        const float px = 512.f - r.smoothed[0] * kPointerPixelsX, py = 384.f + r.smoothed[1] * kPointerPixelsY;
         const bool useA = (ax - px) * (ax - px) + (ay - py) * (ay - py) <= (bx - px) * (bx - px) + (by - py) * (by - py);
         mx = useA ? ax : bx;
         my = useA ? ay : by;
@@ -313,10 +320,9 @@ void UpdatePointer(Remote& r, Sample& s) {
     const float c = std::cos(-angle), sn = std::sin(-angle);
     const float ox = mx - 512.f, oy = my - 384.f;
     const float rx = ox * c - oy * sn, ry = ox * sn + oy * c;
-    // The camera image is mirrored (Dolphin's camera: x = (1 - ndc.x) * 512, y = (1 - ndc.y) * 384),
-    // so turning the remote right moves the dots right and pointing up moves them down.
-    float px = std::clamp(rx / 384.f, -1.25f, 1.25f);
-    float py = std::clamp(-ry / 288.f, -1.25f, 1.25f);
+    // Aiming right moves the dots left and aiming down moves them down (see kPointerPixelsX).
+    float px = std::clamp(-rx / kPointerPixelsX, -1.25f, 1.25f);
+    float py = std::clamp(ry / kPointerPixelsY, -1.25f, 1.25f);
     // Light smoothing against camera jitter (KPAD smooths its pointer too).
     if (r.smoothedValid) {
         px = r.smoothed[0] + (px - r.smoothed[0]) * 0.6f;

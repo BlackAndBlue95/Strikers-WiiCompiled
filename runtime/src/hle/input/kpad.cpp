@@ -312,10 +312,10 @@ extern "C" void MSC_WPADRead_803CD944(uint32_t chan, uint32_t statusPtr)
                     Memory::Write8(obj + 6, static_cast<uint8_t>(i));
                 }
             } else if (sample.hasPointer && i < 2) {
-                // Two sensor-bar dots 200 px apart. The camera image is mirrored (Dolphin's camera:
-                // x = (1 - ndc.x) * 512), so aiming right moves them right and aiming down moves them up.
-                const float cx = 512.0f + sample.pointer[0] * 384.0f;
-                const float cy = 384.0f - sample.pointer[1] * 288.0f;
+                // Two sensor-bar dots 200 px apart, placed as Dolphin's emulated camera does:
+                // aiming right moves them left, aiming down moves them down.
+                const float cx = 512.0f - sample.pointer[0] * 605.0f;
+                const float cy = 384.0f + sample.pointer[1] * 480.0f;
                 Memory::Write16(obj + 0, static_cast<uint16_t>(std::clamp(cx + (i ? 100.0f : -100.0f), 0.0f, 1023.0f)));
                 Memory::Write16(obj + 2, static_cast<uint16_t>(std::clamp(cy, 0.0f, 767.0f)));
                 Memory::Write16(obj + 4, 4);
