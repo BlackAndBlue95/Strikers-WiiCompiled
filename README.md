@@ -96,6 +96,10 @@ FPS counter, volume and the mods below. Settings are saved to `Config.toml` stra
 
 Real Wii Remotes use the game's original controls (see *Real Wii Remotes* above).
 
+**GameCube controllers** work through the official Wii U / Switch GameCube adapter (WUP-028), or
+a third-party adapter switched to its Wii U mode. As with Dolphin, on Windows the adapter must be
+switched to the WinUSB driver once with [Zadig](https://zadig.akeo.ie/).
+
 ## Mods
 
 Strikers Charged was built around the Wii Remote pointer. These controller-friendly changes are

@@ -218,9 +218,13 @@ if (-not $SkipTranslate) {
 $cppWinRt = Get-CppWinRtHeaders
 
 Step 'Configuring the native build'
+# SDL is built from source (as WiiCompiled's own Windows build does): the official prebuilt MinGW
+# SDL3 has no libusb, so it can't see the Wii U GameCube adapter (WUP-028, or a third-party adapter
+# in Wii U mode), which isn't a HID device.
 Logged 'configure.log' $cmake @('-S', 'runtime', '-B', $BuildDir, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
     "-DCMAKE_C_COMPILER=$($clang -replace '\\', '/')", "-DCMAKE_CXX_COMPILER=$($clangxx -replace '\\', '/')",
-    "-DCMAKE_MAKE_PROGRAM=$($ninja -replace '\\', '/')", "-DMKW_CPPWINRT_INCLUDE_DIR=$($cppWinRt -replace '\\', '/')")
+    "-DCMAKE_MAKE_PROGRAM=$($ninja -replace '\\', '/')", "-DMKW_CPPWINRT_INCLUDE_DIR=$($cppWinRt -replace '\\', '/')",
+    '-DAURORA_SDL3_PROVIDER=vendor')
 
 Step 'Compiling (the first build takes a long time)'
 Logged 'build.log' $cmake @('--build', $BuildDir, '--target', 'WiiCompiled', '--parallel', "$Jobs")
