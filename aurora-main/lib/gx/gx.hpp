@@ -425,6 +425,13 @@ struct GXState {
   u32 displayCopyHeight = 0;
   bool depthCompare = true;
   bool depthUpdate = true;
+  // GX z-freeze (genMode bit 19, GXSetCoPlanar). While set, triangles take their depth from the
+  // screen-space plane of the last triangle drawn with it clear (the "reference", usually culled),
+  // so decals land exactly on the surface they were made for. zFreezePlane is that plane in window
+  // coordinates: host depth = x * win.x + y * win.y + z; zFreezePlaneVersion changes whenever it does.
+  bool coPlanar = false;
+  Vec4<float> zFreezePlane{};
+  u32 zFreezePlaneVersion = 0;
   bool colorUpdate = true;
   bool alphaUpdate = true;
   u8 numChans = 0;
@@ -559,7 +566,9 @@ struct ShaderConfig {
   u8 lineMode : 2 = 0; // 1 = GX_LINES, 2 = GX_LINESTRIP, 3 = GX_POINTS
   u8 dualTexEnabled : 1 = 0;
   u8 fogRangeAdjust : 1 = 0;
-  u8 pad1 : 4 = 0;
+  // Z-freeze (GXSetCoPlanar): depth comes from the reference plane in ubuf.zfreeze_plane.
+  u8 zFreeze : 1 = 0;
+  u8 pad1 : 3 = 0;
   u8 numTexGens = 0;
   u32 zTexture = 0; // bias[0:23], format[24:25], op[26:27]; 0 disables shader depth output.
   std::array<AttrConfig, MaxVtxAttr> attrs;
@@ -760,11 +769,14 @@ struct ShaderInfo {
   bool usesFog : 1 = false;
   bool lightingEnabled : 1 = false;
   u8 lineMode : 2 = 0;
+  bool zFreeze : 1 = false;
 };
 struct BindGroupRanges {
   std::array<gfx::Range, MaxIndexAttr> vaRanges{};
 };
 void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXVtxFmt fmt) noexcept;
+// The projection draws are submitted with (GX projection with the host depth convention folded in).
+Mat4x4<float> current_effective_projection() noexcept;
 wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, ArrayRef<wgpu::VertexBufferLayout> vtxBuffers,
                                     wgpu::ShaderModule shader, const char* label) noexcept;
 wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept;

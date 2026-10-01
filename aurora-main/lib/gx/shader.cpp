@@ -1011,6 +1011,9 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
       vtx_attr(config, GX_VA_NRM));
 
   uniBufAttrs += "\n    proj: mat4x4f,";
+  if (config.zFreeze) {
+    uniBufAttrs += "\n    zfreeze_plane: vec4f,";
+  }
   // Only the matrix slots this shader can read are uploaded, in compacted order; see UniformMatrixLayout.
   uniBufAttrs += fmt::format("\n    postex_mtx: array<mat3x4f, {}>,", info.matrixLayout.postexCount);
   uniBufAttrs += fmt::format("\n    nrm_mtx: array<mat3x4f, {}>,", info.matrixLayout.nrmCount);
@@ -1660,6 +1663,23 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
         "    var out: FragmentOutput;\n"
         "    out.color = prev;\n"
         "    out.depth = fragDepth;\n"
+        "    return out;";
+  } else if (config.zFreeze) {
+    // Z-freeze: depth is the reference plane evaluated at this pixel (window coordinates to host
+    // depth). Evaluating it per pixel, as hardware does, gives every frozen triangle bit-identical
+    // depth, which games rely on: Strikers draws flattened shadow meshes with a strict depth test so
+    // overlapping triangles of the same shadow draw only once instead of darkening each other.
+    uniformPre +=
+        "\n"
+        "struct FragmentOutput {\n"
+        "    @location(0) color: vec4f,\n"
+        "    @builtin(frag_depth) depth: f32,\n"
+        "};";
+    fragmentReturnType = "FragmentOutput";
+    fragmentReturn =
+        "    var out: FragmentOutput;\n"
+        "    out.color = prev;\n"
+        "    out.depth = clamp(dot(vec3f(in.pos.xy, 1.0), ubuf.zfreeze_plane.xyz), 0.0, 1.0);\n"
         "    return out;";
   }
 

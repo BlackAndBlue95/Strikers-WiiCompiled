@@ -304,6 +304,10 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
     info.uniformSize += 4 + 4 + 4 + 4; // line_width, line_aspect_y, line_tex_offset, line_texcoord_mask
     info.lineMode = config.lineMode;
   }
+  if (config.zFreeze) {
+    info.uniformSize += sizeof(Vec4<float>); // zfreeze_plane
+    info.zFreeze = true;
+  }
 
   for (int attr = 0; attr < config.attrs.size(); attr++) {
     const auto attrType = config.attrs[attr].attrType;
@@ -545,7 +549,7 @@ static u32 line_texcoord_mask() noexcept {
 namespace {
 // Largest possible staged prefix: scalar head (80) + line/point block (16) + projection matrix + every matrix the uncompacted layout can hold.
 constexpr size_t kStagedUniformBytes =
-    96 + sizeof(Mat4x4<float>) + sizeof(Mat3x4<float>) * (MaxPostexMtx + MaxPnMtx);
+    96 + sizeof(Vec4<float>) + sizeof(Mat4x4<float>) + sizeof(Mat3x4<float>) * (MaxPostexMtx + MaxPnMtx);
 
 // The host viewport always receives the normalized GX depth window (render_pass_impl clamps to minDepth <= maxDepth).
 //
@@ -568,6 +572,8 @@ static Mat4x4<float> effective_projection() noexcept {
   return proj;
 }
 } // namespace
+
+Mat4x4<float> current_effective_projection() noexcept { return effective_projection(); }
 
 UniformRanges build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGroupRanges& ranges,
                             const FrameInterpolationDrawIdentity& drawIdentity, bool perspective,
@@ -619,6 +625,9 @@ UniformRanges build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGrou
   const size_t projectionOffset = stagedSize;
   const Mat4x4<float> effectiveProj = effective_projection();
   stage(&effectiveProj, sizeof(effectiveProj));
+  if (info.zFreeze) {
+    stage(&g_gxState.zFreezePlane, sizeof(g_gxState.zFreezePlane));
+  }
 
   const size_t positionOffset = stagedSize;
   for (u32 i = 0; i < layout.postexCount; ++i) {

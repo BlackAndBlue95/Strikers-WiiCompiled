@@ -773,6 +773,7 @@ static void handle_bp(u32 value, bool bigEndian) {
       break;
     }
     g_gxState.numIndStages = bp_get(value, 3, 16);
+    g_gxState.coPlanar = bp_get(value, 1, 19) != 0;
     mark_pipeline_state_dirty();
     break;
   }
@@ -1907,6 +1908,8 @@ static u32 calculate_last_vtx_size(GXVtxFmt fmt) {
   return vtxSize;
 }
 
+static void update_zfreeze_plane(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, uint16_t vtxCount,
+                                 uint32_t vtxStride) noexcept;
 static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
                                  gfx::Range vertRange, uint16_t usedPnMtxMask,
                                  HashType matrixTopologySignature,
@@ -2184,6 +2187,7 @@ bool submit_raw_draw(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, ui
   }
 
   if (!has_complete_primitive(prim, vtxCount)) return true;
+  update_zfreeze_plane(prim, fmt, vertices, vtxCount, vtxSize);
 
   // This entry point bypasses process(), so it owns the renderer lock itself.
   std::unique_lock gpuLock(aurora::renderer_gpu_mutex());
@@ -2204,6 +2208,170 @@ bool submit_raw_draw(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, ui
                        interpolationIdentityActive ? draw_geometry_signature(fmt, vertices, vtxCount, vtxSize) : 0,
                        interpolationIdentityActive);
   return true;
+}
+
+// --- Z-freeze reference plane (genMode bit 19 / GXSetCoPlanar) ---
+// Hardware keeps the depth slopes of the last triangle set up with z-freeze off -- even a culled one,
+// which is how games feed it an invisible reference -- and frozen triangles rasterize that plane.
+// The reference triangle is transformed here exactly as the vertex shader would (position matrix,
+// then the effective projection) and its plane is stored in host NDC for frozen draws to use.
+static uint32_t s_lastDrawZFreezePlaneVersion = 0;
+
+static bool read_position_component(const uint8_t* p, GXCompType type, bool le, float scale, float& out) noexcept {
+  const auto u16v = [&](const uint8_t* b) -> uint16_t {
+    return le ? static_cast<uint16_t>(b[0] | (b[1] << 8)) : static_cast<uint16_t>((b[0] << 8) | b[1]);
+  };
+  switch (type) {
+  case GX_U8:
+    out = static_cast<float>(p[0]) * scale;
+    return true;
+  case GX_S8:
+    out = static_cast<float>(static_cast<int8_t>(p[0])) * scale;
+    return true;
+  case GX_U16:
+    out = static_cast<float>(u16v(p)) * scale;
+    return true;
+  case GX_S16:
+    out = static_cast<float>(static_cast<int16_t>(u16v(p))) * scale;
+    return true;
+  case GX_F32: {
+    const uint32_t bits = le ? (uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24))
+                             : ((uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | uint32_t(p[3]));
+    std::memcpy(&out, &bits, sizeof(out));
+    return std::isfinite(out);
+  }
+  default:
+    return false;
+  }
+}
+
+static uint32_t position_comp_size(GXCompType type) noexcept {
+  switch (type) {
+  case GX_U8:
+  case GX_S8:
+    return 1;
+  case GX_U16:
+  case GX_S16:
+    return 2;
+  case GX_F32:
+    return 4;
+  default:
+    return 0;
+  }
+}
+
+// Clip-space position of one vertex of the current draw, or false when it cannot be decoded.
+static bool zfreeze_clip_position(GXVtxFmt fmt, const uint8_t* vertex, const Mat4x4<float>& proj,
+                                  Vec4<float>& clip) noexcept {
+  uint32_t offset = 0;
+  for (int attr = GX_VA_PNMTXIDX; attr <= GX_VA_TEX7MTXIDX; ++attr) {
+    if (g_gxState.vtxDesc[attr] == GX_DIRECT) {
+      ++offset; // matrix indices are one byte and always precede the position
+    }
+  }
+  const auto& posFmt = g_gxState.vtxFmts[fmt].attrs[GX_VA_POS];
+  const uint32_t compSize = position_comp_size(posFmt.type);
+  if (compSize == 0) {
+    return false;
+  }
+  const uint32_t compCount = posFmt.cnt == GX_POS_XY ? 2 : 3;
+  const uint8_t* src = nullptr;
+  bool le = false;
+  switch (g_gxState.vtxDesc[GX_VA_POS]) {
+  case GX_DIRECT:
+    src = vertex + offset;
+    break;
+  case GX_INDEX8:
+  case GX_INDEX16: {
+    const auto& array = g_gxState.arrays[GX_VA_POS];
+    const uint32_t index = g_gxState.vtxDesc[GX_VA_POS] == GX_INDEX8
+                               ? vertex[offset]
+                               : static_cast<uint32_t>((vertex[offset] << 8) | vertex[offset + 1]);
+    const uint64_t start = static_cast<uint64_t>(index) * array.stride;
+    if (array.data == nullptr || start + compSize * compCount > array.size) {
+      return false;
+    }
+    src = static_cast<const uint8_t*>(array.data) + start;
+    le = array.le;
+    break;
+  }
+  default:
+    return false;
+  }
+  const float scale = posFmt.type == GX_F32 ? 1.f : 1.f / static_cast<float>(1u << posFmt.frac);
+  float pos[3] = {0.f, 0.f, 0.f};
+  for (uint32_t c = 0; c < compCount; ++c) {
+    if (!read_position_component(src + c * compSize, posFmt.type, le, scale, pos[c])) {
+      return false;
+    }
+  }
+
+  uint32_t matrix = g_gxState.currentPnMtx;
+  if (g_gxState.vtxDesc[GX_VA_PNMTXIDX] == GX_DIRECT) {
+    matrix = vertex[0] / 3u;
+  }
+  const Mat3x4<float>& mv = matrix < MaxPnMtx ? g_gxState.pnMtx[matrix].pos
+                                               : g_gxState.texMtxs[std::min<uint32_t>(matrix, MaxPostexMtx - 1) - MaxPnMtx];
+  const auto row = [&](const Vec4<float>& r, float w) { return r.m[0] * pos[0] + r.m[1] * pos[1] + r.m[2] * pos[2] + r.m[3] * w; };
+  const float eye[4] = {row(mv.m0, 1.f), row(mv.m1, 1.f), row(mv.m2, 1.f), 1.f};
+  const auto prow = [&](const Vec4<float>& r) { return r.m[0] * eye[0] + r.m[1] * eye[1] + r.m[2] * eye[2] + r.m[3] * eye[3]; };
+  clip = Vec4<float>{prow(proj.m0), prow(proj.m1), prow(proj.m2), prow(proj.m3)};
+  return true;
+}
+
+static void update_zfreeze_plane(GXPrimitive prim, GXVtxFmt fmt, const uint8_t* vertices, uint16_t vtxCount,
+                                 uint32_t vtxStride) noexcept {
+  if (g_gxState.coPlanar || vtxCount < 3 || prim == GX_LINES || prim == GX_LINESTRIP || prim == GX_POINTS) {
+    return;
+  }
+  // The last triangle set up: three of the last quad's corners, a fan's hub and its last edge, or
+  // the last three vertices of a list or strip.
+  std::array<uint32_t, 3> idx{vtxCount - 3u, vtxCount - 2u, vtxCount - 1u};
+  if (prim == GX_TRIANGLEFAN) {
+    idx[0] = 0;
+  }
+  const Mat4x4<float> proj = current_effective_projection();
+  // Window coordinates and host depth, exactly as the rasterizer will see the frozen triangles: the
+  // vertex shader's GX pixel-center shift, then the viewport transform (see SetViewport in
+  // gfx/common.cpp for the reversed-Z depth range).
+  const auto& vp = g_gxState.renderViewport;
+  const float minDepth = UseReversedZ ? 1.0f - vp.zfar : vp.znear;
+  const float maxDepth = UseReversedZ ? 1.0f - vp.znear : vp.zfar;
+  const float centerX = -1.f / (6.f * std::max(std::abs(vp.width), 1.f));
+  const float centerY = 1.f / (6.f * std::max(std::abs(vp.height), 1.f));
+  float win[3][3];
+  for (int i = 0; i < 3; ++i) {
+    Vec4<float> clip{};
+    if (!zfreeze_clip_position(fmt, vertices + static_cast<size_t>(idx[i]) * vtxStride, proj, clip) ||
+        !(clip.m[3] > 1e-6f)) {
+      return;
+    }
+    const float nx = clip.m[0] / clip.m[3] + centerX;
+    const float ny = clip.m[1] / clip.m[3] + centerY;
+    const float nz = clip.m[2] / clip.m[3];
+    win[i][0] = vp.left + (nx + 1.f) * 0.5f * vp.width;
+    win[i][1] = vp.top + (1.f - ny) * 0.5f * vp.height;
+    win[i][2] = minDepth + nz * (maxDepth - minDepth);
+  }
+  const float e1[3] = {win[1][0] - win[0][0], win[1][1] - win[0][1], win[1][2] - win[0][2]};
+  const float e2[3] = {win[2][0] - win[0][0], win[2][1] - win[0][1], win[2][2] - win[0][2]};
+  const float nx = e1[1] * e2[2] - e1[2] * e2[1];
+  const float ny = e1[2] * e2[0] - e1[0] * e2[2];
+  const float nz = e1[0] * e2[1] - e1[1] * e2[0];
+  if (std::abs(nz) < 1e-6f) {
+    return; // degenerate or edge-on to the screen: hardware would get no usable slope either
+  }
+  const float a = -nx / nz;
+  const float b = -ny / nz;
+  const float c = win[0][2] - a * win[0][0] - b * win[0][1];
+  if (!std::isfinite(a) || !std::isfinite(b) || !std::isfinite(c)) {
+    return;
+  }
+  const Vec4<float> plane{a, b, c, 0.f};
+  if (std::memcmp(&plane, &g_gxState.zFreezePlane, sizeof(plane)) != 0) {
+    g_gxState.zFreezePlane = plane;
+    ++g_gxState.zFreezePlaneVersion;
+  }
 }
 
 static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndian) {
@@ -2236,6 +2404,8 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
     return true;
   }
 
+  update_zfreeze_plane(prim, fmt, data + pos, vtxCount, vtxSize);
+
   DrawData* mergeTarget = nullptr;
   // Decide admission before allocating anything. The merged path needs only
   // vertices and indices; it must not resolve pipelines or upload arrays.
@@ -2245,8 +2415,11 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
     // Expanded lines/points have different vertex interpretation even with one instance.
     // Triangle-list output has no restart index; index 65535 is usable.
     // Overflow would address earlier vertices instead of the appended geometry.
+    // A frozen draw reads the reference plane from its uniforms, so it cannot join a draw staged
+    // with an older plane.
     if (lastDraw != nullptr && prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS &&
         !lastDraw->expandedPrimitive && lastDraw->instanceCount == 1 &&
+        (!g_gxState.coPlanar || s_lastDrawZFreezePlaneVersion == g_gxState.zFreezePlaneVersion) &&
         uint64_t(lastDraw->vtxCount) +
             vtxCount <= 65536u) LIKELY {
       mergeTarget = lastDraw;
@@ -2354,6 +2527,7 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
       build_uniform(info, vertRange.offset, ranges, drawIdentity, interpolationIdentityActive,
                     usedPnMtxMask);
   s_lastDrawRecordedInterpolation = interpolationIdentityActive;
+  s_lastDrawZFreezePlaneVersion = g_gxState.zFreezePlaneVersion;
 
   uint32_t instanceCount = 1;
   if (prim == GX_LINES) {
