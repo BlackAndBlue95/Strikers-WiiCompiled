@@ -8,6 +8,7 @@
 #include "fiber_manager.h"
 #include "platform/host_platform.h"
 #include "runtime_log.h"
+#include "runtime_config.h"
 
 #include <dolphin/vi.h>
 
@@ -150,9 +151,26 @@ constexpr uint32_t kViRetraceQueueAddr      = 0x806E2B90; // Thread queue for VI
 // EGG::BaseSystem::sSystem pointer - must be non-null before post-retrace callback is valid
 constexpr uint32_t kEggSSystemAddr = 0x80386F60;
 
+// Native frame rate setting (60 or 120). The game paces itself on VIWaitForRetrace and times its
+// simulation by the OS clock (fixed 50 Hz steps, rendered by blending snapshots), so a faster retrace
+// gives real extra frames at normal game speed.
+std::atomic<uint32_t> g_targetFrameRate{0};
+
+uint32_t TargetFrameRate() {
+    uint32_t hz = g_targetFrameRate.load(std::memory_order_acquire);
+    if (hz == 0) {
+        hz = RuntimeConfigFile::FrameRate(60);
+        g_targetFrameRate.store(hz, std::memory_order_release);
+    }
+    return hz;
+}
+
 std::chrono::microseconds IntervalForFormat(uint32_t tvFormat) {
-    // NTSC-ish defaults to 60 Hz; PAL uses 50 Hz.
-    return tvFormat == 1 ? 20000us : 16666us;
+    // PAL uses 50 Hz; NTSC/EURGB60 follow the frame rate setting.
+    if (tvFormat == 1) {
+        return 20000us;
+    }
+    return TargetFrameRate() >= 120 ? 8333us : 16666us;
 }
 
 // Shared busy-wait budget for deadline-precise sleeps (matches Aurora's
@@ -931,3 +949,11 @@ extern "C" void VIWaitForRetrace_HLE_803C6434(CpuContext* ctx)
     ViSetR3(cpu, 0);
 }
 PPC_NATIVE_OVERRIDE_VOID(803C6434, VIWaitForRetrace_HLE_803C6434, (CpuContext* ctx), (ctx));
+
+// Switches the native frame rate at runtime (F10 > Video).
+void VI_HLE_SetFrameRate(uint32_t hz) {
+    g_targetFrameRate.store(hz >= 120 ? 120u : 60u, std::memory_order_release);
+    std::lock_guard<std::mutex> lock(g_viMutex);
+    g_vi.retraceInterval = IntervalForFormat(g_vi.tvFormat);
+    g_vi.pendingRetraceInterval = IntervalForFormat(g_vi.pendingTvFormat);
+}

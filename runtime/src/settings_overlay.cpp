@@ -50,6 +50,9 @@ extern "C" int g_gxFrameCount;
 
 // Defined in runtime/src/hle/audio/ax_mix.cpp. That header is private to the HLE
 // directory and is not on this target's include path.
+
+void VI_HLE_SetFrameRate(uint32_t hz);  // hle/vi.cpp
+
 namespace AxDspHle {
 void SetMixWorkerEnabled(bool enabled);
 }
@@ -1085,38 +1088,29 @@ void DrawGraphicsSettings() {
             "Requests the closest native-resolution display mode to the output frame "
             "rate (60 Hz, or the frame interpolation target).");
     }
-    constexpr std::array<const char*, 3> kFrameInterpolationModes{
-        "Off", "120 FPS", "180 FPS",
-    };
-    const char* currentFrameInterpolationMode =
-        kFrameInterpolationModes[static_cast<size_t>(g_frameInterpolationMode)];
-    bool frameInterpolationModeChanged = false;
-    if (ImGui::BeginCombo("Race frame interpolation (experimental)", currentFrameInterpolationMode)) {
-        for (int mode = 0; mode < static_cast<int>(kFrameInterpolationModes.size()); ++mode) {
-            const bool selected = g_frameInterpolationMode == mode;
-            if (ImGui::Selectable(kFrameInterpolationModes[static_cast<size_t>(mode)], selected)) {
-                g_frameInterpolationMode = mode;
-                frameInterpolationModeChanged = true;
+    // Native frame rate: the game renders every frame itself (its simulation is time-based), so this is
+    // not interpolation. Mario Kart's race interpolation stays off for Strikers.
+    {
+        int frameRateMode = RuntimeConfigFile::FrameRate(60) >= 120 ? 1 : 0;
+        constexpr std::array<const char*, 2> kFrameRates{"60 FPS", "120 FPS"};
+        if (ImGui::BeginCombo("Frame rate", kFrameRates[static_cast<size_t>(frameRateMode)])) {
+            for (int mode = 0; mode < static_cast<int>(kFrameRates.size()); ++mode) {
+                const bool selected = frameRateMode == mode;
+                if (ImGui::Selectable(kFrameRates[static_cast<size_t>(mode)], selected) && !selected) {
+                    const uint32_t hz = mode == 1 ? 120u : 60u;
+                    RuntimeConfigFile::SetFrameRate(hz);
+                    VI_HLE_SetFrameRate(hz);
+                }
+                if (selected) {
+                    ImGui::SetItemDefaultFocus();
+                }
             }
-            if (selected) {
-                ImGui::SetItemDefaultFocus();
-            }
+            ImGui::EndCombo();
         }
-        ImGui::EndCombo();
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
+        ImGui::TextDisabled("120 FPS needs a high refresh rate display and uses more battery.");
+        ImGui::PopTextWrapPos();
     }
-    if (frameInterpolationModeChanged) {
-        const uint32_t targetFps = kFrameInterpolationTargetFps[static_cast<size_t>(g_frameInterpolationMode)];
-        aurora_set_frame_interpolation_fps(targetFps);
-        RuntimeConfigFile::SetFrameInterpolationFps(targetFps);
-        LimitResolutionForFrameRate();
-        if (aurora_get_display_mode() == AURORA_DISPLAY_MODE_EXCLUSIVE) {
-            // Re-apply exclusive mode so the display refresh tracks the new target.
-            aurora_set_display_mode(AURORA_DISPLAY_MODE_EXCLUSIVE);
-        }
-    }
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
-    ImGui::TextDisabled("Frame interpolation is experimental, you might find visual artifacts");
-    ImGui::PopTextWrapPos();
     if (ImGui::Checkbox("Disable copy filter", &g_disableCopyFilter)) {
         aurora_set_disable_copy_filter(g_disableCopyFilter);
         RuntimeConfigFile::SetDisableCopyFilter(g_disableCopyFilter);

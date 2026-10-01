@@ -1422,8 +1422,12 @@ std::vector<PresentationJob> encode_sealed_frame(gfx::SealedFrame& sealedFrame, 
       return {};
     }
     if (!ctx.interpolationActive) {
+      // The offset is 6.5 ms of a 60 Hz period; keep that fraction at other retrace rates, since this
+      // wait runs on the producer and a fixed 6.5 ms leaves a 120 Hz guest under 2 ms for its frame.
+      const uint64_t offsetNanos =
+          std::min<uint64_t>(kNativePresentOffsetNanos, ctx.scheduleIntervalNanos * 6'500 / 16'667);
       return PresentClock::time_point{std::chrono::nanoseconds{
-          ctx.scheduleBaseNanos - ctx.scheduleIntervalNanos + kNativePresentOffsetNanos}};
+          ctx.scheduleBaseNanos - ctx.scheduleIntervalNanos + offsetNanos}};
     }
     const uint64_t offsetNanos =
         (ctx.scheduleIntervalNanos * static_cast<uint64_t>(slot)) / presentationJobCount;

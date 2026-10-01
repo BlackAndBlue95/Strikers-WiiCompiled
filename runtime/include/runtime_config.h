@@ -42,6 +42,7 @@ struct RuntimeUserConfig {
     std::optional<std::string> graphicsApi;
     std::optional<std::string> displayMode;
     std::optional<uint32_t> frameInterpolationFps;
+    std::optional<uint32_t> frameRate;
     std::optional<bool> skipUnreadyPipelines;
     std::optional<bool> disableCopyFilter;
     std::optional<bool> textureReplacements;
@@ -306,6 +307,8 @@ inline void EnsureConfigFile() {
               "force_16_9 = false\n"
               "resolution_multiplier = 1.0\n"
               "frame_interpolation_fps = 0\n"
+              "# Native frame rate: 60 or 120. 120 needs a high-refresh display and costs battery.\n"
+              "frame_rate = 60\n"
               "display_mode = \"windowed\"\n"
               "graphics_api = \"auto\"\n"
               "skip_unready_pipelines = true\n"
@@ -334,7 +337,7 @@ inline void EnsureConfigFile() {
               "[mods]\n"
               "# Controller-friendly changes (also in the F10 bar, Mods menu).\n"
               "menu_navigation = true\n"
-              "selection_badge = true\n"
+              "selection_badge = false\n"
               "no_mega_strikes = true\n\n"
               "[network]\n"
               "enabled = true\n\n"
@@ -469,6 +472,11 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         const uint32_t migrated = *value == 240u ? 180u : *value;
         if (IsSupportedFrameInterpolationFps(migrated)) {
             config.frameInterpolationFps = migrated;
+        }
+    }
+    if (auto value = FindConfigUint(document, "video", "frame_rate")) {
+        if (*value == 60 || *value == 120) {
+            config.frameRate = static_cast<uint32_t>(*value);
         }
     }
     config.skipUnreadyPipelines = FindConfigValue<bool>(document, "video", "skip_unready_pipelines");
@@ -664,6 +672,14 @@ inline bool SetWindowPosition(int32_t x, int32_t y) {
     return wroteX && wroteY;
 }
 
+inline bool SetFrameRate(uint32_t value) {
+    if (value != 60 && value != 120) {
+        return false;
+    }
+    Mutable().frameRate = value;
+    return WriteSetting("video", "frame_rate", std::to_string(value));
+}
+
 inline bool SetFrameInterpolationFps(uint32_t value) {
     if (!IsSupportedFrameInterpolationFps(value)) {
         return false;
@@ -731,7 +747,7 @@ inline bool SetRumbleEnabled(bool value) {
 
 // Mods (F10 > Mods). Each is on unless disabled.
 inline bool ModMenuNavigation() { return Get().modMenuNavigation.value_or(true); }
-inline bool ModSelectionBadge() { return Get().modSelectionBadge.value_or(true); }
+inline bool ModSelectionBadge() { return Get().modSelectionBadge.value_or(false); }
 inline bool ModNoMegaStrikes() { return Get().modNoMegaStrikes.value_or(true); }
 inline bool SetModMenuNavigation(bool value) {
     Mutable().modMenuNavigation = value;
@@ -937,6 +953,11 @@ inline bool SetWiiAccelOffset(const std::array<double, 3>& offset) {
 }
 
 // Target frame rate for frame interpolation, or 0 to disable it.
+// Native guest frame rate (the emulated VI retrace rate): 60 or 120.
+inline uint32_t FrameRate(uint32_t fallback = 60) {
+    return Get().frameRate.value_or(fallback);
+}
+
 inline uint32_t FrameInterpolationFps(uint32_t fallback = 0) {
     return Get().frameInterpolationFps.value_or(fallback);
 }

@@ -1,6 +1,24 @@
 #include "BackendBinding.hpp"
 
 #import <Foundation/Foundation.h>
+#include <TargetConditionals.h>
+#if TARGET_OS_OSX
+#import <AppKit/AppKit.h>
+#import <QuartzCore/QuartzCore.h>
+#import <objc/runtime.h>
+
+// macOS composites a window's CAMetalLayer at 60 Hz on ProMotion displays unless something in the
+// window asks for more; with V-Sync off that shows up as nextDrawable blocking the producer at 60 fps.
+// A display link on the view carrying the display's full rate range is that request. Its callback
+// does nothing: the guest still paces itself.
+@interface AuroraFrameRateHint : NSObject
+- (void)tick:(id)link;
+@end
+@implementation AuroraFrameRateHint
+- (void)tick:(id)link {
+}
+@end
+#endif
 #include <SDL3/SDL_metal.h>
 #include <SDL3/SDL_properties.h>
 #include <SDL3/SDL_video.h>
@@ -33,6 +51,20 @@ std::shared_ptr<wgpu::ChainedStruct> SetupWindowAndGetSurfaceDescriptorCocoa(SDL
       return nullptr;
     }
   }
+#if TARGET_OS_OSX
+  if (@available(macOS 14.0, *)) {
+    NSView* nsView = (__bridge NSView*)view;
+    static char kHintKey;
+    if (nsView && !objc_getAssociatedObject(nsView, &kHintKey)) {
+      AuroraFrameRateHint* hint = [AuroraFrameRateHint new];
+      CADisplayLink* link = [nsView displayLinkWithTarget:hint selector:@selector(tick:)];
+      const float maxRate = 240.0f;
+      link.preferredFrameRateRange = CAFrameRateRangeMake(60.0f, maxRate, maxRate);
+      [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+      objc_setAssociatedObject(nsView, &kHintKey, link, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+  }
+#endif
   auto desc = std::make_shared<wgpu::SurfaceSourceMetalLayer>();
   desc->layer = SDL_Metal_GetLayer(view);
   if (!desc->layer) {
