@@ -117,10 +117,11 @@ extern "C" void OS__Panic_803B5C74_Cpu(CpuContext* ctx)
 
 PPC_NATIVE_OVERRIDE_VOID(803B5C74, OS__Panic_803B5C74_Cpu, (CpuContext* ctx), (ctx));
 
-// 0x803BAB98 -> OSResetSystem
-extern "C" uint32_t OSResetSystem()
+namespace {
+// Leaving the game the way the console would leave it: a clean exit.
+[[noreturn]] void ExitCleanly(const char* why)
 {
-    RT_LOGF(RT_TAG_OS, "OSResetSystem: simulating console reset\n");
+    RT_LOGF(RT_TAG_OS, "%s: closing the game\n", why);
     std::fflush(stderr);
     // The AX mix worker holds resolved host pointers into the guest regions;
     // it must be stopped before those mappings are torn down.
@@ -128,10 +129,55 @@ extern "C" uint32_t OSResetSystem()
     Memory::Reset();
     SetRuntimeExitCode(0);
     std::exit(EXIT_SUCCESS);
-    return 0; // unreachable, but keeps the signature consistent with callers
+}
+} // namespace
+
+// 0x803BAB98 -> OSResetSystem
+extern "C" uint32_t OSResetSystem()
+{
+    ExitCleanly("OSResetSystem (console reset)");
 }
 
 PPC_NATIVE_OVERRIDE(803BAB98, OSResetSystem, uint32_t, (), ());
+
+// The HOME Menu's exits (Strikers Charged's ResetTask fades out, calls one of these and spins
+// forever). On the console they launch the Wii Menu, reboot, power off or restart the disc through
+// IOS, none of which exists here, so each one closes the game. A relaunch for Reset is not done.
+// 0x803BAA28 -> OSReturnToMenu
+extern "C" void MSC_OSReturnToMenu_803BAA28()
+{
+    ExitCleanly("OSReturnToMenu (HOME Menu: Wii Menu)");
+}
+PPC_NATIVE_OVERRIDE_VOID(803BAA28, MSC_OSReturnToMenu_803BAA28, (), ());
+
+// 0x803BAAFC -> __OSReturnToMenuForError
+extern "C" void MSC_OSReturnToMenuForError_803BAAFC()
+{
+    ExitCleanly("__OSReturnToMenuForError");
+}
+PPC_NATIVE_OVERRIDE_VOID(803BAAFC, MSC_OSReturnToMenuForError_803BAAFC, (), ());
+
+// 0x803BA99C -> OSRestart(u32 resetCode)
+extern "C" void MSC_OSRestart_803BA99C(uint32_t resetCode)
+{
+    RT_LOGF(RT_TAG_OS, "OSRestart(0x%08X)\n", resetCode);
+    ExitCleanly("OSRestart (HOME Menu: Reset)");
+}
+PPC_NATIVE_OVERRIDE_VOID(803BA99C, MSC_OSRestart_803BA99C, (uint32_t resetCode), (resetCode));
+
+// 0x803BA730 -> OSRebootSystem
+extern "C" void MSC_OSRebootSystem_803BA730()
+{
+    ExitCleanly("OSRebootSystem");
+}
+PPC_NATIVE_OVERRIDE_VOID(803BA730, MSC_OSRebootSystem_803BA730, (), ());
+
+// 0x803BA7D8 -> OSShutdownSystem
+extern "C" void MSC_OSShutdownSystem_803BA7D8()
+{
+    ExitCleanly("OSShutdownSystem (power off)");
+}
+PPC_NATIVE_OVERRIDE_VOID(803BA7D8, MSC_OSShutdownSystem_803BA7D8, (), ());
 
 // 0x803BE8D0 -> exit(int status)
 extern "C" uint32_t Exit_803BE8D0(int status)

@@ -9,6 +9,7 @@
 #include "hle_stubs.h"
 #include "msc_away_kits.h"
 #include "runtime_config.h"
+#include "runtime_log.h"
 #include "wiimote_hid.h"
 #include <SDL3/SDL_timer.h>
 #include "guest_interrupt_context.h"
@@ -677,14 +678,32 @@ int MaxAccelDelta(uint32_t aipad, uint32_t history, uint32_t count, float delta[
     return bestOffset;
 }
 
+// Each detected shake gesture in console.log (at most 4 a second), with the controls that made it,
+// so a tester's log shows whether hits come from real motion.
+void LogShake(const char* gesture, uint32_t det, float magnitude, float threshold)
+{
+    static uint64_t s_lastMs = 0;
+    const uint64_t now = SDL_GetTicks();
+    if (now - s_lastMs < 250) return;
+    s_lastMs = now;
+    const uint8_t kind = det ? Memory::Read8(det + kDetConnected) : 0;
+    if (kind == kConnectedGameCube) {
+        RT_LOGF(RT_TAG_HLE, "%s: GameCube-style controls (button)\n", gesture);
+    } else {
+        RT_LOGF(RT_TAG_HLE, "%s: Wii Remote motion %.2f (threshold %.2f, controller kind %u)\n", gesture, magnitude,
+                threshold, kind);
+    }
+}
+
 // cAIPad::Detect{Left,Right}Shake for a Wii Remote: a big enough jolt, as a facing angle.
-bool DetectShake(uint32_t aipad, uint32_t history, uint32_t thresholdTweak, uint32_t dirOut)
+bool DetectShake(uint32_t aipad, uint32_t history, uint32_t thresholdTweak, uint32_t dirOut, const char* gesture)
 {
     const float threshold = Memory::ReadFloat32(thresholdTweak + 0x0C);  // TweakValueFloat::value
     float a[3];
     if (MaxAccelDelta(aipad, history, 5, a) > 0) {
         a[1] = std::fabs(a[1]) < std::fabs(a[2]) ? a[2] : -a[1];
         if (a[0] * a[0] + a[1] * a[1] > threshold * threshold) {
+            LogShake(gesture, Memory::Read32(aipad + kAIPadDetInput), std::sqrt(a[0] * a[0] + a[1] * a[1]), threshold);
             const uint32_t det = Memory::Read32(aipad + kAIPadDetInput);
             const uint16_t remap = det ? Memory::Read16(det + kDetRemapAngle) : 0;
             Memory::Write16(dirOut, static_cast<uint16_t>(static_cast<int32_t>(std::atan2(a[1], -a[0]) * 10430.378f) + remap));
@@ -706,9 +725,10 @@ extern "C" void MSC_DetectRightShake_80007688(CpuContext* ctx)
         const bool hasBall = owner && PlayerDetInput(owner) == det;
         Memory::Write16(dirOut, 0);
         ctx->gpr[3] = (!hasBall && DetJustPressed(ctx, det, kActHit)) ? 1u : 0u;
+        if (ctx->gpr[3]) LogShake("Big hit", det, 0.0f, 0.0f);
         return;
     }
-    ctx->gpr[3] = DetectShake(aipad, 0x004, 0x80568450u, dirOut) ? 1u : 0u;  // remote history, gfRightShakeThreshold
+    ctx->gpr[3] = DetectShake(aipad, 0x004, 0x80568450u, dirOut, "Big hit") ? 1u : 0u;  // remote history, gfRightShakeThreshold
 }
 PPC_NATIVE_OVERRIDE_VOID(80007688, MSC_DetectRightShake_80007688, (CpuContext* ctx), (ctx));
 
@@ -720,9 +740,10 @@ extern "C" void MSC_DetectLeftShake_80007594(CpuContext* ctx)
     if (IsGameCube(det)) {
         Memory::Write16(dirOut, 0);
         ctx->gpr[3] = DetJustPressed(ctx, det, kActToggleItem) ? 1u : 0u;
+        if (ctx->gpr[3]) LogShake("Item toggle", det, 0.0f, 0.0f);
         return;
     }
-    ctx->gpr[3] = DetectShake(aipad, 0x16C, 0x80568430u, dirOut) ? 1u : 0u;  // Nunchuk history, gfLeftShakeThreshold
+    ctx->gpr[3] = DetectShake(aipad, 0x16C, 0x80568430u, dirOut, "Item toggle") ? 1u : 0u;  // Nunchuk history, gfLeftShakeThreshold
 }
 PPC_NATIVE_OVERRIDE_VOID(80007594, MSC_DetectLeftShake_80007594, (CpuContext* ctx), (ctx));
 

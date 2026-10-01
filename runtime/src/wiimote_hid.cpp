@@ -25,12 +25,20 @@
 namespace WiimoteHid {
 namespace {
 
-// Camera pixels per unit of KPAD pointer position. Dolphin's emulated remote (Dynamics.cpp
-// EmulatePoint + Camera.cpp GetCameraPoints, default pointing range) moves the sensor bar's dots
-// about 605 px horizontally and 480 px vertically from the image centre for a pointer at +/-1, and
-// in the opposite direction: aiming right moves the dots left, aiming up moves them up.
-constexpr float kPointerPixelsX = 605.f;
-constexpr float kPointerPixelsY = 480.f;
+// The pointer as the console's KPAD computes it (RVL SDK KPAD.c, calc_dpd_variable): the dots'
+// midpoint in camera units of 512 px from the image centre (WPAD flips the camera's y, so in raw
+// pixels aiming right moves the dots left and aiming down moves them down), offset by the sensor
+// bar's height (KPADCalibrateDPD: 0.2 above or below the screen) and scaled so the screen edges are
+// reached (calc_dpd2pos_scale: 1.25 / (0.75 - 0.2)). Smoothed with the play radius and sensitivity
+// Strikers Charged passes to KPADSetPosParam (PlatPadManager: 0.02, 0.95).
+constexpr float kDpdCentreX = 511.5f, kDpdCentreY = 383.5f, kDpdUnit = 512.f;
+constexpr float kSensorBarHeight = 0.2f;
+constexpr float kDpdToPos = 1.25f / (0.75f - kSensorBarHeight);
+constexpr float kPosPlayRadius = 0.02f, kPosSensitivity = 0.95f;
+std::atomic<bool> g_sensorBarAbove{false};
+
+// KPADInsideStatus.center_org.y: -0.2 with the bar above the screen, +0.2 below.
+float SensorBarOffset() { return g_sensorBarAbove.load(std::memory_order_relaxed) ? -kSensorBarHeight : kSensorBarHeight; }
 
 constexpr uint16_t kNintendoVid = 0x057E;
 constexpr uint16_t kPidRvlCnt01 = 0x0306;    // original Wii Remote
@@ -306,7 +314,8 @@ void UpdatePointer(Remote& r, Sample& s) {
         dy = r.lastPair[1];
         const float ax = x[0] + dx * 0.5f, ay = y[0] + dy * 0.5f;
         const float bx = x[0] - dx * 0.5f, by = y[0] - dy * 0.5f;
-        const float px = 512.f - r.smoothed[0] * kPointerPixelsX, py = 384.f + r.smoothed[1] * kPointerPixelsY;
+        float px = kDpdCentreX, py = kDpdCentreY;
+        PointerToMidpoint(r.smoothed, px, py);
         const bool useA = (ax - px) * (ax - px) + (ay - py) * (ay - py) <= (bx - px) * (bx - px) + (by - py) * (by - py);
         mx = useA ? ax : bx;
         my = useA ? ay : by;
@@ -315,25 +324,34 @@ void UpdatePointer(Remote& r, Sample& s) {
         r.smoothedValid = false;
         return;
     }
-    // Undo the roll: rotate the midpoint's offset from the image centre by the bar's angle.
+    // Undo the roll: rotate the midpoint about the image centre by the bar's angle.
     const float angle = std::atan2(dy, dx);
     const float c = std::cos(-angle), sn = std::sin(-angle);
-    const float ox = mx - 512.f, oy = my - 384.f;
-    const float rx = ox * c - oy * sn, ry = ox * sn + oy * c;
-    // Aiming right moves the dots left and aiming down moves them down (see kPointerPixelsX).
-    float px = std::clamp(-rx / kPointerPixelsX, -1.25f, 1.25f);
-    float py = std::clamp(ry / kPointerPixelsY, -1.25f, 1.25f);
-    // Light smoothing against camera jitter (KPAD smooths its pointer too).
-    if (r.smoothedValid) {
-        px = r.smoothed[0] + (px - r.smoothed[0]) * 0.6f;
-        py = r.smoothed[1] + (py - r.smoothed[1]) * 0.6f;
+    const float ox = mx - kDpdCentreX, oy = my - kDpdCentreY;
+    float target[2];
+    MidpointToPointer(kDpdCentreX + ox * c - oy * sn, kDpdCentreY + ox * sn + oy * c, target);
+    for (float& v : target) v = std::clamp(v, -3.f, 3.f);  // a misread single dot, not a pointer
+    if (!r.smoothedValid) {
+        r.smoothed[0] = target[0];
+        r.smoothed[1] = target[1];
+        r.smoothedValid = true;
+    } else {
+        // KPAD: moves under the play radius are damped by (distance / radius)^4.
+        const float vx = target[0] - r.smoothed[0], vy = target[1] - r.smoothed[1];
+        const float dist = std::sqrt(vx * vx + vy * vy);
+        float f = 1.f;
+        if (dist < kPosPlayRadius) {
+            f = dist / kPosPlayRadius;
+            f *= f;
+            f *= f;
+        }
+        f *= kPosSensitivity;
+        r.smoothed[0] += f * vx;
+        r.smoothed[1] += f * vy;
     }
-    r.smoothed[0] = px;
-    r.smoothed[1] = py;
-    r.smoothedValid = true;
     s.hasPointer = true;
-    s.pointer[0] = px;
-    s.pointer[1] = py;
+    s.pointer[0] = r.smoothed[0];
+    s.pointer[1] = r.smoothed[1];
 }
 
 void LogState(Remote& r, const Sample& s) {
@@ -622,5 +640,18 @@ bool Present(uint32_t chan) {
 }
 
 uint32_t ConnectedCount() { return g_connected.load(); }
+
+void SetSensorBarAbove(bool above) { g_sensorBarAbove.store(above, std::memory_order_relaxed); }
+bool SensorBarAbove() { return g_sensorBarAbove.load(std::memory_order_relaxed); }
+
+void MidpointToPointer(float mx, float my, float pos[2]) {
+    pos[0] = -(mx - kDpdCentreX) / kDpdUnit * kDpdToPos;
+    pos[1] = (SensorBarOffset() + (my - kDpdCentreY) / kDpdUnit) * kDpdToPos;
+}
+
+void PointerToMidpoint(const float pos[2], float& mx, float& my) {
+    mx = kDpdCentreX - pos[0] / kDpdToPos * kDpdUnit;
+    my = kDpdCentreY + (pos[1] / kDpdToPos - SensorBarOffset()) * kDpdUnit;
+}
 
 } // namespace WiimoteHid

@@ -433,6 +433,7 @@ void ConfigureSdlHints(bool enabled) {
         ignored += "0x057E/0x0306,0x057E/0x0330";
         SDL_SetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES, ignored.c_str());
         g_wiiDriverEnabled = false;
+        WiimoteHid::SetSensorBarAbove(RuntimeConfigFile::SensorBarAbove());
         WiimoteHid::Start();
         RT_LOG(RT_TAG_CONFIG) << "Bluetooth Wii Remote support enabled (HID backend)" << std::endl;
         return;

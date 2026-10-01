@@ -51,7 +51,9 @@ Real Wii Remotes, with or without a Nunchuk, are driven directly over Bluetooth 
 Dolphin does it: the IR camera is switched on for the **pointer** (menus, Mega Strike defence),
 along with the accelerometers and the Nunchuk. Pair the remote in your system's Bluetooth settings
 (press 1+2 or the red SYNC button, leave any PIN empty), and it takes the first free player port.
-You need a sensor bar (or any IR source) for the pointer.
+You need a sensor bar (or any IR source) for the pointer. If it sits above your screen rather than
+below, tick **F10 > Sensor bar is above the screen** (like the Wii's sensor bar setting) so the
+pointer lines up with where you aim. The HOME Menu's Wii Menu and Reset options close the game.
 
 **Mayflash DolphinBar:** use it in **mode 4**, its Wii Remote mode (the same mode Dolphin needs),
 and sync the remotes to the bar. In the other modes it presents remotes as mouse, keyboard or

@@ -298,6 +298,7 @@ void ApplyConfiguredMappings() {
 
 bool g_wiiRemotesEnabled = RuntimeConfigFile::WiiRemotesEnabled(true);
 bool g_wiiContinuousScan = RuntimeConfigFile::WiiContinuousScanEnabled(false);
+bool g_sensorBarAbove = RuntimeConfigFile::SensorBarAbove();
 
 // Accelerometer readout and zero-point calibration for a bare remote / remote + Nunchuk.
 void DrawWiiRemoteAccelerometer(uint32_t port) {
@@ -352,6 +353,14 @@ void DrawWiiRemoteSettings(uint32_t selectedGamePort) {
     ImGui::TextDisabled("Pairing: Windows Settings > Bluetooth > Add device, then press 1+2");
     ImGui::TextDisabled("(or the red SYNC button) on the remote. Leave the PIN empty.");
     ImGui::TextDisabled("A remote that was paired before also needs to be turned on with 1+2/SYNC.");
+    if (ImGui::Checkbox("Sensor bar is above the screen", &g_sensorBarAbove)) {
+        RuntimeConfigFile::SetSensorBarAbove(g_sensorBarAbove);
+        WiimoteHid::SetSensorBarAbove(g_sensorBarAbove);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Like the Wii's Sensor Bar Position setting: where the sensor bar or DolphinBar\n"
+                          "sits, so the pointer lines up with where the remote points. Off = below the screen.");
+    }
     if (ImGui::Checkbox("Keep scanning for Wii Remotes (like Dolphin's Continuous Scanning)",
                         &g_wiiContinuousScan)) {
         RuntimeConfigFile::SetWiiContinuousScanEnabled(g_wiiContinuousScan);

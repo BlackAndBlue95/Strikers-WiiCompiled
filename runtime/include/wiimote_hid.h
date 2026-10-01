@@ -38,4 +38,12 @@ bool Present(uint32_t chan);
 // Number of remotes connected right now.
 uint32_t ConnectedCount();
 
+// Where the sensor bar sits: above the screen, or below it (the default).
+void SetSensorBarAbove(bool above);
+bool SensorBarAbove();
+// KPAD's pointer position (KPADStatus.pos) for a sensor-bar midpoint in raw camera pixels with
+// the remote's roll already undone, and the midpoint that gives a pointer position.
+void MidpointToPointer(float mx, float my, float pos[2]);
+void PointerToMidpoint(const float pos[2], float& mx, float& my);
+
 } // namespace WiimoteHid

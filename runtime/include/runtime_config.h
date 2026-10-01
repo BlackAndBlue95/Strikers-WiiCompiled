@@ -65,6 +65,9 @@ struct RuntimeUserConfig {
     // (Dolphin's "continuous scanning"), so a remote that dropped or was switched on
     // after launch shows up without restarting.
     std::optional<bool> wiiContinuousScan;
+    // The sensor bar (or DolphinBar) sits above the screen rather than below it. KPAD aims the
+    // pointer relative to it (KPADCalibrateDPD), like the Wii's sensor bar position setting.
+    std::optional<bool> sensorBarAbove;
     // Accelerometer zero-point correction for the Bluetooth Wii Remote, in g and in
     // SDL's sensor frame (x right, y out of the button face, z towards the user).
     // SDL's Wii driver falls back to a nominal zero point when its read of the
@@ -528,6 +531,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         FindConfigValue<bool>(document, "audio", "attenuate_music_when_media_plays");
     config.wiiRemotes = FindConfigValue<bool>(document, "controller", "wii_remotes");
     config.wiiContinuousScan = FindConfigValue<bool>(document, "controller", "wii_continuous_scan");
+    config.sensorBarAbove = FindConfigValue<bool>(document, "controller", "sensor_bar_above");
     config.wiiAccelOffsetX = FindConfigValue<double>(document, "controller", "wii_accel_offset_x");
     config.wiiAccelOffsetY = FindConfigValue<double>(document, "controller", "wii_accel_offset_y");
     config.wiiAccelOffsetZ = FindConfigValue<double>(document, "controller", "wii_accel_offset_z");
@@ -975,6 +979,15 @@ inline bool WiiContinuousScanEnabled(bool fallback = false) {
 inline bool SetWiiContinuousScanEnabled(bool value) {
     Mutable().wiiContinuousScan = value;
     return WriteSetting("controller", "wii_continuous_scan", value ? "true" : "false");
+}
+
+// Whether the sensor bar sits above the screen (default: below).
+inline bool SensorBarAbove() { return Get().sensorBarAbove.value_or(false); }
+
+// Persists the sensor bar position.
+inline bool SetSensorBarAbove(bool value) {
+    Mutable().sensorBarAbove = value;
+    return WriteSetting("controller", "sensor_bar_above", value ? "true" : "false");
 }
 
 // Wii Remote accelerometer zero-point correction (g, SDL sensor frame); all zero

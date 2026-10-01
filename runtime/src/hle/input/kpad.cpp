@@ -2,6 +2,7 @@
 #include "input_bindings.h"
 #include "memory.h"
 #include "wii_remote_input.h"
+#include "wiimote_hid.h"
 
 #include <algorithm>
 #include <array>
@@ -44,9 +45,12 @@ constexpr uint8_t kFmtClassicAccDpd = 8;
 constexpr int8_t kWpadErrNone = 0;
 constexpr int8_t kWpadErrNoController = -1;
 
-// Raw accelerometer as WPADStatus carries it: 10 bits, 0x200 at 0 g, 100 per g.
-constexpr float kRawAccZero = 512.0f;
-constexpr float kRawAccPerG = 100.0f;
+// Accelerometer as WPADStatus / WPADFSStatus carry it: the 10-bit reading minus the device's 0 g
+// point, at the SDK's default calibration (WPADHIDParser: remote 0 g 530 / 1 g 636, Nunchuk
+// 512 / 716). Strikers Charged scales these by 1/205 and packs them into a signed byte every frame
+// (PackedDetInput) for its shake gestures, so the zero point must be gone and the counts per g right.
+constexpr float kRemoteAccPerG = 106.0f;
+constexpr float kNunchukAccPerG = 204.0f;
 
 struct ChannelState {
     uint32_t prevHold = 0;
@@ -156,10 +160,9 @@ int32_t WriteStatus(uint32_t chan, uint32_t addr, const WiiRemoteInput::KpadSamp
     return 1;
 }
 
-// One accelerometer axis of KPAD's g vector back to the 10-bit raw WPAD value.
-uint16_t RawAcc(float g) {
-    const float raw = kRawAccZero + g * kRawAccPerG;
-    return static_cast<uint16_t>(std::clamp(raw, 0.0f, 1023.0f));
+// One accelerometer axis in g as the WPAD status value (see kRemoteAccPerG), two's complement.
+uint16_t WpadAcc(float g, float perG) {
+    return static_cast<uint16_t>(static_cast<int16_t>(std::clamp(std::lround(g * perG), -512L, 511L)));
 }
 
 // Fills one KPADUnifiedWpadStatus at `addr` from the sample: the WPADStatus core
@@ -177,9 +180,9 @@ void WriteUnifiedStatus(uint32_t addr, const WiiRemoteInput::KpadSample* sample)
     }
     Memory::Write16(addr + kUButton, static_cast<uint16_t>(sample->hold & 0xFFFF));
     // KPAD's acc is (-wiiX, -wiiZ, wiiY); WPADStatus keeps the remote's own axes.
-    Memory::Write16(addr + kUAccX, RawAcc(-sample->acc[0]));
-    Memory::Write16(addr + kUAccY, RawAcc(sample->acc[2]));
-    Memory::Write16(addr + kUAccZ, RawAcc(-sample->acc[1]));
+    Memory::Write16(addr + kUAccX, WpadAcc(-sample->acc[0], kRemoteAccPerG));
+    Memory::Write16(addr + kUAccY, WpadAcc(sample->acc[2], kRemoteAccPerG));
+    Memory::Write16(addr + kUAccZ, WpadAcc(-sample->acc[1], kRemoteAccPerG));
     // No IR: every DPDObject invalid (x/y at the sensor's out-of-range value).
     for (uint32_t i = 0; i < 4; ++i) {
         Memory::Write16(addr + kUObj + i * 8, 0x3FF);
@@ -198,14 +201,14 @@ void WriteUnifiedStatus(uint32_t addr, const WiiRemoteInput::KpadSample* sample)
         Memory::Write8(addr + kUFmt, kFmtClassicAccDpd);
     } else if (sample->hasNunchuk) {
         Memory::Write8(addr + kUDev, kDevFreestyle);
-        // WPADFSStatus: 8-bit stick (centre 128) and 10-bit Nunchuk accelerometer.
+        // WPADFSStatus: 8-bit stick (centre 128) and the Nunchuk accelerometer.
         Memory::Write8(addr + kUFsStickX,
                        static_cast<uint8_t>(std::clamp(128.0f + sample->stick[0] * 100.0f, 0.0f, 255.0f)));
         Memory::Write8(addr + kUFsStickY,
                        static_cast<uint8_t>(std::clamp(128.0f + sample->stick[1] * 100.0f, 0.0f, 255.0f)));
-        Memory::Write16(addr + kUFsAccX, RawAcc(-sample->nunchukAcc[0]));
-        Memory::Write16(addr + kUFsAccY, RawAcc(sample->nunchukAcc[2]));
-        Memory::Write16(addr + kUFsAccZ, RawAcc(-sample->nunchukAcc[1]));
+        Memory::Write16(addr + kUFsAccX, WpadAcc(-sample->nunchukAcc[0], kNunchukAccPerG));
+        Memory::Write16(addr + kUFsAccY, WpadAcc(sample->nunchukAcc[2], kNunchukAccPerG));
+        Memory::Write16(addr + kUFsAccZ, WpadAcc(-sample->nunchukAcc[1], kNunchukAccPerG));
         Memory::Write8(addr + kUFmt, kFmtFreestyleAccDpd);
     } else {
         Memory::Write8(addr + kUDev, kDevCore);
@@ -297,27 +300,28 @@ extern "C" void MSC_WPADRead_803CD944(uint32_t chan, uint32_t statusPtr)
             return;
         }
         Memory::Write16(statusPtr + 0x00, static_cast<uint16_t>(sample.hold & 0xFFFF));
-        Memory::Write16(statusPtr + 0x02, RawAcc(-sample.acc[0]));
-        Memory::Write16(statusPtr + 0x04, RawAcc(sample.acc[2]));
-        Memory::Write16(statusPtr + 0x06, RawAcc(-sample.acc[1]));
+        Memory::Write16(statusPtr + 0x02, WpadAcc(-sample.acc[0], kRemoteAccPerG));
+        Memory::Write16(statusPtr + 0x04, WpadAcc(sample.acc[2], kRemoteAccPerG));
+        Memory::Write16(statusPtr + 0x06, WpadAcc(-sample.acc[1], kRemoteAccPerG));
         for (uint32_t i = 0; i < 4; ++i) {
             const uint32_t obj = statusPtr + 0x08 + i * 8;
+            // DPDObject y is flipped from the camera's (WPADHIDParser: 767 - y).
             if (sample.hasDots) {
                 // A real remote: the camera's own dots.
                 const bool valid = sample.dotX[i] < 1023 && sample.dotY[i] < 767;
                 Memory::Write16(obj + 0, valid ? sample.dotX[i] : 0x3FF);
-                Memory::Write16(obj + 2, valid ? sample.dotY[i] : 0x3FF);
+                Memory::Write16(obj + 2, valid ? static_cast<uint16_t>(767 - sample.dotY[i]) : 0x3FF);
                 if (valid) {
                     Memory::Write16(obj + 4, 4);
                     Memory::Write8(obj + 6, static_cast<uint8_t>(i));
                 }
             } else if (sample.hasPointer && i < 2) {
-                // Two sensor-bar dots 200 px apart, placed as Dolphin's emulated camera does:
-                // aiming right moves them left, aiming down moves them down.
-                const float cx = 512.0f - sample.pointer[0] * 605.0f;
-                const float cy = 384.0f + sample.pointer[1] * 480.0f;
+                // Two sensor-bar dots 200 px apart where a real remote would see them for this
+                // pointer position (the inverse of KPAD's mapping).
+                float cx = 0.0f, cy = 0.0f;
+                WiimoteHid::PointerToMidpoint(sample.pointer, cx, cy);
                 Memory::Write16(obj + 0, static_cast<uint16_t>(std::clamp(cx + (i ? 100.0f : -100.0f), 0.0f, 1023.0f)));
-                Memory::Write16(obj + 2, static_cast<uint16_t>(std::clamp(cy, 0.0f, 767.0f)));
+                Memory::Write16(obj + 2, static_cast<uint16_t>(std::clamp(767.0f - cy, 0.0f, 767.0f)));
                 Memory::Write16(obj + 4, 4);
                 Memory::Write8(obj + 6, static_cast<uint8_t>(i));
             } else {
@@ -328,9 +332,9 @@ extern "C" void MSC_WPADRead_803CD944(uint32_t chan, uint32_t statusPtr)
         Memory::Write8(statusPtr + 0x28, sample.hasNunchuk ? kDevFreestyle : kDevCore);
         Memory::Write8(statusPtr + 0x29, static_cast<uint8_t>(kWpadErrNone));
         if (sample.hasNunchuk) {
-            Memory::Write16(statusPtr + 0x2A, RawAcc(-sample.nunchukAcc[0]));
-            Memory::Write16(statusPtr + 0x2C, RawAcc(sample.nunchukAcc[2]));
-            Memory::Write16(statusPtr + 0x2E, RawAcc(-sample.nunchukAcc[1]));
+            Memory::Write16(statusPtr + 0x2A, WpadAcc(-sample.nunchukAcc[0], kNunchukAccPerG));
+            Memory::Write16(statusPtr + 0x2C, WpadAcc(sample.nunchukAcc[2], kNunchukAccPerG));
+            Memory::Write16(statusPtr + 0x2E, WpadAcc(-sample.nunchukAcc[1], kNunchukAccPerG));
             Memory::Write8(statusPtr + 0x30, static_cast<uint8_t>(static_cast<int8_t>(std::clamp(sample.stick[0] * 100.0f, -128.0f, 127.0f))));
             Memory::Write8(statusPtr + 0x31, static_cast<uint8_t>(static_cast<int8_t>(std::clamp(sample.stick[1] * 100.0f, -128.0f, 127.0f))));
         }
