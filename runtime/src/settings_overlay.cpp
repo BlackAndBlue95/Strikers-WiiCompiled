@@ -6,12 +6,14 @@
 #include "input_bindings.h"
 #include "mods/mod_plugins.h"
 #include "mods/mod_registry.h"
+#include "nand_path.h"
 #include "runtime_config.h"
 #include "runtime_log.h"
 #include "wii_remote_input.h"
 #include "wiimote_hid.h"
 
 #include <imgui.h>
+#include <SDL3/SDL_dialog.h>
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_keyboard.h>
@@ -29,12 +31,16 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -1097,6 +1103,110 @@ void OpenFolder(std::string path) {
     SDL_OpenURL(url.c_str());
 }
 
+// The Wii's Mii database (NAND /shared2/menu/FaceLib/RFL_DB.dat), for the game's Mii features (online
+// play, once it's supported): copied from Dolphin's NAND or imported from a file, such as a Wii
+// backup's. The game reads it at startup.
+namespace Miis {
+std::filesystem::path DatabasePath() {
+    return RuntimeNandPath::DiscoverNandRootPath() / "shared2" / "menu" / "FaceLib" / "RFL_DB.dat";
+}
+
+// Dolphin's database, in its default user folder on this system, if it's there.
+std::filesystem::path DolphinDatabase() {
+    std::vector<std::filesystem::path> roots;
+#if defined(_WIN32)
+    if (const char* appData = std::getenv("APPDATA")) roots.push_back(std::filesystem::path(appData) / "Dolphin Emulator");
+    if (const char* profile = std::getenv("USERPROFILE"))
+        roots.push_back(std::filesystem::path(profile) / "Documents" / "Dolphin Emulator");
+#elif defined(__APPLE__)
+    if (const char* home = std::getenv("HOME"))
+        roots.push_back(std::filesystem::path(home) / "Library" / "Application Support" / "Dolphin");
+#else
+    if (const char* data = std::getenv("XDG_DATA_HOME")) roots.push_back(std::filesystem::path(data) / "dolphin-emu");
+    if (const char* home = std::getenv("HOME")) {
+        roots.push_back(std::filesystem::path(home) / ".local" / "share" / "dolphin-emu");
+        roots.push_back(std::filesystem::path(home) / ".dolphin-emu");
+    }
+#endif
+    std::error_code error;
+    for (const auto& root : roots) {
+        const auto database = root / "Wii" / "shared2" / "menu" / "FaceLib" / "RFL_DB.dat";
+        if (std::filesystem::is_regular_file(database, error)) return database;
+    }
+    return {};
+}
+
+// The Miis in a database: its first 100 entries (74 bytes each, after the "RNOD" magic) that aren't
+// empty. -1 when the file isn't a Mii database.
+int CountMiis(const std::filesystem::path& file) {
+    constexpr size_t kEntries = 100, kEntrySize = 74;
+    std::ifstream in(file, std::ios::binary);
+    std::array<char, 4 + kEntries * kEntrySize> data{};
+    if (!in.read(data.data(), static_cast<std::streamsize>(data.size())) || std::string_view(data.data(), 4) != "RNOD")
+        return -1;
+    int count = 0;
+    for (size_t i = 0; i < kEntries; ++i) {
+        const char* entry = data.data() + 4 + i * kEntrySize;
+        count += std::any_of(entry, entry + kEntrySize, [](char c) { return c != 0; }) ? 1 : 0;
+    }
+    return count;
+}
+
+std::mutex g_statusMutex;
+std::string g_status;  // the last import's outcome
+
+void Import(const std::filesystem::path& source) {
+    std::string status;
+    const int count = CountMiis(source);
+    if (count < 0) {
+        status = "That file isn't a Mii database (RFL_DB.dat).";
+    } else {
+        const auto target = DatabasePath();
+        std::error_code error;
+        std::filesystem::create_directories(target.parent_path(), error);
+        if (std::filesystem::exists(target, error))
+            std::filesystem::copy_file(target, target.string() + ".bak", std::filesystem::copy_options::overwrite_existing, error);
+        std::filesystem::copy_file(source, target, std::filesystem::copy_options::overwrite_existing, error);
+        status = error ? "Couldn't copy it: " + error.message()
+                       : std::to_string(count) + (count == 1 ? " Mii" : " Miis") + " imported. Restart the game to use them.";
+        RT_LOG(RT_TAG_NAND) << "Mii database from " << RuntimeConfigFile::PathToUtf8(source) << ": " << status << std::endl;
+    }
+    std::lock_guard<std::mutex> lock(g_statusMutex);
+    g_status = status;
+}
+
+void SDLCALL OnFileChosen(void*, const char* const* files, int) {
+    if (files != nullptr && files[0] != nullptr) Import(std::filesystem::u8path(files[0]));
+}
+
+void Draw() {
+    ImGui::SeparatorText("Miis");
+    const int count = CountMiis(DatabasePath());
+    if (count >= 0) ImGui::Text("%d %s in the game's Mii database", count, count == 1 ? "Mii" : "Miis");
+    else ImGui::TextUnformatted("No Mii database yet");
+    if (const auto dolphin = DolphinDatabase(); !dolphin.empty()) {
+        if (ImGui::Button("Copy Miis from Dolphin")) Import(dolphin);
+    }
+    if (ImGui::Button("Import RFL_DB.dat...")) {
+        static constexpr SDL_DialogFileFilter kFilter{"Mii database (RFL_DB.dat)", "dat"};
+        SDL_ShowOpenFileDialog(OnFileChosen, nullptr, nullptr, &kFilter, 1, nullptr, false);
+    }
+    if (ImGui::Button("Open the Mii folder")) {
+        std::error_code error;
+        std::filesystem::create_directories(DatabasePath().parent_path(), error);
+        OpenFolder(RuntimeConfigFile::PathToUtf8(DatabasePath().parent_path()));
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_statusMutex);
+        if (!g_status.empty()) ImGui::TextUnformatted(g_status.c_str());
+    }
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
+    ImGui::TextDisabled("For the game's Mii features, such as online play once it's supported. Dolphin keeps its "
+                        "Miis in its Wii folder (shared2/menu/FaceLib); a Wii backup's RFL_DB.dat works too.");
+    ImGui::PopTextWrapPos();
+}
+} // namespace Miis
+
 // F10 > Mods: the installed mod packages (runtime/src/mods). Switches are saved to Config.toml and
 // apply on the next launch: the disc file table is built once, at boot.
 void DrawModPackages() {
@@ -1510,7 +1620,13 @@ void DrawTopBar() {
     ImGui::End();
     if (!ImGui::BeginMainMenuBar()) return;
 
-    ImGui::TextUnformatted("Strikers-WiiCompiled");
+    if (ImGui::BeginMenu("Strikers-WiiCompiled")) {
+        Miis::Draw();
+        ImGui::Separator();
+        if (ImGui::Button("Open the game's data folder"))
+            OpenFolder(RuntimeConfigFile::PathToUtf8(RuntimeConfigFile::ApplicationDataDirectory()));
+        ImGui::EndMenu();
+    }
     ImGui::Separator();
     const auto resolutionIt = std::find_if(kResolutions.begin(), kResolutions.end(), [](const ResolutionItem& item) {
         return std::fabs(item.scale - g_resolutionScale) < 0.001f;
