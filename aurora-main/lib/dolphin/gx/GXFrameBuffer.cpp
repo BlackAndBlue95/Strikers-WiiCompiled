@@ -440,10 +440,12 @@ void GXCopyDisp(void* dest, GXBool clear) {
   if (aurora::g_config.disableCopyFilter) {
     copyFilter = {0, copyFilter[0] + copyFilter[1] + copyFilter[2], 0};
   }
+  // The display copy is made at internal resolution, one row per source row, so the filter's taps are
+  // the adjacent rows (as Dolphin does with scaled copies). Spacing them a logical row apart would
+  // sample sharp rows several pixels away: a vertical double image, not the console's softening.
   aurora::gfx::resolve_pass(g_gxState.displayCopyTexture, rect, clearState.clearColor, clearState.clearAlpha,
                             clearState.clearDepth, clearState.clearColorValue, aurora::gx::clear_depth_value(),
-                            GX_TF_RGBA8, nullptr, false, &copyFilter, false,
-                            static_cast<float>(rect.height) / std::max<float>(g_gxState.dispCopySrc.height, 1.0f),
+                            GX_TF_RGBA8, nullptr, false, &copyFilter, false, 1.0f,
                             (g_gxState.copyClamp & GX_CLAMP_TOP) != 0,
                             (g_gxState.copyClamp & GX_CLAMP_BOTTOM) != 0);
   aurora::gx::set_display_copy_present_source();
@@ -523,14 +525,25 @@ void GXCopyTex(void* dest, GXBool clear) {
   if (aurora::gx::render_target_has_alpha(g_gxState.pixelFmt)) {
     clearState.clearAlpha = clear && alphaUpdate;
   }
-  const auto copyFilter = combined_copy_filter_coefficients(g_gxState.copyFilterVFilter);
+  auto copyFilter = combined_copy_filter_coefficients(g_gxState.copyFilterVFilter);
+  // "Disable copy filter" covers texture copies too, as Dolphin's does: the game copies the whole scene
+  // for its distortion effects (heat haze, impacts) and redraws the view from that copy.
+  if (aurora::g_config.disableCopyFilter && !aurora::gx::is_depth_format(texCopyFmt)) {
+    copyFilter = {0, copyFilter[0] + copyFilter[1] + copyFilter[2], 0};
+  }
+  // The filter's taps are one source row apart for a copy at internal resolution (one destination row
+  // per source row), and one logical row apart only for a native-size copy, which averages a scaled
+  // footprint. Spacing them a logical row apart at internal resolution samples sharp rows several pixels
+  // away, which reads as a vertical double image.
+  const float filterRowStride =
+      nativeCopy ? sourceRect.sampleRect.w() / std::max<float>(g_gxState.texCopySrc.height, 1.0f) : 1.0f;
   // Skip only recurring color copies so one-shot copies are never lost.
   const bool producedConsecutively = handle.revision != 0 && currentFrame - handle.lastProducedFrame <= 1;
   const bool persistentCopy = !aurora::gx::is_depth_format(texCopyFmt) && !producedConsecutively;
   aurora::gfx::resolve_pass(handle.handle, rect, clearState.clearColor, clearState.clearAlpha, clearState.clearDepth,
                             clearState.clearColorValue, aurora::gx::clear_depth_value(), resolveFmt,
                             &sourceRect.sampleRect, g_gxState.texCopyHalfScale, &copyFilter, forceOpaqueAlpha,
-                            sourceRect.sampleRect.w() / std::max<float>(g_gxState.texCopySrc.height, 1.0f),
+                            filterRowStride,
                             (g_gxState.copyClamp & GX_CLAMP_TOP) != 0,
                             (g_gxState.copyClamp & GX_CLAMP_BOTTOM) != 0, persistentCopy);
   ++handle.revision;

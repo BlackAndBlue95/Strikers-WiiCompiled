@@ -1210,13 +1210,18 @@ void DrawGraphicsSettings() {
         aurora_set_disable_copy_filter(g_disableCopyFilter);
         RuntimeConfigFile::SetDisableCopyFilter(g_disableCopyFilter);
     }
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
+    ImGui::TextDisabled("Skips the Wii's vertical smoothing on the final image and on the screen copies the "
+                        "game's effects are built from, for a sharper picture.");
+    ImGui::PopTextWrapPos();
     if (ImGui::Checkbox("Scaled EFB copies", &g_scaledEfbCopy)) {
         aurora_set_scaled_efb_copies(g_scaledEfbCopy);
         RuntimeConfigFile::SetScaledEfbCopy(g_scaledEfbCopy);
     }
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
     ImGui::TextDisabled("As Dolphin's Scaled EFB Copy. Off: the screen copies effects are built from stay at "
-                        "native size, so blur, bloom and depth of field look as on a Wii at any resolution.");
+                        "native size, so blur, bloom and depth of field look as on a Wii at any resolution, "
+                        "and while heat haze or an impact ripple plays the scene shows at native size too.");
     ImGui::PopTextWrapPos();
     if (ImGui::Checkbox("Skip draws while shaders compile", &g_skipUnreadyPipelines)) {
         aurora_set_skip_unready_pipelines(g_skipUnreadyPipelines);
