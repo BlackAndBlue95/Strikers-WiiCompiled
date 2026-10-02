@@ -1118,6 +1118,13 @@ void DrawModSettings() {
     }
     ImGui::TextDisabled("Tied one goal short of the target, the target moves up: you have to\n"
                         "outscore the other side by at least 2 goals to win.");
+    bool allCaptains = RuntimeConfigFile::ModAllCaptains();
+    if (ImGui::Checkbox("Captain-only teams", &allCaptains)) {
+        RuntimeConfigFile::SetModAllCaptains(allCaptains);
+    }
+    ImGui::TextDisabled("Captains can be teammates (a switch the developers left in the game). On the\n"
+                        "sidekick screen, pick a slot then a captain from the grid; - and + switch to\n"
+                        "the sidekicks, so teams can mix both.");
     bool bluePeach = RuntimeConfigFile::ModBluePeach();
     if (ImGui::Checkbox("Blue Peach against red teams", &bluePeach)) {
         RuntimeConfigFile::SetModBluePeach(bluePeach);

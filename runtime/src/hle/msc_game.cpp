@@ -1,9 +1,12 @@
 // Mario Strikers Charged (R4QE01) game-specific HLE.
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 #include <set>
 #include <string>
 #include <vector>
@@ -493,9 +496,473 @@ void KitChoice() {
     UpdateCustomKitTextures();
 }
 
+// Captain-only teams: a player's voice slot is the team captain's (1 home, 5 away) for captains and
+// that plus the player's ID for sidekicks (fn_800957E4), so captains filling sidekick slots spoke with
+// the team captain's voice. Their own voice is loaded into slot + ID (CharacterLoader override), so
+// they are pointed there.
+void CaptainVoices() {
+    if (!RuntimeConfigFile::ModAllCaptains() || Memory::Read32(kGamePtr) == 0) return;
+    constexpr uint32_t kPlayerId = 0x1E4, kSoundSlot = 0x318;  // cPlayer
+    for (uint32_t side = 0; side < 2; ++side) {
+        const uint32_t team = Memory::Read32(kTeams + side * 4);
+        if (team == 0) continue;
+        const uint32_t base = Memory::Read32(team) == 0 ? 1u : 5u;  // cTeam::m_nSide
+        for (uint32_t i = 0; i < 5; ++i) {
+            const uint32_t player = Memory::Read32(team + kTeamPlayers + i * 4);
+            if (player == 0) continue;
+            const uint32_t id = Memory::Read32(player + kPlayerId);
+            if (id >= 1 && id <= 3 && Memory::Read32(player + kSoundSlot) == base) Memory::Write32(player + kSoundSlot, base + id);
+        }
+    }
+}
+
+// Captain-only teams, partner select: teammates are picked from captain select's 12-captain grid, or
+// from partner select's own row of partners (- and + switch between the two), so a team can mix
+// both. Confirming captains keeps captain select on the scene stack under partner select (the
+// BaseGameSceneManager::Pop override below; coming back from choose sides goes through captain select
+// again) with only its grid showing; partner select keeps its teammate boards. Choosing a board slot and then a
+// character puts them in the slot ([mods] captain_teammates_home/away: character indices, captains
+// 0-11 and partners 12-19, which the CharacterLoader overrides use). The boards show the picks
+// (FECaptainComponent overrides below). Leaving partner select either way closes both screens.
+namespace PartnerGrid {
+constexpr uint32_t kChooseSidekicksVtable = 0x8051D584u;  // ChooseSidekicksSceneV2
+// ChooseCaptainsSceneV2
+constexpr uint32_t kCaptainsSceneType = 0x20, kCaptainsInputSuppressed = 0x4E, kCaptainTextures = 0x50,
+                   kCaptainButtons = 0xB0, kCaptainInstances = 0x12D4, kCaptainsLayer = 0x1320, kCaptainsPdas = 0x1324,
+                   kCaptainsState = 0x1380;
+// ChooseSidekicksSceneV2
+constexpr uint32_t kSidePads = 0x20, kSelectedSlots = 0x30, kTeams = 0x40, kSidekicksShown = 0x4C, kBoards = 0x50,
+                   kBoardSize = 0x28, kSidekickButtons = 0xE8, kSlotButtons = 0x688, kPdas = 0x1354, kPdaSize = 0x2AC,
+                   kSlotInstances = 0x18CC, kGreenArrows = 0x190C, kSidekicksLayer = 0x1914;
+// FECaptainComponent (a team's board)
+constexpr uint32_t kBoardPositions = 0x08, kBoardSide = 0x10, kBoardCaptain = 0x14, kBoardSidekicks = 0x18;
+// FEPointerButton
+constexpr uint32_t kPointerButtonSize = 0xB4, kPointerEvents = 0x3C, kPointerDisabled = 0x80, kPointerMinX = 0x84,
+                   kPointerMaxX = 0x88, kPointerMaxY = 0x8C, kPointerMinY = 0x90, kPointerRotation = 0x94,
+                   kPointerPivot = 0x98, kPointerStates = 0xA0;
+constexpr uint32_t kHandlerPresentation = 0x14, kHandlerScene = 0x18, kSceneState = 0x74;  // BaseSceneHandler, FEScene
+constexpr uint32_t kInstanceChildren = 0x08, kInstanceComponent = 0x0C, kInstanceHash = 0x38,
+                   kInstanceRotation = 0x3C + 0x0C, kInstanceOverloadFlags = 0x84, kInstanceType = 0x88,
+                   kInstanceVisible = 0x8E, kImageTexture = 0x90;       // TLInstance, TLImageInstance
+constexpr uint32_t kSlideChildren = 0x08, kSlideHash = 0x40;            // TLSlide
+constexpr uint32_t kComponentSlides = 0x78, kComponentActiveSlide = 0x7C;  // TLComponent
+constexpr uint32_t kCharacterName = 0x04, kCharacterSidekickId = 0x18, kCharacterUnlockable = 0x24,
+                   kCharacterOverall = 0x48;                            // CharacterInfo
+constexpr uint32_t kPointerPositions = 0x80578460u;  // gFEPointerPositions[4] (nlVector2)
+constexpr uint32_t kFEInput = 0x806E2038u;           // g_pFEInput
+constexpr uint32_t kCupManager = 0x806E0F90u, kPendingCupTeam = 0x8A28;  // g_pCupManager
+constexpr uint32_t kGameMode = 0x11C, kGameInfos = 0x80, kRulesTable = 0x298, kRulesSize = 0xC;  // GameInfoManager
+constexpr uint32_t kSetActiveSlide = 0x80301E6Cu;      // TLComponent::SetActiveSlide(ulong hash, bool, bool)
+constexpr uint32_t kSetDisplayMode = 0x801E0280u;      // FECharacterPDAComponent::SetDisplayMode(int)
+constexpr uint32_t kSetRecycleState = 0x801DABACu;     // FECaptainComponent::SetRecycleState(int, int)
+constexpr uint32_t kReloadSidekicks = 0x801DCCECu;     // FECaptainComponent::ReloadSidekicks()
+constexpr uint32_t kResetRules = 0x800FDD24u;          // GameInfoManager::ResetRules(int)
+constexpr uint32_t kCaptainAcceptSound = 0x801CC090u;  // FECharacterSound::GetCaptainAcceptSound(eTeamID)
+constexpr uint32_t kSidekickAcceptSound = 0x801CC0A4u; // FECharacterSound::GetSidekickAcceptSound(eSidekickID)
+constexpr uint32_t kPlayAudioEvent = 0x801CBCA0u;      // FEAudio::PlayAnimAudioEvent(ulong, const void*, void*, bool)
+constexpr uint32_t kPlayHoverFeedback = 0x802195B4u;   // FEPointerButton::PlayHoverFeedback(int)
+constexpr uint32_t kJustPressed = 0x802FAE94u;         // FEInput::JustPressed(pad, button, remap, outPad)
+constexpr uint32_t kSidekickCharacter = 0x800FBDDCu;   // GetCharacterIndexFromSidekick(int)
+constexpr uint32_t kNlRandom = 0x802B6594u, kDefaultSeed = 0x806DF248u;  // nlRandom(n, &nlDefaultSeed)
+constexpr uint32_t kUnlockedFns[3] = {0x8010FF0Cu, 0x8010FFA8u, 0x80110044u};  // Is{BowserJr,DiddyKong,Petey}Unlocked
+constexpr uint32_t kButtonSelect = 0x1E, kButtonMinus = 0x31, kButtonPlus = 0x30;  // FE buttons: A, -, + (L, R)
+constexpr int kGridCaptains[12] = {0, 5, 3, 6, 4, 7, 1, 8, 2, 9, 10, 11};  // grid button -> captain (lbl_8051CE60)
+constexpr int kRowSidekicks[8] = {1, 0, 5, 4, 3, 2, 6, 7};                 // partner button -> eSidekickID (lbl_8051D198)
+constexpr int kFirstSidekickCharacter = 12, kLastCharacter = 19;  // CharacterInfo: captains 0-11, partners 12-19
+
+uint32_t g_captains = 0;  // the captain select scene kept under partner select
+bool g_gridShown = false;
+bool g_showPartners = false;  // the partner row is up instead of the captain grid
+bool g_locked[12] = {};
+std::array<int, 3> g_picks[2] = {{-1, -1, -1}, {-1, -1, -1}};  // per board slot: character, -1 = the team's captain
+int g_hover[4] = {-1, -1, -1, -1};                            // grid button under each pad's pointer while choosing
+int g_preview[2] = {-1, -1};                                  // captain hovered for a board's selected slot
+
+uint32_t LowerHash(const char* s) {  // nlStringLowerHash
+    uint32_t h = 0xFFFFFFFFu;
+    for (; *s; ++s) h = h * 33 + static_cast<uint8_t>(std::tolower(static_cast<unsigned char>(*s)));
+    return h;
+}
+
+uint32_t Call(CpuContext* ctx, uint32_t fn, std::initializer_list<uint32_t> args) {
+    const uint32_t savedLr = ctx->lr;
+    uint32_t reg = 3;
+    for (uint32_t arg : args) ctx->gpr[reg++] = arg;
+    InvokeIndirectCpu(fn, ctx);
+    ctx->lr = savedLr;
+    return ctx->gpr[3];
+}
+
+uint32_t CharacterInfo(uint32_t index) { return kCharacterInfo + (index < 32 ? index : 32) * 0x5C; }  // GetCharacterInfo
+bool IsSidekick(int character) { return character >= kFirstSidekickCharacter && character <= kLastCharacter; }
+
+void SetActiveSlide(CpuContext* ctx, uint32_t instance, const char* slide, bool restart = true) {
+    if (instance == 0 || Memory::Read32(instance + kInstanceComponent) == 0) return;
+    Call(ctx, kSetActiveSlide, {Memory::Read32(instance + kInstanceComponent), LowerHash(slide), restart ? 1u : 0u, 0});
+}
+
+uint32_t ActiveSlide(uint32_t instance) {
+    const uint32_t component = instance ? Memory::Read32(instance + kInstanceComponent) : 0;
+    return component ? Memory::Read32(component + kComponentActiveSlide) : 0;
+}
+
+// FEFinder lookups (feFinder.cpp), by name.
+uint32_t FindItem(uint32_t list, uint32_t hash, uint32_t hashOffset) {  // FindItemByHashID: ring, list = last entry
+    if (list == 0) return 0;
+    uint32_t item = Memory::Read32(list);
+    for (int guard = 0; item != 0 && guard < 256; ++guard) {
+        if (Memory::Read32(item + hashOffset) == hash) return item;
+        if (item == list) break;
+        item = Memory::Read32(item);
+    }
+    return 0;
+}
+uint32_t FindIn(uint32_t instance, const char* const* path, size_t count);
+uint32_t FindInSlide(uint32_t slide, const char* const* path, size_t count) {  // FEFinder::_Find(TLSlide*, ...)
+    if (slide == 0 || count == 0) return 0;
+    const uint32_t child = FindItem(Memory::Read32(slide + kSlideChildren), LowerHash(path[0]), kInstanceHash);
+    return child == 0 || count == 1 ? child : FindIn(child, path + 1, count - 1);
+}
+uint32_t FindIn(uint32_t instance, const char* const* path, size_t count) {  // FEFindInstanceRecursive
+    if (instance == 0 || count == 0) return 0;
+    if (Memory::Read32(instance + kInstanceType) == 4) {
+        const uint32_t component = Memory::Read32(instance + kInstanceComponent);
+        const uint32_t slide = FindItem(Memory::Read32(component + kComponentSlides), LowerHash(path[0]), kSlideHash);
+        if (slide == 0) return FindInSlide(ActiveSlide(instance), path, count);
+        return count == 1 ? slide : FindInSlide(slide, path + 1, count - 1);
+    }
+    const uint32_t child = FindItem(Memory::Read32(instance + kInstanceChildren), LowerHash(path[0]), kInstanceHash);
+    return child == 0 || count == 1 ? child : FindIn(child, path + 1, count - 1);
+}
+uint32_t FindInPresentation(uint32_t presentation, const char* const* path, size_t count) {  // FEFindInstance
+    if (presentation == 0 || count == 0) return 0;
+    const uint32_t slide = FindItem(Memory::Read32(presentation), LowerHash(path[0]), kSlideHash);
+    if (slide == 0) return FindInSlide(Memory::Read32(presentation + 0x04), path, count);
+    return count == 1 ? slide : FindInSlide(slide, path + 1, count - 1);
+}
+template <size_t N> uint32_t FindInSlide(uint32_t slide, const char* const (&path)[N]) { return FindInSlide(slide, path, N); }
+template <size_t N> uint32_t FindIn(uint32_t instance, const char* const (&path)[N]) { return FindIn(instance, path, N); }
+
+std::string CString(uint32_t addr) {
+    std::string s;
+    for (uint32_t i = 0; addr != 0 && i < 64; ++i) {
+        const char c = static_cast<char>(Memory::Read8(addr + i));
+        if (c == 0) break;
+        s += c;
+    }
+    return s;
+}
+
+// Partner select while it is on top of the kept captain select, else 0.
+uint32_t PartnerScene() {
+    if (g_captains == 0) return 0;
+    const uint32_t mgr = Memory::Read32(kSceneManager);
+    const uint32_t depth = mgr ? Memory::Read32(mgr + 0x04) : 0;
+    if (depth < 2 || depth > 32) return 0;
+    const uint32_t top = Memory::Read32(mgr + 0x88 + (depth - 1) * 4);
+    if (Memory::Read32(top) != kChooseSidekicksVtable || Memory::Read32(mgr + 0x88 + (depth - 2) * 4) != g_captains) return 0;
+    return top;
+}
+// Which of partner select's boards (FECaptainComponent) `board` is, or -1.
+int BoardSide(uint32_t board) {
+    const uint32_t scene = PartnerScene();
+    if (scene == 0 || board < scene + kBoards || board >= scene + kBoards + 2 * kBoardSize) return -1;
+    return static_cast<int>((board - scene - kBoards) / kBoardSize);
+}
+int SlotCharacter(uint32_t board, int side, int slot) {  // what a board slot shows
+    const uint32_t scene = PartnerScene();
+    if (scene != 0 && g_preview[side] >= 0 && static_cast<int32_t>(Memory::Read32(scene + kSelectedSlots + side * 4)) == slot)
+        return g_preview[side];
+    const int pick = g_picks[side][slot];
+    return pick >= 0 ? pick : static_cast<int32_t>(Memory::Read32(board + kBoardCaptain));
+}
+
+void SavePicks(int side) { RuntimeConfigFile::SetModCaptainTeammates(side, g_picks[side]); }
+
+void KeepScene(uint32_t captains) {
+    g_captains = captains;
+    g_gridShown = false;
+    g_showPartners = false;
+    for (int side = 0; side < 2; ++side) {
+        g_picks[side] = RuntimeConfigFile::ModCaptainTeammates(side);
+        g_preview[side] = -1;
+    }
+    for (int& hover : g_hover) hover = -1;
+}
+
+bool Offline() {
+    const uint32_t info = Memory::Read32(kGameInfoManager);
+    return info != 0 && Memory::Read8(info + 0x120) == 0;  // !mIsOnlineMode
+}
+
+// Pop override: true when this pop is the one closing captain select to open partner select
+// (Push(SCENE_CHOOSE_SIDEKICKS, ..., popfirst)), which is then skipped and the scene kept.
+bool KeepCaptainSelect(uint32_t top, uint32_t lr) {
+    constexpr uint32_t kPushBegin = 0x801C4E44u, kPushEnd = 0x801C5ED0u;  // BaseGameSceneManager::Push
+    if (!RuntimeConfigFile::ModAllCaptains() || top == 0 || lr < kPushBegin || lr >= kPushEnd) return false;
+    if (Memory::Read32(top) != kChooseCaptainsVtable || Memory::Read32(top + kCaptainsState) != 2) return false;
+    if (Memory::Read32(top + kCaptainsSceneType) != 0 || !Offline()) return false;  // Striker Cup, online
+    Memory::Write32(top + kCaptainsState, 1);  // done: input stays suppressed, no second push
+    KeepScene(top);
+    return true;
+}
+
+// Choose sides going back (LeaveScene override below): captain select, pushed coming back (captains
+// confirmed) with its input suppressed and already done, so once loaded it goes straight on to partner
+// select, which is kept on top of it as when going forward. Pushing both at once would load the two
+// screens together, which never finishes (both wait on shared resources, FEScene state 5).
+uint32_t g_forwarding = 0;
+
+uint32_t PushForwardingCaptainSelect(CpuContext* ctx, uint32_t mgr, uint32_t push) {
+    const uint32_t captains = Call(ctx, push, {mgr, 2, 2, 0});  // SCENE_CHOOSE_CAPTAINS_DOMINATION, SCREEN_BACK
+    if (captains == 0) return 0;
+    Memory::Write32(captains + kCaptainsState, 2);
+    Memory::Write8(captains + kCaptainsInputSuppressed, 1);
+    g_forwarding = captains;
+    return captains;
+}
+
+bool ContainsPoint(uint32_t region, float x, float y) {  // FEPointerRegion::ContainsPoint
+    const float rotation = Memory::ReadFloat32(region + kPointerRotation);
+    if (rotation != 0.0f) {
+        const float px = Memory::ReadFloat32(region + kPointerPivot), py = Memory::ReadFloat32(region + kPointerPivot + 4);
+        const float lx = x - px, ly = y - py, c = std::cos(rotation), s = std::sin(rotation);
+        x = lx * c + ly * s + px;
+        y = lx * -s + ly * c + py;
+    }
+    return x >= Memory::ReadFloat32(region + kPointerMinX) && x <= Memory::ReadFloat32(region + kPointerMaxX) &&
+           y >= Memory::ReadFloat32(region + kPointerMinY) && y <= Memory::ReadFloat32(region + kPointerMaxY);
+}
+
+bool HoveredByOther(int button, int pad) {
+    for (int i = 0; i < 4; ++i)
+        if (i != pad && g_hover[i] == button) return true;
+    return false;
+}
+
+void ClearHover(CpuContext* ctx, int pad) {
+    const int old = g_hover[pad];
+    g_hover[pad] = -1;
+    if (old >= 0 && !HoveredByOther(old, pad))
+        SetActiveSlide(ctx, Memory::Read32(g_captains + kCaptainInstances + static_cast<uint32_t>(old) * 4), "off");
+}
+
+// Captain select's grid buttons all lit (it greys out the two team captains, who can be teammates
+// too), locked captains keep their static.
+void RefreshGrid() {
+    for (uint32_t i = 0; i < 12; ++i) {
+        char group[8], image[32];
+        std::snprintf(group, sizeof(group), "%u", i);
+        std::snprintf(image, sizeof(image), "%02u_dummy_texture", i);
+        const char* const groupPath[] = {group};
+        const uint32_t groupInstance = FindInSlide(ActiveSlide(Memory::Read32(g_captains + kCaptainInstances + i * 4)), groupPath);
+        if (groupInstance == 0) continue;
+        const char* const noisePath[] = {"noise"};
+        const char* const imagePath[] = {image};
+        const uint32_t noise = FindIn(groupInstance, noisePath);
+        const uint32_t texture = Memory::Read32(g_captains + kCaptainTextures + i * 8 + 4);  // mCaptainTextures[i][1]
+        if (noise) Memory::Write8(noise + kInstanceVisible, g_locked[i] ? 1 : 0);
+        if (const uint32_t img = FindIn(groupInstance, imagePath); img && texture && !g_locked[i])
+            Memory::Write32(img + kImageTexture, texture);
+    }
+}
+
+// The bookkeeping of ChooseSidekicksSceneV2::OnSidekickPointerPress once a slot is filled: the slot
+// and its buttons back to normal, the board out of choosing, no side choosing.
+void FinishSlot(CpuContext* ctx, uint32_t scene, int side, int32_t slot) {
+    SetActiveSlide(ctx, Memory::Read32(scene + kSlotInstances + static_cast<uint32_t>(side * 3 + slot) * 4), "off");
+    for (uint32_t i = 0; i < 3; ++i)
+        for (uint32_t p = 0; p < 4; ++p)
+            Memory::Write32(scene + kSlotButtons + (side * 3 + i) * kPointerButtonSize + kPointerStates + p * 4, 0);
+    Call(ctx, kSetDisplayMode, {scene + kPdas + side * kPdaSize, 1});
+    if (const uint32_t arrow = Memory::Read32(scene + kGreenArrows + side * 4)) Memory::Write8(arrow + kInstanceVisible, 0);
+    Call(ctx, kSetRecycleState, {scene + kBoards + side * kBoardSize, static_cast<uint32_t>(slot), 1});
+    Memory::Write32(scene + kSelectedSlots + side * 4, 0xFFFFFFFFu);
+    Memory::Write32(scene + kSidePads + side * 4, 0xFFFFFFFFu);
+}
+
+// The captain in grid button `button` goes in the selected slot of the board `side` is choosing for.
+void Assign(CpuContext* ctx, uint32_t scene, int side, int pad, int button) {
+    const int32_t slot = static_cast<int32_t>(Memory::Read32(scene + kSelectedSlots + side * 4));
+    if (slot < 0 || slot > 2) return;
+    const int captain = kGridCaptains[button];
+    g_picks[side][slot] = captain;
+    SavePicks(side);
+    FinishSlot(ctx, scene, side, slot);
+    g_preview[side] = -1;
+    ClearHover(ctx, pad);
+    Call(ctx, kPlayAudioEvent, {Call(ctx, kCaptainAcceptSound, {static_cast<uint32_t>(captain)}), 0, 0, 1});
+}
+
+// - and + swap the captain grid and the partner row, each sliding out and in.
+void ShowPartners(CpuContext* ctx, uint32_t scene, bool partners) {
+    g_showPartners = partners;
+    for (int pad = 0; pad < 4; ++pad) ClearHover(ctx, pad);
+    g_preview[0] = g_preview[1] = -1;
+    const uint32_t grid = Memory::Read32(g_captains + kCaptainsLayer);
+    const uint32_t row = Memory::Read32(scene + kSidekicksLayer);
+    Memory::Write8((partners ? row : grid) + kInstanceVisible, 1);
+    SetActiveSlide(ctx, partners ? row : grid, "in");
+    SetActiveSlide(ctx, partners ? grid : row, "out");
+    Call(ctx, kPlayAudioEvent, {0xDF52130Fu, 0, 0, 1});  // as when captain/partner select show their row
+}
+
+// A scene whose package is loaded and SceneCreated has run (FESceneManager::InitializeScene).
+bool Loaded(uint32_t handler) {
+    const uint32_t feScene = Memory::Read32(handler + kHandlerScene);
+    return feScene != 0 && Memory::Read32(feScene + kSceneState) == 6 && Memory::Read32(handler + kHandlerPresentation) != 0;
+}
+
+// Captain select going straight on: its panels skip to the end of sliding out, which is what its
+// state 2 (Done pressed) waits for before pushing partner select.
+void Forward() {
+    const uint32_t mgr = Memory::Read32(kSceneManager);
+    const uint32_t depth = mgr ? Memory::Read32(mgr + 0x04) : 0;
+    const uint32_t top = depth >= 1 && depth <= 32 ? Memory::Read32(mgr + 0x88 + (depth - 1) * 4) : 0;
+    if (top != g_forwarding) {
+        bool present = false;
+        for (uint32_t i = 0; i < depth && depth <= 32; ++i) present |= Memory::Read32(mgr + 0x88 + i * 4) == g_forwarding;
+        if (!present) g_forwarding = 0;
+        return;
+    }
+    if (!Loaded(top)) return;
+    GuestInterruptCallbackContext call;
+    for (uint32_t side = 0; side < 2; ++side) {
+        const uint32_t pda = Memory::Read32(top + kCaptainsPdas + side * 4);
+        if (pda == 0) continue;
+        Memory::Write8(pda + kInstanceVisible, 0);
+        SetActiveSlide(call.get(), pda, "out");
+        if (const uint32_t slide = ActiveSlide(pda))  // TLSlide: m_start +0x10, m_duration +0x14, m_time +0x18
+            Memory::WriteFloat32(slide + 0x18, Memory::ReadFloat32(slide + 0x10) + Memory::ReadFloat32(slide + 0x14));
+    }
+    g_forwarding = 0;
+}
+
+void Update() {
+    if (g_forwarding != 0) Forward();
+    const uint32_t scene = PartnerScene();
+    if (scene == 0 || !Loaded(scene) || !Loaded(g_captains)) return;
+    GuestInterruptCallbackContext call;
+    CpuContext* ctx = call.get();
+    if (!g_gridShown) {
+        const uint32_t grid = Memory::Read32(g_captains + kCaptainsLayer);
+        Memory::Write8(grid + kInstanceVisible, 1);
+        SetActiveSlide(ctx, grid, "in");
+        const char* const titlesPath[] = {"Layer", "SCREEN_TITLES"};
+        const uint32_t presentation = Memory::Read32(g_captains + kHandlerPresentation);
+        if (const uint32_t titles = FindInSlide(Memory::Read32(presentation + 0x04), titlesPath))
+            Memory::Write8(titles + kInstanceVisible, 0);  // partner select has its own
+        for (int i = 0; i < 12; ++i)
+            g_locked[i] = kGridCaptains[i] >= 9 && Call(ctx, kUnlockedFns[kGridCaptains[i] - 9], {}) == 0;
+        g_gridShown = true;
+    }
+    for (uint32_t side = 0; side < 2; ++side)  // captain select's panels: partner select's boards replace them
+        if (const uint32_t pda = Memory::Read32(g_captains + kCaptainsPdas + side * 4)) Memory::Write8(pda + kInstanceVisible, 0);
+    // The partner row only comes up with - or +, not when a slot is chosen (OnSlotPointerPress).
+    Memory::Write8(scene + kSidekicksShown, 1);
+    for (uint32_t i = 0; i < 8; ++i)
+        Memory::Write8(scene + kSidekickButtons + i * kPointerButtonSize + kPointerDisabled, g_showPartners ? 0 : 1);
+    // A team's picks that are partners are its board's partners too (pictures, and the game's own
+    // choice when Done commits them).
+    for (uint32_t side = 0; side < 2; ++side)
+        for (uint32_t slot = 0; slot < 3; ++slot)
+            if (IsSidekick(g_picks[side][slot]))
+                Memory::Write32(scene + kBoards + side * kBoardSize + kBoardSidekicks + slot * 4,
+                                Memory::Read32(CharacterInfo(static_cast<uint32_t>(g_picks[side][slot])) + kCharacterSidekickId));
+
+    const uint32_t input = Memory::Read32(kFEInput);
+    const auto justPressed = [&](int pad, uint32_t button) {
+        return input != 0 && (Call(ctx, kJustPressed, {input, static_cast<uint32_t>(pad), button, 1, 0}) & 0xFF) != 0;
+    };
+    for (int pad = 0; pad < 4; ++pad) {
+        if (justPressed(pad, kButtonMinus) || justPressed(pad, kButtonPlus)) {
+            ShowPartners(ctx, scene, !g_showPartners);
+            break;
+        }
+    }
+    for (int pad = 0; pad < 4; ++pad) {
+        int side = -1;
+        for (int s = 0; s < 2; ++s)
+            if (static_cast<int32_t>(Memory::Read32(scene + kSidePads + s * 4)) == pad) side = s;
+        const bool choosing = !g_showPartners && side >= 0 && static_cast<int32_t>(Memory::Read32(scene + kSelectedSlots + side * 4)) >= 0;
+        int hit = -1;
+        const float x = Memory::ReadFloat32(kPointerPositions + pad * 8), y = Memory::ReadFloat32(kPointerPositions + pad * 8 + 4);
+        for (int i = 0; i < 12; ++i) {
+            const uint32_t button = g_captains + kCaptainButtons + static_cast<uint32_t>(i) * kPointerButtonSize;
+            const bool live = choosing && !g_locked[i];
+            if (live && hit < 0 && ContainsPoint(button, x, y)) hit = i;
+            // The event the button has seen (FEPointerListener::mPreviousEvents[pad]), as
+            // ProcessPointerEvent records it: menu navigation (pad.cpp) only targets buttons that get
+            // the pointer's events, so the grid is a target only for a pad choosing a slot.
+            const uint32_t event = button + kPointerEvents + static_cast<uint32_t>(pad) * 0x10;
+            Memory::Write32(event, live ? static_cast<uint32_t>(pad) : 0xFFFFFFFFu);
+            Memory::WriteFloat32(event + 4, x);
+            Memory::WriteFloat32(event + 8, y);
+            Memory::Write32(event + 0x0C, 0);  // mPressed, mReleased
+        }
+        if (hit != g_hover[pad]) {
+            ClearHover(ctx, pad);
+            g_hover[pad] = hit;
+            if (hit >= 0) {
+                if (!HoveredByOther(hit, pad))
+                    SetActiveSlide(ctx, Memory::Read32(g_captains + kCaptainInstances + static_cast<uint32_t>(hit) * 4), "over");
+                Call(ctx, kPlayHoverFeedback, {g_captains + kCaptainButtons + static_cast<uint32_t>(hit) * kPointerButtonSize,
+                                               static_cast<uint32_t>(pad)});
+                Call(ctx, kPlayAudioEvent, {0xA183DBCDu + static_cast<uint32_t>(pad), 0, 0, 1});
+            }
+        }
+        if (side >= 0) g_preview[side] = choosing && hit >= 0 ? kGridCaptains[hit] : -1;
+        if (choosing && hit >= 0 && justPressed(pad, kButtonSelect)) Assign(ctx, scene, side, pad, hit);
+    }
+    for (int side = 0; side < 2; ++side)
+        if (static_cast<int32_t>(Memory::Read32(scene + kSidePads + side * 4)) < 0) g_preview[side] = -1;
+    RefreshGrid();
+}
+
+void SetOverallSlide(CpuContext* ctx, uint32_t overall, uint32_t info) {  // FECaptainComponent::SetOverallSlide
+    static const char* const kRoles[] = {"offensive", "defensive", "playmaker", "power", "balanced"};
+    const uint32_t role = Memory::Read32(info + kCharacterOverall);
+    if (overall != 0 && role < 5) SetActiveSlide(ctx, overall, kRoles[role], false);
+}
+
+// A board slot shows `captain`: their picture as the board's captain spot has it, unturned.
+void SetSlotCaptain(CpuContext* ctx, uint32_t board, int side, int slot, int captain) {
+    static const char* const kDummies[] = {"01_dummy_texture_positions", "02_dummy_texture_positions", "03_dummy_texture_positions"};
+    // FindCaptainImage(captain, left) in partner select's art: "<name>_right" on the right board, else "positions_<name>".
+    const uint32_t presentation = Memory::Read32(PartnerScene() + kHandlerPresentation);
+    const std::string name = CString(Memory::Read32(CharacterInfo(static_cast<uint32_t>(captain)) + kCharacterName));
+    uint32_t source = 0;
+    if (side != 0) {
+        const std::string right = name + "_right";
+        const char* const path[] = {"art", "Layer", right.c_str()};
+        source = FindInPresentation(presentation, path, 3);
+    }
+    if (source == 0) {
+        const std::string positions = "positions_" + name;
+        const char* const path[] = {"art", "Layer", positions.c_str()};
+        source = FindInPresentation(presentation, path, 3);
+    }
+    const uint32_t texture = source ? Memory::Read32(source + kImageTexture) : 0;
+    if (texture == 0) return;
+    // FindPositionImage(slot, off/over/down)
+    const char* const dummyPath[] = {"positions", "field_positions", "idle", "dummies", kDummies[slot]};
+    const uint32_t dummy = FindInSlide(ActiveSlide(Memory::Read32(board + kBoardPositions)), dummyPath);
+    for (const char* state : {"off", "over", "down"}) {
+        const char* const path[] = {state, kDummies[slot]};
+        if (const uint32_t image = FindIn(dummy, path)) {
+            Memory::Write32(image + kImageTexture, texture);
+            Memory::Write32(image + kInstanceOverloadFlags, Memory::Read32(image + kInstanceOverloadFlags) | 2);  // SetAssetRotation(0, 0, 0)
+            for (uint32_t k = 0; k < 3; ++k) Memory::WriteFloat32(image + kInstanceRotation + k * 4, 0.0f);
+        }
+    }
+}
+} // namespace PartnerGrid
+
 void Apply() {
     try {
         UnlockEverything();
+        CaptainVoices();
+        PartnerGrid::Update();
         KitChoice();
         BluePeach();
         ShotCounter();
@@ -506,6 +973,454 @@ void Apply() {
     }
 }
 } // namespace FrameMods
+
+// void BaseGameSceneManager::Pop(). As the original (FESceneManager::QueueScenePop, then
+// mBaseSceneHandlerStack[mCurrentStackDepth] = 0 and one less deep), plus the captain-only teams
+// partner select (FrameMods::PartnerGrid): the pop closing captain select to open partner select is
+// skipped, and popping partner select also pops the captain select kept under it.
+extern "C" void MSC_BaseGameSceneManagerPop_801C5F1C(CpuContext* ctx)
+{
+    using namespace FrameMods::PartnerGrid;
+    constexpr uint32_t kQueueScenePop = 0x802FF18Cu;  // FESceneManager::QueueScenePop()
+    const uint32_t mgr = ctx->gpr[3];
+    const uint32_t savedLr = ctx->lr;
+    const uint32_t depth = Memory::Read32(mgr + 0x04);
+    const uint32_t top = depth >= 1 && depth <= 32 ? Memory::Read32(mgr + 0x88 + (depth - 1) * 4) : 0;
+    if (KeepCaptainSelect(top, savedLr)) return;
+    const bool both = g_captains != 0 && top != 0 && depth >= 2 && Memory::Read32(top) == kChooseSidekicksVtable &&
+                      Memory::Read32(mgr + 0x88 + (depth - 2) * 4) == g_captains;
+    uint32_t result = 0;
+    for (int pop = 0; pop < (both ? 2 : 1); ++pop) {
+        const uint32_t current = Memory::Read32(mgr + 0x04);
+        if (current >= 1 && current <= 32 && Memory::Read32(mgr + 0x88 + (current - 1) * 4) == g_captains) g_captains = 0;
+        ctx->gpr[3] = Memory::Read32(ctx->gpr[13] - 4944);  // FESceneManager instance
+        InvokeIndirectCpu(kQueueScenePop, ctx);
+        const uint32_t d = Memory::Read32(mgr + 0x04);
+        Memory::Write32(mgr + 0x88 + d * 4, 0);
+        Memory::Write32(mgr + 0x04, d - 1);
+        result = d;
+    }
+    ctx->lr = savedLr;
+    ctx->gpr[3] = result;
+}
+PPC_NATIVE_OVERRIDE_VOID(801C5F1C, MSC_BaseGameSceneManagerPop_801C5F1C, (CpuContext* ctx), (ctx));
+
+// void SHChooseSides2::LeaveScene() (Back on choose sides). As the original: the scene pops itself;
+// the Striker Cup goes back to its hub (presentation "TransitionChooseSidesToCup"), the Striker
+// Challenge to its screen (scene 77, display mode 8), friendly matches remove the models and light
+// cones and go back to partner select (scene 3); the pause menu's choose sides just resets the
+// pointers. With captain-only teams a friendly match goes back through captain select, which goes
+// straight on to partner select (FrameMods::PartnerGrid).
+extern "C" void MSC_ChooseSidesLeaveScene_8021CBD0(CpuContext* ctx)
+{
+    using namespace FrameMods::PartnerGrid;
+    constexpr uint32_t kPresentationInstance = 0x801FEEACu;  // FrontEndPresentation::GetInstance()
+    constexpr uint32_t kPresentationCall = 0x801FF1B0u;      // FrontEndPresentation::Call(const char*)
+    constexpr uint32_t kToCup = 0x8051C9E0u, kToChallenge = 0x8051C9FCu, kRemoveModels = 0x8051CA28u, kKillLightCones = 0x8051CA38u;
+    constexpr uint32_t kPointerInstances = 0x80578450u;      // gFEPointerInstances[4]
+    constexpr uint32_t kSetActiveSlideByName = 0x8030212Cu;  // TLComponentInstance::SetActiveSlide(const char*, bool, bool)
+    constexpr uint32_t kContext = 0x3DC;                     // SHChooseSides2::mContext
+    const uint32_t scene = ctx->gpr[3];
+    const uint32_t mgr = Memory::Read32(ctx->gpr[13] - 7048);  // GameSceneManager
+    const uint32_t cursor = ctx->gpr[13] - 21288;              // "cursor"
+    const auto virtualCall = [&](uint32_t object, uint32_t slot, std::initializer_list<uint32_t> args) {
+        std::vector<uint32_t> all{object};
+        all.insert(all.end(), args.begin(), args.end());
+        const uint32_t fn = Memory::Read32(Memory::Read32(object) + slot);
+        const uint32_t savedLr = ctx->lr;
+        for (size_t i = 0; i < all.size(); ++i) ctx->gpr[3 + i] = all[i];
+        InvokeIndirectCpu(fn, ctx);
+        ctx->lr = savedLr;
+        return ctx->gpr[3];
+    };
+    const auto present = [&](uint32_t name) { Call(ctx, kPresentationCall, {Call(ctx, kPresentationInstance, {}), name}); };
+    const auto pointersToCursor = [&] {
+        for (uint32_t i = 0; i < 4; ++i) Call(ctx, kSetActiveSlideByName, {Memory::Read32(kPointerInstances + i * 4), cursor, 1, 0});
+    };
+    virtualCall(mgr, 16, {});  // Pop()
+    const uint32_t context = Memory::Read32(scene + kContext);
+    if (context == 1) {  // CUP
+        Call(ctx, kPlayAudioEvent, {0xA6F93A5Du, 0, 0, 1});
+        present(kToCup);
+    } else if (context == 3) {  // TOURNAMENT
+        present(kToChallenge);
+        if (const uint32_t challenge = virtualCall(mgr, 12, {77, 2, 0})) virtualCall(challenge, 44, {8});  // SetDisplayMode(8)
+    } else if (context != 4) {  // not PAUSE
+        present(kRemoveModels);
+        present(kKillLightCones);
+        pointersToCursor();
+        if (context == 0 && RuntimeConfigFile::ModAllCaptains() && Offline())
+            PushForwardingCaptainSelect(ctx, mgr, Memory::Read32(Memory::Read32(mgr) + 12));
+        else
+            virtualCall(mgr, 12, {3, 2, 0});  // Push(SCENE_CHOOSE_SIDEKICKS_DOMINATION, SCREEN_BACK, false)
+        Call(ctx, kPlayAudioEvent, {0xF8F6BB3Cu, 0, 0, 1});
+    } else {
+        pointersToCursor();
+    }
+}
+PPC_NATIVE_OVERRIDE_VOID(8021CBD0, MSC_ChooseSidesLeaveScene_8021CBD0, (CpuContext* ctx), (ctx));
+
+// void ChooseSidekicksSceneV2::OnSidekickPointerPress(int pad, void* button). As the original (the
+// partner in that button goes in the side's selected slot: the board and the captain's rules get it,
+// the slot is done, the partner's accept sound), plus partner select's captain grid: the slot's pick
+// becomes that partner.
+extern "C" void MSC_ChooseSidekicksOnSidekickPress_8022AB68(CpuContext* ctx)
+{
+    using namespace FrameMods::PartnerGrid;
+    const uint32_t scene = ctx->gpr[3];
+    const uint32_t pad = ctx->gpr[4];
+    const uint32_t button = ctx->gpr[5];
+    int side = -1;
+    for (int s = 1; s >= 0; --s)  // GetSide: mSidePads[0] first
+        if (Memory::Read32(scene + kSidePads + s * 4) == pad) side = s;
+    if (side < 0 || button >= 8) return;
+    const int32_t slot = static_cast<int32_t>(Memory::Read32(scene + kSelectedSlots + side * 4));
+    if (slot < 0 || slot > 2) return;
+    const uint32_t sidekick = static_cast<uint32_t>(kRowSidekicks[button]);
+    Memory::Write32(scene + kBoards + side * kBoardSize + kBoardSidekicks + slot * 4, sidekick);  // SetSidekick
+    Memory::Write32(scene + kSidekickButtons + button * kPointerButtonSize + kPointerStates + pad * 4, 0);
+    FinishSlot(ctx, scene, side, slot);
+    Call(ctx, kPlayAudioEvent, {Call(ctx, kSidekickAcceptSound, {sidekick}), 0, 0, 1});
+    const uint32_t info = Memory::Read32(FrameMods::kGameInfoManager);
+    const uint32_t team = Memory::Read32(scene + kTeams + side * 4);  // GetTeam(side)
+    Memory::Write32(info + kRulesTable + team * kRulesSize + slot * 4, sidekick);
+    if (BoardSide(scene + kBoards + side * kBoardSize) == side) {
+        g_picks[side][slot] = static_cast<int>(Call(ctx, kSidekickCharacter, {sidekick}));
+        SavePicks(side);
+    }
+}
+PPC_NATIVE_OVERRIDE_VOID(8022AB68, MSC_ChooseSidekicksOnSidekickPress_8022AB68, (CpuContext* ctx), (ctx));
+
+// void FECaptainComponent::UpdateOverallSlides(), called at the end of LoadSlotImages. As the original
+// (each board position's role label, from the captain's and partners' CharacterInfo), plus partner
+// select's captain grid (FrameMods::PartnerGrid): each slot shows its pick, a captain's picture and
+// role, or a partner (LoadSlotImages has drawn the board's partners, which follow the picks).
+extern "C" void MSC_CaptainComponentUpdateOverallSlides_801DAFC8(CpuContext* ctx)
+{
+    using namespace FrameMods::PartnerGrid;
+    constexpr uint32_t kCaptainCharacter = 0x800FBD94u;  // GetCharacterIndexFromCaptain(int)
+    const uint32_t board = ctx->gpr[3];
+    const int32_t captain = static_cast<int32_t>(Memory::Read32(board + kBoardCaptain));
+    if (captain == -1) return;
+    const uint32_t slide = ActiveSlide(Memory::Read32(board + kBoardPositions));
+    const char* const captainPath[] = {"positions", "overall_0"};
+    SetOverallSlide(ctx, FindInSlide(slide, captainPath), CharacterInfo(Call(ctx, kCaptainCharacter, {static_cast<uint32_t>(captain)})));
+    const int side = BoardSide(board);
+    for (int slot = 0; slot < 3; ++slot) {
+        static const char* const kOveralls[] = {"overall_1", "overall_2", "overall_3"};
+        const char* const path[] = {"positions", kOveralls[slot]};
+        const uint32_t overall = FindInSlide(slide, path);
+        int character = -1;
+        if (side >= 0) {
+            character = SlotCharacter(board, side, slot);
+            if (!IsSidekick(character)) SetSlotCaptain(ctx, board, side, slot, character);
+        } else if (const int32_t sidekick = static_cast<int32_t>(Memory::Read32(board + kBoardSidekicks + slot * 4)); sidekick != -1) {
+            character = static_cast<int32_t>(Call(ctx, kSidekickCharacter, {static_cast<uint32_t>(sidekick)}));
+        }
+        if (overall == 0) continue;
+        Memory::Write8(overall + kInstanceVisible, character == -1 ? 0 : 1);
+        if (character != -1) SetOverallSlide(ctx, overall, CharacterInfo(static_cast<uint32_t>(character)));
+    }
+}
+PPC_NATIVE_OVERRIDE_VOID(801DAFC8, MSC_CaptainComponentUpdateOverallSlides_801DAFC8, (CpuContext* ctx), (ctx));
+
+// void FECaptainComponent::ResetSidekicks() (partner select's Default). As the original (the team's
+// default partners: GameInfoManager::ResetRules, then ReloadSidekicks); on partner select's captain
+// grid every slot goes back to the team's captain, or with the partner row up to those partners.
+extern "C" void MSC_CaptainComponentResetSidekicks_801DCC28(CpuContext* ctx)
+{
+    using namespace FrameMods::PartnerGrid;
+    const uint32_t board = ctx->gpr[3];
+    const uint32_t info = Memory::Read32(FrameMods::kGameInfoManager);
+    int32_t team = -1;
+    if (Memory::Read32(info + kGameMode) == 3) {  // IsInMode3(): Striker Cup
+        team = static_cast<int32_t>(Memory::Read32(Memory::Read32(kCupManager) + kPendingCupTeam));
+    } else if (const uint32_t game = Memory::Read32(info + kGameInfos + Memory::Read32(info + kGameMode) * 4)) {  // GetTeam(mSide)
+        team = static_cast<int32_t>(Memory::Read32(game + static_cast<int16_t>(Memory::Read32(board + kBoardSide)) * 4));
+    }
+    Call(ctx, kResetRules, {info, static_cast<uint32_t>(team)});
+    Call(ctx, kReloadSidekicks, {board});
+    const int side = BoardSide(board);
+    if (side < 0) return;
+    for (uint32_t slot = 0; slot < 3; ++slot)
+        g_picks[side][slot] = g_showPartners ? static_cast<int>(Call(ctx, kSidekickCharacter, {Memory::Read32(board + kBoardSidekicks + slot * 4)})) : -1;
+    SavePicks(side);
+}
+PPC_NATIVE_OVERRIDE_VOID(801DCC28, MSC_CaptainComponentResetSidekicks_801DCC28, (CpuContext* ctx), (ctx));
+
+// void FECaptainComponent::RandomizeSidekicks() (partner select's Random). As the original (three
+// partners drawn with nlRandom from those whose CharacterInfo marks them selectable, stored in the
+// board and the captain's rules); on partner select's captain grid the slots get random unlocked
+// captains, or with the partner row up those partners.
+extern "C" void MSC_CaptainComponentRandomizeSidekicks_801DCB28(CpuContext* ctx)
+{
+    using namespace FrameMods::PartnerGrid;
+    const uint32_t board = ctx->gpr[3];
+    uint32_t sidekicks[8] = {}, count = 0;
+    for (uint32_t i = 0; i < 8; ++i)
+        if (Memory::Read32(CharacterInfo(Call(ctx, kSidekickCharacter, {i})) + kCharacterUnlockable) == 1) sidekicks[count++] = i;
+    uint32_t rules[3];
+    for (uint32_t& value : rules) value = sidekicks[Call(ctx, kNlRandom, {count, kDefaultSeed}) & 7];
+    const uint32_t info = Memory::Read32(FrameMods::kGameInfoManager);
+    const uint32_t captain = Memory::Read32(board + kBoardCaptain);
+    for (uint32_t k = 0; k < 3; ++k) {
+        Memory::Write32(board + kBoardSidekicks + k * 4, rules[k]);
+        if (captain < 12) Memory::Write32(info + kRulesTable + captain * kRulesSize + k * 4, rules[k]);
+    }
+    const int side = BoardSide(board);
+    if (side < 0) return;
+    uint32_t captains[12] = {}, unlocked = 0;
+    for (int i = 0; i < 12; ++i)
+        if (!g_locked[i]) captains[unlocked++] = static_cast<uint32_t>(kGridCaptains[i]);
+    for (uint32_t slot = 0; slot < 3; ++slot) {
+        g_picks[side][slot] = g_showPartners ? static_cast<int>(Call(ctx, kSidekickCharacter, {rules[slot]}))
+                                             : static_cast<int>(captains[Call(ctx, kNlRandom, {unlocked, kDefaultSeed}) % 12]);
+    }
+    SavePicks(side);
+}
+PPC_NATIVE_OVERRIDE_VOID(801DCB28, MSC_CaptainComponentRandomizeSidekicks_801DCB28, (CpuContext* ctx), (ctx));
+
+// bool GetTweakBool(const char* path, bool defaultValue). As the original (TweakRegistry.cpp:
+// FindTweakNode, then the value's storage kind), plus the captain-only teams mod: the game's
+// character loader still reads the developers' "/user/allcaptains" switch, which fills every
+// sidekick slot with the team's captain and flags them as captains; it is never registered on
+// retail discs, so the mod answers it here.
+extern "C" void MSC_GetTweakBool_802C2C84(CpuContext* ctx)
+{
+    constexpr uint32_t kTweakRoot = 0x8057C4E4u;     // sTweakRootEntry
+    constexpr uint32_t kFindTweakNode = 0x802C41B4u; // FindTweakNode(TweakNode*, const char*)
+    const uint32_t path = ctx->gpr[3];
+    const uint32_t fallback = ctx->gpr[4] & 0xFF;
+    if (RuntimeConfigFile::ModAllCaptains()) {
+        static constexpr char kAllCaptains[] = "/user/allcaptains";
+        bool match = true;
+        for (uint32_t i = 0; i < sizeof(kAllCaptains) && match; ++i) match = Memory::Read8(path + i) == static_cast<uint8_t>(kAllCaptains[i]);
+        if (match) {
+            ctx->gpr[3] = 1;
+            return;
+        }
+    }
+    const uint32_t savedLr = ctx->lr;
+    ctx->gpr[3] = kTweakRoot;
+    ctx->gpr[4] = path;
+    InvokeIndirectCpu(kFindTweakNode, ctx);
+    const uint32_t node = ctx->gpr[3];
+    uint32_t result = fallback;
+    if (node != 0) {
+        const uint32_t value = Memory::Read32(node + 0x0C);  // TweakNode::m_Value
+        ctx->gpr[3] = value;
+        InvokeIndirectCpu(Memory::Read32(Memory::Read32(value) + 0x10), ctx);  // GetStorageKind()
+        const uint32_t kind = ctx->gpr[3];
+        if (kind == 1) result = Memory::Read8(value + 0x0A);                       // TweakValueBool::mValue
+        else if (kind == 2) result = Memory::Read8(Memory::Read32(value + 0x0C));  // TweakFloatBinding::m_pValue
+    }
+    ctx->lr = savedLr;
+    ctx->gpr[3] = result;
+}
+PPC_NATIVE_OVERRIDE_VOID(802C2C84, MSC_GetTweakBool_802C2C84, (CpuContext* ctx), (ctx));
+
+// void Presentation::PlayGameBegin(). The match intro is a scripted presentation ("GameBegin") whose
+// team walk-outs never finish with the captain-only teams mod (the screen stays black: frames are
+// discarded until it ends). With the mod on, the match starts the way cGame::BeginGame does for a
+// rematch (bStraightToKickoff): straight to the kickoff state. Otherwise as the original:
+// Call("GameBegin", "").
+extern "C" void MSC_PresentationPlayGameBegin_80286288(CpuContext* ctx)
+{
+    constexpr uint32_t kGameBeginName = 0x80523B94u;     // "GameBegin"
+    constexpr uint32_t kPresentationCall = 0x80286064u;  // Presentation::Call(const char*, const char*)
+    constexpr uint32_t kChangeGameState = 0x8005BFB4u;   // cGame::ChangeGameState(int)
+    constexpr uint32_t kFixedUpdateTask = 0x8056E35Cu;   // GetFixedUpdateTask()'s instance
+    if (RuntimeConfigFile::ModAllCaptains()) {
+        if (const uint32_t game = Memory::Read32(FrameMods::kGamePtr)) {
+            const uint32_t savedLr = ctx->lr;
+            ctx->gpr[3] = game;
+            ctx->gpr[4] = 1;  // kickoff
+            InvokeIndirectCpu(kChangeGameState, ctx);
+            ctx->lr = savedLr;
+            Memory::Write8(kFixedUpdateTask + 0x38, 1);
+            return;
+        }
+    }
+    ctx->gpr[4] = kGameBeginName;
+    ctx->gpr[5] = ctx->gpr[13] - 17472;  // "" (small data)
+    InvokeIndirectCpu(kPresentationCall, ctx);
+}
+PPC_NATIVE_OVERRIDE_VOID(80286288, MSC_PresentationPlayGameBegin_80286288, (CpuContext* ctx), (ctx));
+
+// void NisPlayer::fn_8028041C(const char* nis, const char* side, NisTarget target,
+//     NisUseStadiumOffset useStadiumOffset, NisWinnerType winnerType, bool mirrored, int param6)
+// Plays a cutscene's optional sidekick companion, "<nis>_<sidekick>_same/other.nis" (goal, outraged
+// and defeated scenes), when the disc has one for the chosen sidekick. With the captain-only teams
+// mod there are no sidekicks on the pitch, and a companion waited forever for its missing actor
+// (the game hung after a goal), so they are skipped. Otherwise as the original.
+extern "C" void MSC_NisPlayCompanion_8028041C(CpuContext* ctx)
+{
+    if (RuntimeConfigFile::ModAllCaptains()) return;
+    constexpr uint32_t kGetTargetFilter = 0x8027F9D4u;  // NisPlayer::GetTargetFilter(NisTarget, NisWinnerType)
+    constexpr uint32_t kPlayNis = 0x802805B4u;          // NisPlayer::fn_802805B4(NisHeader&, ...)
+    constexpr uint32_t kDictSize = 0x30, kDict = 0x34, kHeaderSize = 0x1A0, kHeaderMirrored = 0x195;
+    const uint32_t self = ctx->gpr[3], nis = ctx->gpr[4], side = ctx->gpr[5], target = ctx->gpr[6];
+    const uint32_t useStadiumOffset = ctx->gpr[7], winnerType = ctx->gpr[8], mirrored = ctx->gpr[9] & 0xFF;
+    const uint32_t param6 = ctx->gpr[10];
+    const auto readString = [](uint32_t at, size_t max) {
+        std::string out;
+        for (uint32_t i = 0; at != 0 && i < max; ++i) {
+            const char c = static_cast<char>(Memory::Read8(at + i));
+            if (c == 0) break;
+            out.push_back(c);
+        }
+        return out;
+    };
+    std::string name = readString(nis, 63);
+    name = name.substr(0, name.find('.'));  // base name, up to the extension
+    const uint32_t savedLr = ctx->lr;
+    ctx->gpr[3] = self;
+    ctx->gpr[4] = target;
+    ctx->gpr[5] = winnerType;
+    InvokeIndirectCpu(kGetTargetFilter, ctx);
+    name += "_" + readString(ctx->gpr[3], 63) + "_" + readString(side, 63) + ".nis";  // "%s_%s_%s.nis"
+    if (name.size() > 63) name.resize(63);
+    const uint32_t count = Memory::Read32(self + kDictSize);
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t header = self + kDict + i * kHeaderSize;
+        if (readString(header, 64) != name) continue;
+        Memory::Write8(header + kHeaderMirrored, static_cast<uint8_t>(mirrored));
+        ctx->gpr[3] = self;
+        ctx->gpr[4] = header;
+        ctx->gpr[5] = target;
+        ctx->gpr[6] = useStadiumOffset;
+        ctx->gpr[7] = winnerType;
+        ctx->gpr[8] = param6;
+        ctx->gpr[9] = 1;
+        InvokeIndirectCpu(kPlayNis, ctx);
+        break;
+    }
+    ctx->lr = savedLr;
+}
+PPC_NATIVE_OVERRIDE_VOID(8028041C, MSC_NisPlayCompanion_8028041C, (CpuContext* ctx), (ctx));
+
+// bool Nis::IsLoading(). A cutscene that animates a character it has no animation for loads
+// "Art/Animation/<skeleton>/<anim>.sanim" (Nis::LoadCharacterAnimation); when the disc has no such
+// file, nlLoadEntireFileAsync returns no handle and never calls back, the entry stays "loading"
+// and the presentation waits for it forever. That is what froze captain-only matches at the intro
+// and after goals: sidekick cheers and walk-outs played on captains. As the original, except that
+// an entry whose load never started is dropped (its request returned to the pool) instead.
+extern "C" void MSC_NisIsLoading_80283930(CpuContext* ctx)
+{
+    constexpr uint32_t kScriptStarted = 0xBAC, kPending = 0x864, kPendingSize = 0x1C, kMaxCharacters = 10;
+    constexpr uint32_t kRequestPool = 0x8057AB80u, kPoolFreeList = 0x0C;  // SlotPool<PendingAnimationRequest>
+    const uint32_t nis = ctx->gpr[3];
+    if (Memory::Read8(nis + kScriptStarted) == 0) {
+        ctx->gpr[3] = 1;
+        return;
+    }
+    bool loading = false;
+    for (uint32_t i = 0; i < kMaxCharacters; ++i) {
+        const uint32_t entry = nis + kPending + i * kPendingSize;  // {name, characterIndex, loaded, loadHandle, data, size, request}
+        const uint32_t name = Memory::Read32(entry);
+        if (name == 0 || static_cast<int32_t>(Memory::Read32(entry + 4)) == -1 || Memory::Read8(entry + 8) != 0) continue;
+        if (Memory::Read32(entry + 12) != 0) {
+            loading = true;
+            continue;
+        }
+        static std::set<std::string> s_reported;
+        std::string anim;
+        for (uint32_t c = 0; c < 64; ++c) {
+            const char ch = static_cast<char>(Memory::Read8(name + c));
+            if (ch == 0) break;
+            anim.push_back(ch);
+        }
+        if (s_reported.insert(anim).second) {
+            RT_LOGF(RT_TAG_HLE, "Cutscene animation %s is not on the disc for character %d: skipped\n", anim.c_str(),
+                    static_cast<int32_t>(Memory::Read32(entry + 4)));
+        }
+        if (const uint32_t request = Memory::Read32(entry + 24)) {
+            Memory::Write8(request + 4, 0);  // inactive
+            Memory::Write32(request, Memory::Read32(kRequestPool + kPoolFreeList));
+            Memory::Write32(kRequestPool + kPoolFreeList, request);
+        }
+        Memory::Write32(entry, 0);
+        Memory::Write32(entry + 4, 0xFFFFFFFFu);
+        Memory::Write32(entry + 24, 0);
+    }
+    ctx->gpr[3] = loading ? 1u : 0u;
+}
+PPC_NATIVE_OVERRIDE_VOID(80283930, MSC_NisIsLoading_80283930, (CpuContext* ctx), (ctx));
+
+// Mixed captain teams. With the captain-only teams mod the developers' "/user/allcaptains" switch
+// fills every sidekick slot with the team's captain and flags those entries as captains; these two
+// CharacterLoader functions then swap in the captains picked in F10 for each slot. Everything a
+// character loads comes from its entry (model, textures, animations, INI, effects), so a Yoshi in
+// Wario's team loads as Yoshi.
+namespace CaptainTeams {
+constexpr uint32_t kEntrySize = 0x14;  // CharacterLoader_8056B290::Entry
+constexpr uint32_t kEntryTeam = 0x00, kEntryPlayer = 0x08, kEntryClass = 0x0C, kEntryCaptain = 0x10,
+                   kEntryGoalie = 0x11, kEntrySidekick = 0x12;
+constexpr uint32_t kCurrentIndex = 0xC8, kCurrent = 0xCC, kTemplate = 0xD0, kTemplateInfo = 0xD4, kSidekicks = 0xE0;
+constexpr uint32_t kAudioRequestCount = 0x180;
+
+void ApplyRoster(uint32_t loader)
+{
+    for (uint32_t i = 0; i < 10; ++i) {
+        const uint32_t entry = loader + i * kEntrySize;
+        const uint32_t player = Memory::Read32(entry + kEntryPlayer);
+        if (Memory::Read8(entry + kEntryGoalie) != 0 || player < 1 || player > 3) continue;
+        const uint32_t side = Memory::Read32(entry + kEntryTeam) & 1;
+        const int pick = RuntimeConfigFile::ModCaptainTeammates(static_cast<int>(side))[player - 1];
+        if (pick < 0) continue;  // the team's own captain (the switch already put it there)
+        // A captain, flagged as one; or a partner (character 12-19), as the loader makes a partner's entry.
+        const bool sidekick = pick >= 12;
+        Memory::Write32(entry + kEntryClass, static_cast<uint32_t>(pick));
+        Memory::Write8(entry + kEntryCaptain, sidekick ? 0 : 1);
+        Memory::Write8(entry + kEntrySidekick, sidekick ? 1 : 0);
+        Memory::Write32(loader + kSidekicks + (side * 3 + player - 1) * 4, static_cast<uint32_t>(pick));
+    }
+}
+} // namespace CaptainTeams
+
+// bool CharacterLoader_8056B290::fn_80009EFC(): moves to the next character entry. As the original;
+// before the first entry, the captain-only teams roster is applied.
+extern "C" void MSC_CharacterLoaderNextEntry_80009EFC(CpuContext* ctx)
+{
+    using namespace CaptainTeams;
+    const uint32_t loader = ctx->gpr[3];
+    const int32_t index = static_cast<int32_t>(Memory::Read32(loader + kCurrentIndex)) + 1;
+    Memory::Write32(loader + kCurrentIndex, static_cast<uint32_t>(index));
+    if (index == 0 && RuntimeConfigFile::ModAllCaptains()) ApplyRoster(loader);
+    const bool more = index < 10;
+    Memory::Write32(loader + kCurrent, more ? loader + static_cast<uint32_t>(index) * kEntrySize : 0);
+    Memory::Write32(loader + kTemplate, 0);
+    Memory::Write32(loader + kTemplateInfo, 0);
+    ctx->gpr[3] = more ? 1u : 0u;
+}
+PPC_NATIVE_OVERRIDE_VOID(80009EFC, MSC_CharacterLoaderNextEntry_80009EFC, (CpuContext* ctx), (ctx));
+
+// void CharacterLoader_8056B290::fn_8000C130(): loads a captain's voice bank into the team's captain
+// slot (1 home, 5 away). As the original, except that a captain in a sidekick slot (captain-only
+// teams) loads into that player's own slot, as a sidekick would, so the team captain keeps its voice.
+extern "C" void MSC_CharacterLoaderCaptainAudio_8000C130(CpuContext* ctx)
+{
+    using namespace CaptainTeams;
+    constexpr uint32_t kLoadSoundBank = 0x800EBB04u;   // LoadSoundBank(GameAudio*, bank, slot, cb, param)
+    constexpr uint32_t kAudioLoaded = 0x8000C0ECu;     // fn_8000C0EC
+    const uint32_t loader = ctx->gpr[3];
+    const uint32_t entry = Memory::Read32(loader + kCurrent);
+    const int32_t cc = static_cast<int32_t>(Memory::Read32(entry + kEntryClass));
+    const uint32_t info = FrameMods::kCharacterInfo + static_cast<uint32_t>(cc >= 0 && cc < 32 ? cc : 32) * 0x5C;
+    const uint32_t count = Memory::Read32(loader + kAudioRequestCount) + Memory::Read8(ctx->gpr[13] - 28528);  // + gAudioEnabled
+    Memory::Write32(loader + kAudioRequestCount, count);
+    uint32_t slot = Memory::Read32(entry + kEntryTeam) == 0 ? 1u : 5u;
+    if (RuntimeConfigFile::ModAllCaptains()) slot += Memory::Read32(entry + kEntryPlayer);  // 0 for the team captain
+    const uint32_t savedLr = ctx->lr;
+    ctx->gpr[3] = Memory::Read32(ctx->gpr[13] - 5028);  // g_pAudioSystem
+    ctx->gpr[4] = Memory::Read32(info + 0x1C);           // CharacterInfo voice bank
+    ctx->gpr[5] = slot;
+    ctx->gpr[6] = kAudioLoaded;
+    ctx->gpr[7] = count;
+    InvokeIndirectCpu(kLoadSoundBank, ctx);
+    ctx->lr = savedLr;
+}
+PPC_NATIVE_OVERRIDE_VOID(8000C130, MSC_CharacterLoaderCaptainAudio_8000C130, (CpuContext* ctx), (ctx));
 
 // Missing away-kit images. Sidekick select loads "fe/sidekick_images/{position,attributes}_<sidekick>
 // _<captain>_alt" from art/fe/sidekicksui.res whenever a captain wears the away kit, but the disc

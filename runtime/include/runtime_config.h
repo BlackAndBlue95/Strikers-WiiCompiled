@@ -108,6 +108,8 @@ struct RuntimeUserConfig {
     std::optional<bool> modShotCounter;
     std::optional<bool> modBluePeach;
     std::optional<bool> modKitChoice;
+    std::optional<bool> modAllCaptains;
+    std::optional<std::string> modCaptainTeammates[2];  // "a,b,c": character per sidekick slot, -1 = the team's captain
     std::map<std::string, std::string> controllerExpressions;
 };
 
@@ -455,6 +457,9 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.modFastStadiums = FindConfigValue<bool>(document, "mods", "fast_stadiums");
     config.modShotCounter = FindConfigValue<bool>(document, "mods", "shot_counter");
     config.modBluePeach = FindConfigValue<bool>(document, "mods", "blue_peach");
+    config.modAllCaptains = FindConfigValue<bool>(document, "mods", "all_captains");
+    config.modCaptainTeammates[0] = FindConfigValue<std::string>(document, "mods", "captain_teammates_home");
+    config.modCaptainTeammates[1] = FindConfigValue<std::string>(document, "mods", "captain_teammates_away");
     config.modKitChoice = FindConfigValue<bool>(document, "mods", "kit_choice");
     if (auto value = FindConfigInt(document, "audio", "mute_key")) {
         config.muteHotkey = *value;
@@ -800,6 +805,34 @@ inline bool ModKitChoice() { return Get().modKitChoice.value_or(true); }
 inline bool SetModKitChoice(bool value) {
     Mutable().modKitChoice = value;
     return WriteSetting("mods", "kit_choice", value ? "true" : "false");
+}
+inline bool ModAllCaptains() { return Get().modAllCaptains.value_or(false); }
+inline bool SetModAllCaptains(bool value) {
+    Mutable().modAllCaptains = value;
+    return WriteSetting("mods", "all_captains", value ? "true" : "false");
+}
+// Captain-only teams: the character in each sidekick slot of a side (0 home, 1 away): a captain
+// (0-11) or a partner (12-19, CharacterInfo order), -1 = the team's own captain.
+inline std::array<int, 3> ModCaptainTeammates(int side) {
+    std::array<int, 3> slots{-1, -1, -1};
+    const std::string text = Get().modCaptainTeammates[side & 1].value_or("");
+    size_t pos = 0;
+    for (int& slot : slots) {
+        if (pos > text.size()) break;
+        const size_t comma = text.find(',', pos);
+        const std::string item = text.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
+        char* end = nullptr;
+        const long value = std::strtol(item.c_str(), &end, 10);
+        if (end != item.c_str() && value >= 0 && value <= 19) slot = static_cast<int>(value);  // captains 0-11, partners 12-19
+        if (comma == std::string::npos) break;
+        pos = comma + 1;
+    }
+    return slots;
+}
+inline bool SetModCaptainTeammates(int side, const std::array<int, 3>& slots) {
+    const std::string text = std::to_string(slots[0]) + "," + std::to_string(slots[1]) + "," + std::to_string(slots[2]);
+    Mutable().modCaptainTeammates[side & 1] = text;
+    return WriteSetting("mods", side == 0 ? "captain_teammates_home" : "captain_teammates_away", FormatString(text));
 }
 inline bool ModBluePeach() { return Get().modBluePeach.value_or(false); }
 inline bool SetModBluePeach(bool value) {
