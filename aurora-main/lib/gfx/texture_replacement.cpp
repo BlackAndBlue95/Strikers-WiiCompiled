@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <cstring>
 #include <filesystem>
@@ -68,6 +69,9 @@ struct ReplacementIndexEntry {
 };
 
 absl::flat_hash_map<RuntimeTextureKey, ReplacementIndexEntry> s_replacementIndex;
+// For the settings UI, which reads them from another thread.
+std::atomic<uint32_t> s_indexedCount{0};
+std::atomic<uint32_t> s_dumpedCount{0};
 absl::flat_hash_map<RuntimeTextureKey, CachedReplacement> s_replacementCache;
 absl::flat_hash_set<RuntimeTextureKey> s_failedKeys;
 absl::flat_hash_set<RuntimeTextureKey> s_reportedMisses;
@@ -563,6 +567,7 @@ void build_index() noexcept {
   }
 
   Log.info("Indexed {} texture replacements", s_replacementIndex.size());
+  s_indexedCount.store(static_cast<uint32_t>(s_replacementIndex.size()), std::memory_order_relaxed);
 }
 
 const ReplacementIndexEntry* find_replacement_path(const RuntimeTextureKey& key) noexcept {
@@ -678,8 +683,8 @@ bool report_missing_key(const RuntimeTextureKey& key, const GXTexObj_& obj) noex
     return false;
   }
 
-  if (g_config.allowTextureDumps) {
-    dump_editable_texture_dds(key, obj);
+  if (g_config.allowTextureDumps && dump_editable_texture_dds(key, obj)) {
+    s_dumpedCount.fetch_add(1, std::memory_order_relaxed);
   }
   return true;
 }
@@ -804,3 +809,10 @@ std::string build_texture_replacement_name(const GXTexObj_& obj) noexcept {
 }
 
 } // namespace aurora::gfx::texture_replacement
+
+uint32_t aurora_get_texture_replacement_count() {
+  return aurora::gfx::texture_replacement::s_indexedCount.load(std::memory_order_relaxed);
+}
+uint32_t aurora_get_texture_dump_count() {
+  return aurora::gfx::texture_replacement::s_dumpedCount.load(std::memory_order_relaxed);
+}

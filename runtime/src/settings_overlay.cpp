@@ -29,6 +29,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <limits>
 #include <iostream>
 #include <string>
@@ -1042,6 +1043,24 @@ void DrawRumbleAndPointerSettings() {
     }
 }
 
+// Shows a folder in the system's file browser (as a file:// URL: forward slashes, a leading one
+// before a drive letter, the rest percent-escaped).
+void OpenFolder(std::string path) {
+    std::replace(path.begin(), path.end(), '\\', '/');
+    if (path.empty() || path[0] != '/') path.insert(0, "/");
+    std::string url = "file://";
+    for (const unsigned char c : path) {
+        if (std::isalnum(c) || c == '/' || c == ':' || c == '-' || c == '_' || c == '.' || c == '~') {
+            url += static_cast<char>(c);
+        } else {
+            char escaped[4];
+            std::snprintf(escaped, sizeof(escaped), "%%%02X", c);
+            url += escaped;
+        }
+    }
+    SDL_OpenURL(url.c_str());
+}
+
 // F10 > Mods: the installed mod packages (runtime/src/mods). Switches are saved to Config.toml and
 // apply on the next launch: the disc file table is built once, at boot.
 void DrawModPackages() {
@@ -1091,22 +1110,7 @@ void DrawModPackages() {
         ImGui::Separator();
     }
     if (Mods::RestartRequired()) ImGui::TextColored(warningColour, "Restart the game to apply these changes.");
-    if (ImGui::Button("Open the mods folder")) {
-        std::string path = dir;  // a file:// URL: forward slashes, a leading one before a drive letter
-        std::replace(path.begin(), path.end(), '\\', '/');
-        if (path.empty() || path[0] != '/') path.insert(0, "/");
-        std::string url = "file://";
-        for (const unsigned char c : path) {
-            if (std::isalnum(c) || c == '/' || c == ':' || c == '-' || c == '_' || c == '.' || c == '~') {
-                url += static_cast<char>(c);
-            } else {
-                char escaped[4];
-                std::snprintf(escaped, sizeof(escaped), "%%%02X", c);
-                url += escaped;
-            }
-        }
-        SDL_OpenURL(url.c_str());
-    }
+    if (ImGui::Button("Open the mods folder")) OpenFolder(dir);
     ImGui::PopTextWrapPos();
 }
 
@@ -1200,6 +1204,42 @@ void DrawModSettings() {
                         "DryTerrain surface). Takes effect from the next match when turned off.");
 }
 
+// Dolphin-style custom textures (aurora's texture_replacement.cpp): the renderer indexes the folder
+// once, at startup, so changes apply on the next launch.
+const bool g_customTexturesAtLaunch = RuntimeConfigFile::TextureReplacements(false);
+const bool g_textureDumpsAtLaunch = g_customTexturesAtLaunch && RuntimeConfigFile::TextureDumps(false);
+
+void DrawCustomTextureSettings() {
+    ImGui::SeparatorText("Custom textures");
+    bool customTextures = RuntimeConfigFile::TextureReplacements(false);
+    if (ImGui::Checkbox("Custom textures", &customTextures)) RuntimeConfigFile::SetTextureReplacements(customTextures);
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
+    ImGui::TextDisabled("Dolphin texture packs for this game (R4QE01): put the pack's files, folders and all, in "
+                        "the custom textures folder.");
+    ImGui::PopTextWrapPos();
+    ImGui::BeginDisabled(!customTextures);
+    bool dumpTextures = RuntimeConfigFile::TextureDumps(false);
+    if (ImGui::Checkbox("Dump textures", &dumpTextures)) RuntimeConfigFile::SetTextureDumps(dumpTextures);
+    ImGui::EndDisabled();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
+    ImGui::TextDisabled("Saves each texture the game shows that has no replacement yet, named as its replacement "
+                        "must be, to the dumps folder: edit one and put it in the custom textures folder.");
+    ImGui::PopTextWrapPos();
+    if (g_customTexturesAtLaunch) ImGui::Text("%u custom textures found", aurora_get_texture_replacement_count());
+    if (g_textureDumpsAtLaunch) ImGui::Text("%u textures dumped", aurora_get_texture_dump_count());
+    if (customTextures != g_customTexturesAtLaunch || (customTextures && dumpTextures) != g_textureDumpsAtLaunch)
+        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f), "Restart the game to apply.");
+    const auto openFolder = [](const std::filesystem::path& folder) {
+        std::error_code error;
+        std::filesystem::create_directories(folder, error);
+        OpenFolder(RuntimeConfigFile::PathToUtf8(folder));
+    };
+    const std::filesystem::path data = RuntimeConfigFile::ApplicationDataDirectory();
+    if (ImGui::Button("Open the custom textures folder")) openFolder(data / "texture_replacements");
+    ImGui::SameLine();
+    if (ImGui::Button("Open the dumps folder")) openFolder(data / "Cache" / "texture_dumps");
+}
+
 void DrawGraphicsSettings() {
     g_displayMode = static_cast<int>(aurora_get_display_mode());
     if (ImGui::Checkbox("Force 16:9", &g_forceAspect169)) {
@@ -1274,6 +1314,7 @@ void DrawGraphicsSettings() {
     if (ImGui::Checkbox("Show FPS", &g_showFps)) {
         RuntimeConfigFile::SetShowFps(g_showFps);
     }
+    DrawCustomTextureSettings();
     ImGui::Separator();
     ImGui::Text("Graphics API: %s", GraphicsApiDisplayName());
 }

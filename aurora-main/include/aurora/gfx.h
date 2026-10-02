@@ -87,6 +87,11 @@ bool aurora_get_disable_copy_filter();
 void aurora_set_scaled_efb_copies(bool scaled);
 bool aurora_get_scaled_efb_copies();
 
+// Dolphin-style custom textures (AuroraConfig::allowTextureReplacements / allowTextureDumps): how many
+// replacements were indexed at startup, and how many textures have been dumped since.
+uint32_t aurora_get_texture_replacement_count();
+uint32_t aurora_get_texture_dump_count();
+
 // Guest-RAM write tracking. `generation` changes whenever guest RAM covering a host range was
 // written (or returns AURORA_GUEST_WRITE_UNTRACKED); `notify` reports writes aurora made itself.
 #define AURORA_GUEST_WRITE_UNTRACKED UINT64_MAX

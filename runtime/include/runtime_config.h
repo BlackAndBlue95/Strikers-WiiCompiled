@@ -1091,6 +1091,16 @@ inline bool TextureDumps(bool fallback = false) {
     return Get().textureDumps.value_or(fallback);
 }
 
+// Both apply on the next launch: the renderer indexes the folder once, at startup.
+inline bool SetTextureReplacements(bool value) {
+    Mutable().textureReplacements = value;
+    return WriteSetting("video", "texture_replacements", value ? "true" : "false");
+}
+inline bool SetTextureDumps(bool value) {
+    Mutable().textureDumps = value;
+    return WriteSetting("video", "texture_dumps", value ? "true" : "false");
+}
+
 inline std::string GraphicsApi(std::string fallback = "auto") {
     return Get().graphicsApi.value_or(std::move(fallback));
 }
