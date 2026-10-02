@@ -1130,7 +1130,8 @@ void DrawModSettings() {
     }
     ImGui::TextDisabled("Captains can be teammates (a switch the developers left in the game). On the\n"
                         "sidekick screen, pick a slot then a captain from the grid; - and + switch to\n"
-                        "the sidekicks, so teams can mix both.");
+                        "the sidekicks, so teams can mix both. On captain select, - and + let a sidekick\n"
+                        "lead a team in a captain's colours (X/Y cycle them).");
     bool bluePeach = RuntimeConfigFile::ModBluePeach();
     if (ImGui::Checkbox("Blue Peach against red teams", &bluePeach)) {
         RuntimeConfigFile::SetModBluePeach(bluePeach);

@@ -110,7 +110,8 @@ struct RuntimeUserConfig {
     std::optional<bool> modKitChoice;
     std::optional<bool> modAllCaptains;
     std::optional<bool> modFastMenus;
-    std::optional<std::string> modCaptainTeammates[2];  // "a,b,c": character per sidekick slot, -1 = the team's captain
+    std::optional<std::string> modCaptainTeammates[2];  // "a,b,c": character per sidekick slot, -1 = the team's leader
+    std::optional<int> modCaptainSpot[2];  // character in the captain spot: a partner (12-19), -1 = the captain
     std::map<std::string, std::string> controllerExpressions;
 };
 
@@ -462,6 +463,8 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.modFastMenus = FindConfigValue<bool>(document, "mods", "fast_menus");
     config.modCaptainTeammates[0] = FindConfigValue<std::string>(document, "mods", "captain_teammates_home");
     config.modCaptainTeammates[1] = FindConfigValue<std::string>(document, "mods", "captain_teammates_away");
+    if (auto value = FindConfigInt(document, "mods", "captain_spot_home")) config.modCaptainSpot[0] = static_cast<int>(*value);
+    if (auto value = FindConfigInt(document, "mods", "captain_spot_away")) config.modCaptainSpot[1] = static_cast<int>(*value);
     config.modKitChoice = FindConfigValue<bool>(document, "mods", "kit_choice");
     if (auto value = FindConfigInt(document, "audio", "mute_key")) {
         config.muteHotkey = *value;
@@ -819,7 +822,8 @@ inline bool SetModAllCaptains(bool value) {
     return WriteSetting("mods", "all_captains", value ? "true" : "false");
 }
 // Captain-only teams: the character in each sidekick slot of a side (0 home, 1 away): a captain
-// (0-11) or a partner (12-19, CharacterInfo order), -1 = the team's own captain.
+// (0-11) or a partner (12-19, CharacterInfo order), -1 = the team's leader (its captain, or the
+// partner in its captain spot).
 inline std::array<int, 3> ModCaptainTeammates(int side) {
     std::array<int, 3> slots{-1, -1, -1};
     const std::string text = Get().modCaptainTeammates[side & 1].value_or("");
@@ -835,6 +839,16 @@ inline std::array<int, 3> ModCaptainTeammates(int side) {
         pos = comma + 1;
     }
     return slots;
+}
+// Captain-only teams: a partner (12-19) playing in a side's captain spot, the team keeping its
+// captain's colours, banners and goalie; -1 = the captain plays.
+inline int ModCaptainSpot(int side) {
+    const int value = Get().modCaptainSpot[side & 1].value_or(-1);
+    return value >= 12 && value <= 19 ? value : -1;
+}
+inline bool SetModCaptainSpot(int side, int character) {
+    Mutable().modCaptainSpot[side & 1] = character;
+    return WriteSetting("mods", side == 0 ? "captain_spot_home" : "captain_spot_away", std::to_string(character));
 }
 inline bool SetModCaptainTeammates(int side, const std::array<int, 3>& slots) {
     const std::string text = std::to_string(slots[0]) + "," + std::to_string(slots[1]) + "," + std::to_string(slots[2]);

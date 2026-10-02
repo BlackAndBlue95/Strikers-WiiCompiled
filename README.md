@@ -135,8 +135,11 @@ The same menu has fixes and extras, several taken from the community's
   the game. On the sidekick screen, pick a slot and captain select's grid comes up under the team
   boards: pick a captain. **-** and **+** (**L/R** on a controller) switch to the sidekicks, so a
   team can mix both (say Waluigi, Waluigi, Boo and Boo). **Default** makes every slot the team's
-  captain and **Random** picks at random from whichever grid is showing. Teams are kept for next
-  time. The match intro is skipped with this on.
+  captain and **Random** picks at random from whichever grid is showing. On captain select,
+  **-** and **+** switch the grid to the sidekicks too, so a sidekick can lead a team: it wears a
+  captain's colours, banners, logo and goalie (Mario at home and Luigi away to start; **X/Y** or
+  **L/R** cycle them once both teams are picked), for a team of four Boos in Yoshi green. Teams are
+  kept for next time. The match intro is skipped with this on.
 - **Blue Peach against red teams** (off): Peach wears her blue kit against red captains.
 - **Shot counter on the results screen** (off): the Mega Strike row shows white and yellow shots /
   red and orange shots instead.
