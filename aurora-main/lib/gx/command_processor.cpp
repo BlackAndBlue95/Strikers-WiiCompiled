@@ -1804,6 +1804,10 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
             if (srcRow < 13) {
               tcg.src = rowToSrc[srcRow];
             }
+            // Colour texgens name their channel in the type (2: COLOR0, 3: COLOR1); the row is 2 for both.
+            if (tgType == 2 || tgType == 3) {
+              tcg.src = tgType == 2 ? GX_TG_COLOR0 : GX_TG_COLOR1;
+            }
             mark_pipeline_state_dirty();
           }
         } else if (reg >= 0x50 && reg <= 0x5F) {

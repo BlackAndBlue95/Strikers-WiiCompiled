@@ -1187,6 +1187,11 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
     } else if (tcg.src == GX_TG_TANGENT) {
       // GX source row 4 is Dolphin's binormal group in NBT normal arrays.
       vtxXfrAttrs += fmt::format("\n    var tc{} = vec4f({}, 1.0);", i, normal_group_load(config, 2, vidxAttr));
+    } else if (tcg.type == GX_TG_SRTG && (tcg.src == GX_TG_COLOR0 || tcg.src == GX_TG_COLOR1)) {
+      // The channel's lit colour (computed above, per vertex), as the hardware and Dolphin use it, not
+      // the raw vertex colour: s = red, t = green. Lighting is per vertex here (UsePerPixelLighting).
+      static_assert(!UsePerPixelLighting, "a colour texgen needs per-vertex lighting results");
+      vtxXfrAttrs += fmt::format("\n    var tc{} = vec4f(out.cc{}.rgb, 1.0);", i, tcg.src == GX_TG_COLOR1 ? 1 : 0);
     } else if (tcg.src == GX_TG_COLOR0) {
       vtxXfrAttrs += fmt::format("\n    var tc{} = vec4f({}.rgb, 1.0);", i, vtx_attr(config, GX_VA_CLR0));
     } else if (tcg.src == GX_TG_COLOR1) {

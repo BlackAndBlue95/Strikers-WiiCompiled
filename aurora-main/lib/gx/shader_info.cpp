@@ -375,6 +375,14 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
     }
   }
 
+  // A colour texgen (GX_TG_SRTG: a light-ramp lookup) reads its channel's lit colour, so that channel's
+  // lighting is computed even when no TEV stage rasterizes it.
+  for (int i = 0; i < info.sampledTexCoords.size(); ++i) {
+    if (info.sampledTexCoords.test(i) && config.tcgs[i].type == GX_TG_SRTG) {
+      info.sampledColorChannels.set(config.tcgs[i].src == GX_TG_COLOR1 ? 1 : 0);
+    }
+  }
+
   const auto loadsTevRegs = info.loadsTevRegRgb | info.loadsTevRegAlpha;
   info.uniformSize += loadsTevRegs.count() * sizeof(Vec4<float>);
   for (int i = 0; i < info.sampledColorChannels.size(); ++i) {
