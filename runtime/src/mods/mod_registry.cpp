@@ -248,13 +248,16 @@ void Load() {
         package.pluginSetting = RuntimeConfigFile::ModPluginEnabled(package.id).value_or(false);
     }
     // Character names are one namespace across the active packages (they name files and textures).
+    // A package claims its names all or nothing: one rejected over a clash keeps none of them, so it
+    // can't block a later package.
     std::map<std::string, std::string> owners;
     for (Package& package : g_packages) {
         if (!package.enabledSetting || !package.errors.empty()) continue;
-        for (const CharacterDef& c : package.characters) {
-            const auto [it, added] = owners.emplace(c.name, package.id);
-            if (!added) package.errors.push_back("character \"" + c.name + "\" is already added by " + it->second);
-        }
+        for (const CharacterDef& c : package.characters)
+            if (const auto it = owners.find(c.name); it != owners.end())
+                package.errors.push_back("character \"" + c.name + "\" is already added by " + it->second);
+        if (!package.errors.empty()) continue;
+        for (const CharacterDef& c : package.characters) owners.emplace(c.name, package.id);
     }
     for (Package& package : g_packages) {
         package.active = package.enabledSetting && package.errors.empty();

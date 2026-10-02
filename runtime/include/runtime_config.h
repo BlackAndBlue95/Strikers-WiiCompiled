@@ -601,14 +601,24 @@ inline const std::optional<std::string>& ControllerButton(size_t index) {
 // user-specific paths. This is used by the in-game F10 settings bar.
 inline bool WriteSetting(std::string_view section, std::string_view key, std::string_view value) {
     const auto path = ResolveConfigPath();
-    std::ifstream input(path);
     std::vector<std::string> lines;
-    std::string line;
-    while (std::getline(input, line)) {
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
+    std::error_code existsError;
+    if (std::filesystem::exists(path, existsError)) {
+        // A file that's there but can't be read is not an empty one: rewriting it from nothing
+        // would throw away every other setting.
+        std::ifstream input(path);
+        std::string line;
+        while (input && std::getline(input, line)) {
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
+            lines.push_back(std::move(line));
         }
-        lines.push_back(std::move(line));
+        if (!input.eof()) {
+            std::cerr << "[runtime-config] Unable to read " << PathToUtf8(path) << "; not saving "
+                      << key << std::endl;
+            return false;
+        }
     }
 
     const std::string normalizedSection = Trim(section);
@@ -659,19 +669,34 @@ inline bool WriteSetting(std::string_view section, std::string_view key, std::st
         }
     }
 
+    // Written beside the file and renamed over it, so a crash or a full disk mid-write leaves the
+    // old file whole rather than a truncated one.
     std::error_code ec;
     if (path.has_parent_path()) {
         std::filesystem::create_directories(path.parent_path(), ec);
     }
-    std::ofstream output(path, std::ios::trunc);
-    if (!output) {
-        std::cerr << "[runtime-config] Unable to write " << PathToUtf8(path) << std::endl;
+    std::filesystem::path temporary = path;
+    temporary += ".tmp";
+    {
+        std::ofstream output(temporary, std::ios::trunc);
+        for (const auto& outputLine : lines) {
+            output << outputLine << '\n';
+        }
+        output.close();
+        if (!output) {
+            std::cerr << "[runtime-config] Unable to write " << PathToUtf8(temporary) << std::endl;
+            std::filesystem::remove(temporary, ec);
+            return false;
+        }
+    }
+    std::filesystem::rename(temporary, path, ec);
+    if (ec) {
+        std::cerr << "[runtime-config] Unable to replace " << PathToUtf8(path) << ": " << ec.message()
+                  << std::endl;
+        std::filesystem::remove(temporary, ec);
         return false;
     }
-    for (const auto& outputLine : lines) {
-        output << outputLine << '\n';
-    }
-    return static_cast<bool>(output);
+    return true;
 }
 
 inline std::string FormatString(std::string_view value) {

@@ -37,18 +37,26 @@ void AudioBackend::SetMuted(bool muted) {
 }
 
 bool AudioBackend::EnsureInitializedLocked(uint32_t sampleRate, uint32_t channels) {
-    if (m_initialized && m_sampleRate == sampleRate && m_channels == channels) {
+    if (m_stream && m_sampleRate == sampleRate && m_channels == channels) {
         return true;
     }
 
+    // A format change replaces the stream; until the new one opens there is none, so a failed
+    // switch can't leave the old format looking ready.
     if (m_stream) {
         SDL_DestroyAudioStream(m_stream);
         m_stream = nullptr;
     }
+    m_sampleRate = 0;
+    m_channels = 0;
 
-    if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
-        RT_LOG(RT_TAG_AUDIO) << "SDL_InitSubSystem(SDL_INIT_AUDIO) failed: " << SDL_GetError() << std::endl;
-        return false;
+    // The audio subsystem is initialized once here and quit once in Shutdown.
+    if (!m_initialized) {
+        if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+            RT_LOG(RT_TAG_AUDIO) << "SDL_InitSubSystem(SDL_INIT_AUDIO) failed: " << SDL_GetError() << std::endl;
+            return false;
+        }
+        m_initialized = true;
     }
 
     SDL_AudioSpec spec{};
@@ -78,7 +86,6 @@ bool AudioBackend::EnsureInitializedLocked(uint32_t sampleRate, uint32_t channel
     m_spec = spec;
     m_sampleRate = sampleRate;
     m_channels = channels;
-    m_initialized = true;
     return true;
 }
 

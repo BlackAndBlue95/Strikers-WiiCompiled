@@ -301,11 +301,18 @@ static void LoadFstIndex() {
             break;
         }
 
+        // A name runs to its NUL, which must lie inside the table.
         const char* namePtr = reinterpret_cast<const char*>(&data[stringBase + nameOffset]);
-        std::string name(namePtr);
+        const size_t nameRoom = data.size() - (stringBase + nameOffset);
+        const size_t nameLength = strnlen(namePtr, nameRoom);
+        if (nameLength == nameRoom) {
+            break;
+        }
+        std::string name(namePtr, nameLength);
 
         if (type != 0) {
-            const uint32_t nextIndex = BigEndian::Read32(&data[entryOff + 8]);
+            // A directory can't outlast its parent.
+            const uint32_t nextIndex = std::min(BigEndian::Read32(&data[entryOff + 8]), stack.back().endIndex);
             std::string dirPath = stack.back().path;
             if (!dirPath.empty()) {
                 dirPath += "/";
@@ -1195,6 +1202,8 @@ extern "C" int32_t DVDLowInquiry_8039C4D0(uint32_t cmdBlockPtr, uint32_t callbac
     if (cmdBlockPtr) {
         Memory::Write32(cmdBlockPtr + DVD_CB_OFFSET_STATE, DVD_STATE_END);
     }
+    // Completes at once, like DVDLowRead: a caller waiting on the callback would never resume.
+    InvokeDvdLowCallback(callback, DvdReadContract::CompletionFor(true).callbackResult);
     CompleteDvdCancelState();
 
     return 1; // Return 1 to indicate the command was successfully issued.
@@ -1208,6 +1217,7 @@ extern "C" int32_t DVDLowReadDiskID_8039BC54(uint32_t diskIdPtr, uint32_t callba
         Memory::Write16(diskIdPtr + 0x04, 0x3031);
         Memory::Write8 (diskIdPtr + 0x06, 0x01);
     }
+    InvokeDvdLowCallback(callback, DvdReadContract::CompletionFor(true).callbackResult);
     CompleteDvdCancelState();
     return 1; // Success
 }

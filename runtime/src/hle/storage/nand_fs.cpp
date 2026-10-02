@@ -343,16 +343,16 @@ static bool ExtractFromU8(const std::filesystem::path& archivePath, const char* 
         return false;
     }
 
-    const uint32_t rootOffset = BigEndian::Read32(data.data() + 0x04);
-    if (rootOffset + 0x0C > data.size()) {
+    // Offsets and sizes come from the file, so every range is checked in 64 bits.
+    const uint64_t rootOffset = BigEndian::Read32(data.data() + 0x04);
+    if (rootOffset + sizeof(U8Node) > data.size()) {
         return false;
     }
 
     const U8Node* root = reinterpret_cast<const U8Node*>(data.data() + rootOffset);
     const uint32_t nodeCount = BigEndian::Read32(reinterpret_cast<const uint8_t*>(&root->size));
-    const uint32_t nodeTableSize = nodeCount * sizeof(U8Node);
-    const uint32_t stringTableOffset = rootOffset + nodeTableSize;
-    if (stringTableOffset >= data.size()) {
+    const uint64_t stringTableOffset = rootOffset + static_cast<uint64_t>(nodeCount) * sizeof(U8Node);
+    if (nodeCount == 0 || stringTableOffset >= data.size()) {
         return false;
     }
 
@@ -379,18 +379,27 @@ static bool ExtractFromU8(const std::filesystem::path& archivePath, const char* 
             return false;
         }
 
-        const char* name = reinterpret_cast<const char*>(data.data() + stringTableOffset + nameOffset);
+        // A name runs to its NUL, which must lie inside the file.
+        const char* namePtr = reinterpret_cast<const char*>(data.data() + stringTableOffset + nameOffset);
+        const size_t nameRoom = data.size() - static_cast<size_t>(stringTableOffset + nameOffset);
+        const size_t nameLength = strnlen(namePtr, nameRoom);
+        if (nameLength == nameRoom) {
+            return false;
+        }
+        const std::string name(namePtr, nameLength);
         const std::string fullPath = stack.back().path + name;
 
         if (isDir) {
-            const uint32_t endIndex = BigEndian::Read32(reinterpret_cast<const uint8_t*>(&node->size));
+            // A directory can't outlast its parent.
+            const uint32_t endIndex =
+                std::min(BigEndian::Read32(reinterpret_cast<const uint8_t*>(&node->size)), stack.back().endIndex);
             stack.push_back({fullPath + "/", endIndex});
             continue;
         }
 
-        if (fullPath == targetName || std::strcmp(name, targetName) == 0) {
-            const uint32_t fileOffset = BigEndian::Read32(reinterpret_cast<const uint8_t*>(&node->dataOffset));
-            const uint32_t fileSize = BigEndian::Read32(reinterpret_cast<const uint8_t*>(&node->size));
+        if (fullPath == targetName || name == targetName) {
+            const uint64_t fileOffset = BigEndian::Read32(reinterpret_cast<const uint8_t*>(&node->dataOffset));
+            const uint64_t fileSize = BigEndian::Read32(reinterpret_cast<const uint8_t*>(&node->size));
             if (fileOffset + fileSize > data.size()) {
                 return false;
             }

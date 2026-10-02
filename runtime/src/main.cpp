@@ -1164,6 +1164,10 @@ void PosixMemoryFaultHandler(int sig, siginfo_t* info, void* ucontextVoid) {
         std::_Exit(EXIT_FAILURE);
     }
 
+    // Nothing from here on is async-signal-safe: if the fault left a lock held (the allocator's, a
+    // log stream's), writing the reports can deadlock. A watchdog ends the process if they stall;
+    // it's disarmed before the popup, which waits for the player.
+    alarm(15);
     ReportUnhandledSignalFault(sig, faultAddress);
     std::ostringstream popupDetails;
     popupDetails << "A native signal (" << sig << ") occurred";
@@ -1177,7 +1181,6 @@ void PosixMemoryFaultHandler(int sig, siginfo_t* info, void* ucontextVoid) {
     }
     popupDetails << ".\n\nThe process transcript and crash log contain the full CPU and stack "
                     "diagnostics.";
-    ShowRuntimeFatalPopup("a native crash occurred", popupDetails.str());
     DumpHostStackTrace();
     WriteFatalLogImpl(sig == SIGBUS ? "sigbus" : "sigsegv");
 
@@ -1185,6 +1188,8 @@ void PosixMemoryFaultHandler(int sig, siginfo_t* info, void* ucontextVoid) {
     std::cout.flush();
     std::fflush(stdout);
     std::fflush(stderr);
+    alarm(0);
+    ShowRuntimeFatalPopup("a native crash occurred", popupDetails.str());
     std::_Exit(EXIT_FAILURE);
 }
 
@@ -1317,6 +1322,8 @@ int RuntimeMain(int argc, char** argv) {
     WindowsTimerResolutionGuard timerResolutionGuard;
 #else
     InstallPosixMemoryFaultHandler();
+    // A send on a socket the peer closed reports EPIPE instead of killing the process.
+    std::signal(SIGPIPE, SIG_IGN);
 #endif
     InitializeProcessTranscript(argc, argv);
     std::signal(SIGABRT, AbortSignalHandler);

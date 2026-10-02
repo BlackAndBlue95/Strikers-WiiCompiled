@@ -75,6 +75,8 @@ typedef struct MscModApi {
     void (*write32)(uint32_t address, uint32_t value);
     void (*write_f32)(uint32_t address, float value);
     void (*read_bytes)(uint32_t address, void* out, uint32_t length);        /* raw bytes, no swapping */
+    /* Raw bytes, no swapping. Unlike the scalar writes (which behave like the game's own stores),
+       this also tells the renderer the range changed: use it to rewrite textures or display lists. */
     void (*write_bytes)(uint32_t address, const void* data, uint32_t length);
     /* A block of the game's own heap (nlMalloc), kept for the session. 0 on failure. */
     uint32_t (*alloc)(MscCpu* cpu, uint32_t size, uint32_t alignment);

@@ -145,22 +145,28 @@ int ReadReport(Remote& r, uint8_t* buf, int timeoutMs) {
 
 void HandleInput(Remote& r, const uint8_t* buf, int len);
 
-// Waits for a report of type `want`, handling everything else that arrives meanwhile.
-bool WaitFor(Remote& r, uint8_t want, uint8_t* out, int timeoutMs) {
+// Waits for a report of type `want`, handling everything else that arrives meanwhile. `out` gets the
+// report with everything past its end zeroed, and `length` (when asked for) how long it was.
+bool WaitFor(Remote& r, uint8_t want, uint8_t* out, int timeoutMs, int* length = nullptr) {
     const uint64_t deadline = SDL_GetTicks() + static_cast<uint64_t>(timeoutMs);
     uint8_t buf[kReportSize];
     while (SDL_GetTicks() < deadline) {
+        std::memset(buf, 0, sizeof(buf));
         const int n = ReadReport(r, buf, 20);
         if (n < 0) return false;
         if (n == 0) continue;
         if (buf[0] == want) {
             std::memcpy(out, buf, kReportSize);
+            if (length) *length = n;
             return true;
         }
         HandleInput(r, buf, n);
     }
     return false;
 }
+
+// An acknowledgement (0x22: buttons, the report it answers, an error code) for `report`.
+constexpr int kAckLength = 5;
 
 // Writes up to 16 bytes to the remote's register space and waits for the acknowledgement.
 bool WriteRegister(Remote& r, uint32_t addr, const uint8_t* data, uint8_t size) {
@@ -170,8 +176,9 @@ bool WriteRegister(Remote& r, uint32_t addr, const uint8_t* data, uint8_t size) 
     if (SDL_hid_write(r.device, buf, sizeof(buf)) < 0) return false;
     uint8_t ack[kReportSize];
     for (int tries = 0; tries < 4; ++tries) {
-        if (!WaitFor(r, kInAck, ack, 250)) return false;
-        if (ack[3] == kOutWriteMemory) return ack[4] == 0;
+        int n = 0;
+        if (!WaitFor(r, kInAck, ack, 250, &n)) return false;
+        if (n >= kAckLength && ack[3] == kOutWriteMemory) return ack[4] == 0;
     }
     return false;
 }
@@ -184,15 +191,27 @@ bool ReadMemory(Remote& r, uint8_t space, uint32_t addr, uint8_t* out, uint16_t 
                   static_cast<uint8_t>(addr), static_cast<uint8_t>(size >> 8), static_cast<uint8_t>(size)})) {
         return false;
     }
-    uint16_t got = 0;
+    // Done when every byte asked for has arrived. A reply outside the range (a late one for an
+    // earlier request) carries none of them, and a short report only the bytes it holds.
+    std::vector<bool> received(size, false);
+    int missing = size;
     uint8_t rep[kReportSize];
-    while (got < size) {
-        if (!WaitFor(r, kInReadData, rep, 400)) return false;
+    while (missing > 0) {
+        int n = 0;
+        if (!WaitFor(r, kInReadData, rep, 400, &n)) return false;
+        if (n < 6) continue;
         if ((rep[3] & 0x0F) != 0) return false; // error flags
-        const uint16_t chunk = static_cast<uint16_t>((rep[3] >> 4) + 1);
-        const uint16_t offset = static_cast<uint16_t>(((rep[4] << 8) | rep[5]) - (addr & 0xFFFF));
-        for (uint16_t i = 0; i < chunk && offset + i < size; ++i) out[offset + i] = rep[6 + i];
-        got = static_cast<uint16_t>(std::max<int>(got, offset + chunk));
+        const int chunk = (rep[3] >> 4) + 1;
+        const int offset = ((rep[4] << 8) | rep[5]) - static_cast<int>(addr & 0xFFFF);
+        if (offset < 0 || offset >= size) continue;
+        const int available = std::min(chunk, n - 6);
+        for (int i = 0; i < available && offset + i < size; ++i) {
+            out[offset + i] = rep[6 + i];
+            if (!received[offset + i]) {
+                received[offset + i] = true;
+                --missing;
+            }
+        }
     }
     return true;
 }
@@ -263,8 +282,9 @@ bool EnableFeature(Remote& r, uint8_t report) {
     if (!Send(r, {report, 0x06})) return false;
     uint8_t ack[kReportSize];
     for (int tries = 0; tries < 4; ++tries) {
-        if (!WaitFor(r, kInAck, ack, 250)) return false;
-        if (ack[3] == report) return ack[4] == 0;
+        int n = 0;
+        if (!WaitFor(r, kInAck, ack, 250, &n)) return false;
+        if (n >= kAckLength && ack[3] == report) return ack[4] == 0;
     }
     return false;
 }

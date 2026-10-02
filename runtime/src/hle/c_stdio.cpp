@@ -149,7 +149,7 @@ std::string RuntimeHle::FormatGuestPrintf(const std::string& fmt,
                     length.push_back('l');
                     ++cur;
                 }
-            } else if (fmt[cur] == 'z' || fmt[cur] == 't') {
+            } else if (fmt[cur] == 'z' || fmt[cur] == 't' || fmt[cur] == 'j' || fmt[cur] == 'q' || fmt[cur] == 'L') {
                 length.push_back(fmt[cur]);
                 ++cur;
             }
@@ -177,15 +177,17 @@ std::string RuntimeHle::FormatGuestPrintf(const std::string& fmt,
         char spec = fmt[cur];
         ++cur;
 
-        std::ostringstream pieceBuilder;
-        pieceBuilder << "%";
-        if (!flags.empty()) pieceBuilder << flags;
-        if (width >= 0) pieceBuilder << width;
-        if (precision >= 0) pieceBuilder << "." << precision;
-        pieceBuilder << length << spec;
-        const std::string piece = pieceBuilder.str();
-
-        auto appendWithSnprintf = [&](auto value) {
+        // The guest is ILP32: long, size_t and ptrdiff_t are 32 bits, long long and intmax_t 64, and
+        // long double is double. Each host conversion is rebuilt with the host type that holds what
+        // was consumed, never the guest's length modifier (a host %ld reads 64 bits).
+        const bool guest64 = length == "ll" || length == "j" || length == "q";
+        auto hostPiece = [&](const char* hostLength, char hostSpec) {
+            std::string piece = "%" + flags;
+            if (width >= 0) piece += std::to_string(width);
+            if (precision >= 0) piece += "." + std::to_string(precision);
+            return piece + hostLength + hostSpec;
+        };
+        auto appendWithSnprintf = [&](const std::string& piece, auto value) {
             int needed = std::snprintf(nullptr, 0, piece.c_str(), value);
             if (needed <= 0) {
                 return;
@@ -195,32 +197,64 @@ std::string RuntimeHle::FormatGuestPrintf(const std::string& fmt,
             buf.resize(static_cast<size_t>(needed));
             appendText(buf);
         };
+        // Guest wchar_t is a big-endian UTF-16 unit; the log is UTF-8.
+        auto appendUtf8 = [](std::string& text, uint32_t codePoint) {
+            if (codePoint < 0x80) {
+                text.push_back(static_cast<char>(codePoint));
+            } else if (codePoint < 0x800) {
+                text.push_back(static_cast<char>(0xC0 | (codePoint >> 6)));
+                text.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+            } else {
+                text.push_back(static_cast<char>(0xE0 | ((codePoint >> 12) & 0x0F)));
+                text.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+                text.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+            }
+        };
+        const char* shortLength = length == "h" ? "h" : length == "hh" ? "hh" : "";
 
         switch (spec) {
             case 's': {
                 uint32_t ptr = next32();
-                std::string guest = readString(ptr);
-                appendWithSnprintf(guest.c_str());
+                if (length == "l") {
+                    std::string text;
+                    try {
+                        for (uint32_t at = ptr; ptr != 0 && text.size() < 4096; at += 2) {
+                            const uint16_t unit = Memory::Read16(at);
+                            if (unit == 0) break;
+                            appendUtf8(text, unit);
+                        }
+                    } catch (const Memory::AccessViolation&) {
+                    }
+                    appendWithSnprintf(hostPiece("", 's'), text.c_str());
+                } else {
+                    std::string guest = readString(ptr);
+                    appendWithSnprintf(hostPiece("", 's'), guest.c_str());
+                }
                 break;
             }
             case 'c': {
-                char ch = static_cast<char>(next32() & 0xFF);
-                appendWithSnprintf(ch);
+                if (length == "l") {
+                    std::string text;
+                    appendUtf8(text, next32() & 0xFFFF);
+                    precision = -1;
+                    appendWithSnprintf(hostPiece("", 's'), text.c_str());
+                } else {
+                    char ch = static_cast<char>(next32() & 0xFF);
+                    appendWithSnprintf(hostPiece("", 'c'), ch);
+                }
                 break;
             }
             case 'p': {
                 uint32_t ptr = next32();
-                appendWithSnprintf(reinterpret_cast<void*>(static_cast<uintptr_t>(ptr)));
+                appendWithSnprintf(hostPiece("", 'p'), reinterpret_cast<void*>(static_cast<uintptr_t>(ptr)));
                 break;
             }
             case 'd':
             case 'i': {
-                if (length == "ll") {
-                    int64_t v = static_cast<int64_t>(next64());
-                    appendWithSnprintf(v);
+                if (guest64) {
+                    appendWithSnprintf(hostPiece("ll", spec), static_cast<long long>(static_cast<int64_t>(next64())));
                 } else {
-                    int32_t v = static_cast<int32_t>(next32());
-                    appendWithSnprintf(v);
+                    appendWithSnprintf(hostPiece(shortLength, spec), static_cast<int>(static_cast<int32_t>(next32())));
                 }
                 break;
             }
@@ -228,12 +262,10 @@ std::string RuntimeHle::FormatGuestPrintf(const std::string& fmt,
             case 'x':
             case 'X':
             case 'o': {
-                if (length == "ll") {
-                    uint64_t v = next64();
-                    appendWithSnprintf(v);
+                if (guest64) {
+                    appendWithSnprintf(hostPiece("ll", spec), static_cast<unsigned long long>(next64()));
                 } else {
-                    uint32_t v = next32();
-                    appendWithSnprintf(v);
+                    appendWithSnprintf(hostPiece(shortLength, spec), static_cast<unsigned>(next32()));
                 }
                 break;
             }
@@ -242,13 +274,17 @@ std::string RuntimeHle::FormatGuestPrintf(const std::string& fmt,
             case 'g': case 'G':
             case 'a': case 'A': {
                 double v = nextDouble();
-                appendWithSnprintf(v);
+                appendWithSnprintf(hostPiece("", spec), v);
                 break;
             }
             case 'n': {
+                // The count goes out at the width the modifier names, never past it.
                 uint32_t ptr = next32();
                 if (ptr != 0) {
-                    Memory::Write32(ptr, static_cast<uint32_t>(outChars));
+                    if (length == "hh") Memory::Write8(ptr, static_cast<uint8_t>(outChars));
+                    else if (length == "h") Memory::Write16(ptr, static_cast<uint16_t>(outChars));
+                    else if (guest64) Memory::Write64(ptr, static_cast<uint64_t>(outChars));
+                    else Memory::Write32(ptr, static_cast<uint32_t>(outChars));
                 }
                 break;
             }

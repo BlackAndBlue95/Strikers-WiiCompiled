@@ -40,7 +40,7 @@ private:
     SDL_AudioSpec m_spec{};
     uint32_t m_sampleRate = 0;
     uint32_t m_channels = 0;
-    bool m_initialized = false;
+    bool m_initialized = false;  // the SDL audio subsystem is held (Shutdown quits it)
     float m_masterVolume = 1.0f;
     bool m_muted = false;
     bool m_reportedDroppedBlock = false;

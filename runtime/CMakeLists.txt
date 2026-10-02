@@ -104,6 +104,10 @@ set(MKW_AURORA_DIR "${CMAKE_CURRENT_LIST_DIR}/../aurora-main")
 # The translator's explicit float casts are PPC single-precision rounding points.
 # Fast-math may erase them and change guest-visible integer conversions.
 set(MKW_TRANSLATED_PPC_FP_OPTIONS -fno-fast-math -ffp-contract=off)
+# The handwritten runtime and aurora: fast-math, but NaN and infinity still exist. Input, config and
+# texture code checks std::isfinite/std::isnan, which -ffinite-math-only (part of -ffast-math) folds
+# to constants.
+set(MKW_RUNTIME_FP_OPTIONS -ffast-math -fno-finite-math-only)
 
 # ----------------------------------------------------------------------
 # Third-party: aurora-main (provides SDL3 + GPU backends)
@@ -168,7 +172,7 @@ set(AURORA_TARGETS aurora_core aurora_gx aurora_pad aurora_si aurora_mtx aurora_
 foreach(t ${AURORA_TARGETS})
     if(TARGET ${t})
         set_target_properties(${t} PROPERTIES UNITY_BUILD OFF)
-        target_compile_options(${t} PRIVATE -O3 -ffast-math -w -pipe)
+        target_compile_options(${t} PRIVATE -O3 ${MKW_RUNTIME_FP_OPTIONS} -w -pipe)
         if(MKW_PLATFORM_WINDOWS)
             target_include_directories(${t} PRIVATE ${MKW_DX_STUB_DIR})
         endif()
@@ -178,20 +182,6 @@ foreach(t ${AURORA_TARGETS})
         target_compile_definitions(${t} PRIVATE NOMINMAX)
     endif()
 endforeach()
-
-# Frame interpolation filters guest NaN/Inf matrices out of a std::sort
-# comparator, which makes its std::isfinite guards load-bearing for memory
-# safety, not just match quality. -ffinite-math-only (part of -ffast-math
-# above) folds those guards to constants and poisons NaN float arguments
-# via nofpclass, so this one file opts back out of the finite-math
-# assumption; the file #errors if built without this. Source-scoped
-# COMPILE_OPTIONS append after the target options, so this overrides the
-# target's -ffast-math for exactly this TU.
-if(TARGET aurora_gx)
-    set_source_files_properties("${MKW_AURORA_DIR}/lib/gx/frame_interpolation.cpp"
-        TARGET_DIRECTORY aurora_gx
-        PROPERTIES COMPILE_OPTIONS "-fno-finite-math-only")
-endif()
 
 # Everything from here down is this project's own code, so this is where the
 # project definitions enter the directory scope. A directory-scoped definition
@@ -264,6 +254,8 @@ add_executable(mkw_input_expr_tests
     "${CMAKE_CURRENT_LIST_DIR}/src/input_expr.cpp")
 target_include_directories(mkw_input_expr_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
 target_compile_features(mkw_input_expr_tests PRIVATE cxx_std_17)
+# The production float policy, so the tests check what ships.
+target_compile_options(mkw_input_expr_tests PRIVATE -O3 ${MKW_RUNTIME_FP_OPTIONS})
 add_test(NAME mkw_input_expr_tests COMMAND mkw_input_expr_tests)
 
 # SHA-1 known answers for the emulated /dev/sha device.

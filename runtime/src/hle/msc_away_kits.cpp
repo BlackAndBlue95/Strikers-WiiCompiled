@@ -35,6 +35,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -815,13 +816,16 @@ std::deque<Job> g_jobs;
 std::map<std::pair<int32_t, uint32_t>, std::shared_ptr<Entry>> g_entries;  // (captain, texture hash)
 std::map<int32_t, Batch> g_batches;                                         // Prepare progress, for the log
 bool g_workerStarted = false;
+bool g_stopWorker = false;
+std::thread g_worker;
 
 void Worker() {
     for (;;) {
         Job job;
         {
             std::unique_lock<std::mutex> lock(g_mutex);
-            g_wake.wait(lock, [] { return !g_jobs.empty(); });
+            g_wake.wait(lock, [] { return g_stopWorker || !g_jobs.empty(); });
+            if (g_stopWorker) return;
             job = std::move(g_jobs.front());
             g_jobs.pop_front();
         }
@@ -868,11 +872,27 @@ void Worker() {
     }
 }
 
+// At exit: stop the worker (dropping queued jobs) and wait for the one in hand, before the DVD file
+// table, the texture lists and this file's state are destroyed under it.
+void StopWorker() {
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_stopWorker = true;
+    }
+    g_wake.notify_one();
+    if (!g_worker.joinable()) return;
+    if (g_worker.get_id() == std::this_thread::get_id()) g_worker.detach();  // exit() from the worker itself
+    else g_worker.join();
+}
+
 void Enqueue(Job job, bool urgent) {  // with g_mutex held
     if (urgent) g_jobs.push_front(std::move(job)); else g_jobs.push_back(std::move(job));
     if (!g_workerStarted) {
         g_workerStarted = true;
-        std::thread(Worker).detach();
+        g_worker = std::thread(Worker);
+        // Registered after everything the worker uses was constructed, so it runs before any of it
+        // is destroyed.
+        std::atexit(StopWorker);
     }
     g_wake.notify_one();
 }

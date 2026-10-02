@@ -28,7 +28,7 @@ if(MKW_PLATFORM_MACOS)
 endif()
 
 function(mkw_apply_common_compile_options target)
-    target_compile_options(${target} PRIVATE -O3 -ffast-math -w -pipe)
+    target_compile_options(${target} PRIVATE -O3 ${MKW_RUNTIME_FP_OPTIONS} -w -pipe)
 endfunction()
 
 function(mkw_apply_translated_compile_options target)

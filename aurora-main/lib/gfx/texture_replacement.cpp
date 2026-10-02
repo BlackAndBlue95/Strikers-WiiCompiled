@@ -413,7 +413,13 @@ std::optional<ConvertedTexture> load_replacement(const ReplacementIndexEntry& en
 
   std::vector<ConvertedTexture> more;
   std::error_code ec;
-  for (uint32_t mipLevel = 1;; ++mipLevel) {
+  // A full chain ends at 1x1: floor(log2(max(width, height))) + 1 levels. Sidecar files past that
+  // would describe an invalid texture (and shift the size by 32 or more).
+  uint32_t chainLength = 1;
+  for (uint32_t size = std::max(base->width, base->height); size > 1; size >>= 1) {
+    ++chainLength;
+  }
+  for (uint32_t mipLevel = 1; mipLevel < chainLength; ++mipLevel) {
     const auto mipPath = entry.path.parent_path() / fmt::format("{}_mip{}{}", fs_path_to_string(entry.path.stem()), mipLevel, fs_path_to_string(entry.path.extension()));
     if (!std::filesystem::is_regular_file(mipPath, ec)) {
       break;

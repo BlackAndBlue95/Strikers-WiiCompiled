@@ -15,6 +15,7 @@
 #include "mods/mod_registry.h"
 #include "msc_mod_api.h"
 #include "ppc_runtime.h"
+#include "recomp_mod_loader.h"
 #include "runtime_config.h"
 #include "runtime_log.h"
 
@@ -33,6 +34,8 @@ struct MscMod {
     std::string directory;  // UTF-8, kept alive for mod_directory()
     Mods::PluginStatus status;
 };
+
+extern "C" void GxNotifyGuestRamDmaWrite(uint32_t addr, uint32_t size);  // hle/gx
 
 namespace Mods {
 namespace {
@@ -124,8 +127,16 @@ void ApiReadBytes(uint32_t a, void* out, uint32_t n) {
     else { std::memset(out, 0, n); ReportBadAccess("read_bytes", a); }
 }
 void ApiWriteBytes(uint32_t a, const void* data, uint32_t n) {
-    if (uint8_t* p = Memory::Contains(a, n) ? Memory::GetPointer(a, n) : nullptr) std::memcpy(p, data, n);
-    else ReportBadAccess("write_bytes", a);
+    uint8_t* p = Memory::Contains(a, n) ? Memory::GetPointer(a, n) : nullptr;
+    if (!p) {
+        ReportBadAccess("write_bytes", a);
+        return;
+    }
+    // The scalar writes' executable-memory rule, then the renderer learns the bytes changed, so a
+    // texture or display list a plugin rewrote isn't drawn from a stale copy.
+    RecompMod::CheckExecutableWrite(a, n, 0);
+    std::memcpy(p, data, n);
+    GxNotifyGuestRamDmaWrite(a, n);
 }
 uint32_t ApiAlloc(MscCpu* cpu, uint32_t size, uint32_t alignment) {
     if (cpu == nullptr || g_initPhase) return 0;

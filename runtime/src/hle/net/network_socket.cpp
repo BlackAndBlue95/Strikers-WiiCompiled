@@ -247,6 +247,12 @@ int32_t HandleIpTopIoctl(uint32_t cmd, uint32_t inBuf, uint32_t inLen, uint32_t 
         const int optname = MapSockOptName(Memory::Read32(inBuf + 8));
         const uint32_t optLen = std::min<uint32_t>(Memory::Read32(inBuf + 0x0C), inLen - 0x10);
         const char* optVal = reinterpret_cast<const char*>(Memory::GetPointer(inBuf + 0x10, optLen));
+        // An int option (flags, buffer sizes, timeouts in ms) arrives big-endian.
+        int intValue = 0;
+        if (optLen == sizeof(int)) {
+            intValue = static_cast<int>(Memory::Read32(inBuf + 0x10));
+            optVal = reinterpret_cast<const char*>(&intValue);
+        }
         return SocketResult(setsockopt(s->native, level, optname, optVal, static_cast<int>(optLen)), false);
     }
     case IOCTL_SO_LISTEN: {
