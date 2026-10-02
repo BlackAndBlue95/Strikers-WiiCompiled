@@ -846,7 +846,10 @@ bool Read(uint32_t chan, Sample& out) {
 bool Present(uint32_t chan) {
     if (chan >= kMaxRemotes) return false;
     std::lock_guard<std::mutex> lock(g_mutex);
-    return g_owned[chan];
+    // Connected, not just claimed: a channel is claimed while a device that may not be a remote is
+    // probed (a paired remote that's switched off, a DolphinBar's empty slots), and the port a probe
+    // holds would bump that port's gamepad for nothing on every scan.
+    return g_owned[chan] && g_samples[chan].connected;
 }
 
 uint32_t ConnectedCount() { return g_connected.load(); }

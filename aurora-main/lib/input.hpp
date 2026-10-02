@@ -20,6 +20,9 @@ struct GameController {
   bool m_gameCubeUseOrdinaryStop = false;
   Sint32 m_index = -1;
   Sint32 m_playerIndex = -1;
+  // Strikers-WiiCompiled: a pad on a GameCube adapter, the adapter port it's plugged into (0-3),
+  // else -1. The adapter's four pads share one GUID and serial, so this is what tells them apart.
+  Sint32 m_adapterSlot = -1;
   bool m_hasRumble = false;
   PADDeadZones m_deadZones{
       .emulateTriggers = true,
@@ -59,6 +62,11 @@ void set_player_index(Uint32 instance, Sint32 index) noexcept;
 // Strikers-WiiCompiled: ports another input source owns (bitmask); gamepads are kept off them.
 void set_external_ports(uint32_t mask) noexcept;
 bool is_external_port(uint32_t port) noexcept;
+// Strikers-WiiCompiled: ports the keyboard plays on (bitmask); a gamepad there would be ignored, so
+// none is put on one.
+void set_keyboard_ports(uint32_t mask) noexcept;
+// Strikers-WiiCompiled: the first port with no gamepad, no other input source and no keyboard, or -1.
+int32_t free_port() noexcept;
 std::string controller_name(Uint32 instance) noexcept;
 bool is_gamecube(Uint32 instance) noexcept;
 bool controller_has_rumble(Uint32 instance) noexcept;
@@ -67,6 +75,8 @@ void controller_rumble(uint32_t instance, uint16_t low_freq_intensity, uint16_t 
 uint32_t controller_count() noexcept;
 void initialize() noexcept;
 void persist_controller_for_player(uint32_t player, const GameController* controller) noexcept;
+// Strikers-WiiCompiled: a controller kept unassigned isn't put on any port until assigned again.
+void keep_unassigned(const GameController* controller, bool keep) noexcept;
 extern absl::flat_hash_map<Uint32, GameController> g_GameControllers;
 
 void set_mouse_scroll(float scrollX, float scrollY) noexcept;

@@ -789,11 +789,21 @@ void DrawControllerSettings() {
         // Real remotes are driven over HID, outside SDL's controller list.
         ImGui::Text("Assigned: %s (Bluetooth HID)", hid.hasNunchuk ? "Wii Remote + Nunchuk" : "Wii Remote");
     } else {
-        ImGui::Text("Assigned: %s", currentName != nullptr ? currentName : "None");
+        const int32_t index = PADGetIndexForPort(selectedGamePort);
+        const int32_t slot = index >= 0 ? PADGetAdapterSlotForIndex(static_cast<uint32_t>(index)) : -1;
+        if (slot >= 0) {
+            ImGui::Text("Assigned: %s (adapter slot %d)", currentName != nullptr ? currentName : "None", slot + 1);
+        } else {
+            ImGui::Text("Assigned: %s", currentName != nullptr ? currentName : "None");
+        }
     }
     if (ImGui::MenuItem("Unassign controller")) {
         PADClearPort(selectedGamePort);
         g_configuredControllerIndices.fill(std::numeric_limits<int32_t>::min());
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("The controller stays off every port, through restarts and reconnects, until you\n"
+                          "assign it again.");
     }
     ImGui::Separator();
     controller_mapping_wizard::DrawSetupList();
@@ -805,10 +815,17 @@ void DrawControllerSettings() {
     }
 
     if (ImGui::BeginMenu("Assign connected controller")) {
+        // A GameCube adapter's pads share one name: each is told apart by its slot, and the one being
+        // pressed is marked.
         for (uint32_t index = 0; index < controllerCount; ++index) {
             const char* name = PADGetNameForControllerIndex(index);
+            std::string label = name != nullptr ? name : "Unknown controller";
+            if (const int32_t slot = PADGetAdapterSlotForIndex(index); slot >= 0) label += " (adapter slot " + std::to_string(slot + 1) + ")";
+            const int32_t port = PADGetPortForIndex(index);
+            label += port >= 0 ? "  - player " + std::to_string(port + 1) : "  - unassigned";
+            if (PADIsControllerIndexActive(index)) label += "  <- pressing";
             ImGui::PushID(static_cast<int>(index));
-            if (ImGui::MenuItem(name != nullptr ? name : "Unknown controller")) {
+            if (ImGui::MenuItem(label.c_str())) {
                 PADSetPortForIndex(index, selectedGamePort);
                 g_configuredControllerIndices.fill(std::numeric_limits<int32_t>::min());
                 ApplyConfiguredMappings();

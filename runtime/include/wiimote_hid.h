@@ -43,7 +43,7 @@ bool Searching();
 void SetContinuousSearch(bool on);
 // Latest state of the remote on a game channel; false when none is there.
 bool Read(uint32_t chan, Sample& out);
-// True when a remote currently owns `chan`.
+// True when a connected remote owns `chan` (not while a device is only being probed there).
 bool Present(uint32_t chan);
 // Number of remotes connected right now.
 uint32_t ConnectedCount();

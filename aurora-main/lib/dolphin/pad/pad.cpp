@@ -8,6 +8,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstdlib>
 #include <sys/stat.h>
 #include <ranges>
 
@@ -350,6 +351,17 @@ bool is_mouse_button_pressed(const s32 scancode) {
 void PADSetSpec(u32 spec [[maybe_unused]]) {}
 
 static void load_keyboard_bindings();
+
+// Strikers-WiiCompiled: tells the port assignment which ports the keyboard plays on.
+static void update_keyboard_ports() {
+  uint32_t mask = 0;
+  for (uint32_t port = 0; port < PAD_MAX_CONTROLLERS; ++port) {
+    if (g_keyboardBindings[port].m_mappingsSet) {
+      mask |= 1u << port;
+    }
+  }
+  aurora::input::set_keyboard_ports(mask);
+}
 static void save_keyboard_bindings();
 
 // ReSharper disable once CppDFAConstantFunctionResult
@@ -410,15 +422,26 @@ void PADSetPortForIndex(const u32 idx, const u32 port) {
     return;
   }
 
+  // Strikers-WiiCompiled: the controller already on the port swaps over to this one's old port (or
+  // the first free one), rather than being left on none.
+  aurora::input::keep_unassigned(ctrl, false);
   const int32_t oldPort = aurora::input::player_index(ctrl->m_index);
-  if (const auto* dest = aurora::input::get_controller_for_player(port); dest != nullptr && dest != ctrl) {
-    aurora::input::set_player_index(dest->m_index, -1);
-  }
-  if (oldPort >= 0 && oldPort != port) {
-    aurora::input::persist_controller_for_player(oldPort, nullptr);
+  const auto* dest = aurora::input::get_controller_for_player(port);
+  if (dest == ctrl) {
+    aurora::input::persist_controller_for_player(port, ctrl);
+    return;
   }
   aurora::input::set_player_index(ctrl->m_index, static_cast<Sint32>(port));
   aurora::input::persist_controller_for_player(port, ctrl);
+  if (dest != nullptr) {
+    const int32_t destPort = oldPort >= 0 ? oldPort : aurora::input::free_port();
+    aurora::input::set_player_index(dest->m_index, destPort);
+    if (destPort >= 0) {
+      aurora::input::persist_controller_for_player(static_cast<u32>(destPort), dest);
+    }
+  } else if (oldPort >= 0) {
+    aurora::input::persist_controller_for_player(static_cast<u32>(oldPort), nullptr);
+  }
 }
 
 void PADSetExternalPorts(const u32 mask) { aurora::input::set_external_ports(mask); }
@@ -445,6 +468,8 @@ void PADClearPort(const u32 port) {
   if (ctrl == nullptr) {
     return;
   }
+  // Strikers-WiiCompiled: and it stays unassigned (no next free port) until assigned again.
+  aurora::input::keep_unassigned(ctrl, true);
   aurora::input::set_player_index(ctrl->m_index, -1);
 }
 
@@ -729,6 +754,7 @@ u32 PADRead(PADStatus* status) {
   if (!g_keyboardBindingsLoaded) {
     g_keyboardBindingsLoaded = true;
     load_keyboard_bindings();
+    update_keyboard_ports();
   }
 
   int numKeys = 0;
@@ -1320,6 +1346,7 @@ PADKeyButtonBinding* PADGetKeyButtonBindings(const u32 port, u32* buttonCount) {
   if (!g_keyboardBindingsLoaded) {
     g_keyboardBindingsLoaded = true;
     load_keyboard_bindings();
+    update_keyboard_ports();
   }
   if (port >= PAD_MAX_CONTROLLERS || !g_keyboardBindings[port].m_mappingsSet) {
     return nullptr;
@@ -1366,6 +1393,7 @@ void PADSetKeyboardActive(const u32 port, const BOOL active) {
     return;
   }
   g_keyboardBindings[port].m_mappingsSet = active != FALSE;
+  update_keyboard_ports();  // a gamepad on the port moves to a free one
 }
 
 void PADClearKeyBindings(const u32 port) {
@@ -1375,6 +1403,7 @@ void PADClearKeyBindings(const u32 port) {
   g_keyboardBindings[port].m_buttonMapping = g_defaultKeys;
   g_keyboardBindings[port].m_axisMapping = g_defaultKeyAxis;
   g_keyboardBindings[port].m_mappingsSet = false;
+  update_keyboard_ports();
 }
 
 constexpr uint32_t k_keyboardMagic = SBIG('KBND');
@@ -1822,6 +1851,34 @@ BOOL PADIsGCAdapter(const u32 port) {
     return FALSE;
   }
   return ctrl->m_isGameCube;
+}
+
+s32 PADGetAdapterSlotForIndex(const u32 idx) {
+  const auto* ctrl = __PADGetControllerForIndex(idx);
+  return ctrl != nullptr ? ctrl->m_adapterSlot : -1;
+}
+
+s32 PADGetPortForIndex(const u32 idx) {
+  const auto* ctrl = __PADGetControllerForIndex(idx);
+  return ctrl != nullptr ? aurora::input::player_index(ctrl->m_index) : -1;
+}
+
+BOOL PADIsControllerIndexActive(const u32 idx) {
+  const auto* ctrl = __PADGetControllerForIndex(idx);
+  if (ctrl == nullptr) {
+    return FALSE;
+  }
+  for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT; ++button) {
+    if (SDL_GetGamepadButton(ctrl->m_controller, static_cast<SDL_GamepadButton>(button))) {
+      return TRUE;
+    }
+  }
+  for (int axis = 0; axis < SDL_GAMEPAD_AXIS_COUNT; ++axis) {
+    if (std::abs(static_cast<int>(SDL_GetGamepadAxis(ctrl->m_controller, static_cast<SDL_GamepadAxis>(axis)))) > 16000) {
+      return TRUE;
+    }
+  }
+  return FALSE;
 }
 
 PADBatteryState PADGetBatteryState(const u32 port, f32* perc) {

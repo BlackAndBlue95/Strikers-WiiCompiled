@@ -12,6 +12,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <algorithm>
 #include <array>
+#include <vector>
 #include <string>
 #include <utility>
 
@@ -23,7 +24,8 @@ absl::flat_hash_map<Uint32, GameController> g_GameControllers;
 
 namespace {
 constexpr uint32_t kPortPreferencesMagic = SBIG('CPRT');
-constexpr uint32_t kPortPreferencesVersion = 2;
+// 3: identities carry the GameCube adapter slot.
+constexpr uint32_t kPortPreferencesVersion = 3;
 constexpr uint32_t kMaxPersistedStringLength = 256;
 
 enum class PortPreferenceState : uint8_t {
@@ -35,6 +37,7 @@ enum class PortPreferenceState : uint8_t {
 struct ControllerIdentity {
   std::string guid;
   std::string serial;
+  int32_t adapterSlot = -1;  // GameController::m_adapterSlot
 };
 
 struct PortPreference {
@@ -43,13 +46,38 @@ struct PortPreference {
 };
 
 std::array<PortPreference, PAD_MAX_CONTROLLERS> g_portPreferences;
+// Strikers-WiiCompiled: controllers unassigned in the settings stay off every port until assigned
+// again (a GameCube adapter's pads when only Wii Remotes play, say), rather than taking the next
+// free one at each launch, reconnect or port change.
+std::vector<ControllerIdentity> g_unassignedControllers;
 bool g_portPreferencesLoaded = false;
 // Strikers-WiiCompiled: ports another input source owns (the runtime's Wii Remotes, read over raw
 // HID), as a bitmask. No gamepad is put on one: each port has a single owner, never a mix.
 uint32_t g_externalPorts = 0;
+uint32_t g_keyboardPorts = 0;  // ports the keyboard plays on
 
 bool owned_elsewhere(int32_t port) {
   return port >= 0 && port < PAD_MAX_CONTROLLERS && ((g_externalPorts >> port) & 1u) != 0;
+}
+
+bool keyboard_port(int32_t port) {
+  return port >= 0 && port < PAD_MAX_CONTROLLERS && ((g_keyboardPorts >> port) & 1u) != 0;
+}
+
+// Strikers-WiiCompiled: each GameCube adapter pad's slot. SDL's GameCube driver adds a pad with its
+// slot as player index, and that index can be moved (to make room for another controller put on that
+// port) before the pad is opened, so it's read as SDL adds the pad, in an event watch.
+absl::flat_hash_map<SDL_JoystickID, int32_t> g_adapterSlots;
+
+bool SDLCALL record_adapter_slot(void*, SDL_Event* event) {
+  if (event->type == SDL_EVENT_JOYSTICK_ADDED) {
+    const SDL_JoystickID which = event->jdevice.which;
+    if (SDL_GetJoystickVendorForID(which) == 0x057E && SDL_GetJoystickProductForID(which) == 0x0337) {
+      const int slot = SDL_GetJoystickPlayerIndexForID(which);
+      g_adapterSlots[which] = slot >= 0 && slot < PAD_MAX_CONTROLLERS ? slot : -1;
+    }
+  }
+  return true;
 }
 
 std::string port_preferences_path() {
@@ -90,7 +118,15 @@ ControllerIdentity controller_identity(const GameController& controller) {
   SDL_GUIDToString(SDL_GetGamepadGUIDForID(SDL_GetGamepadID(controller.m_controller)), guid, sizeof(guid));
   identity.guid = guid;
   identity.serial = normalize_serial(SDL_GetGamepadSerial(controller.m_controller));
+  identity.adapterSlot = controller.m_adapterSlot;
   return identity;
+}
+
+bool is_gamecube_adapter_guid(const std::string& guid) {
+  uint16_t vendor = 0;
+  uint16_t product = 0;
+  SDL_GetJoystickGUIDInfo(SDL_StringToGUID(guid.c_str()), &vendor, &product, nullptr, nullptr);
+  return vendor == 0x057E && product == 0x0337;
 }
 
 bool read_exact(SDL_IOStream* file, void* dst, size_t size) {
@@ -144,15 +180,20 @@ bool write_string(SDL_IOStream* file, const std::string& value) {
   return write_value(file, size) && (size == 0 || write_exact(file, value.data(), size));
 }
 
-bool read_identity(SDL_IOStream* file, ControllerIdentity& identity) {
-  return read_string(file, identity.guid) && read_string(file, identity.serial);
+bool read_identity(SDL_IOStream* file, ControllerIdentity& identity, uint32_t version) {
+  if (!read_string(file, identity.guid) || !read_string(file, identity.serial)) {
+    return false;
+  }
+  return version < 3 || read_value(file, identity.adapterSlot);
 }
 
 bool write_identity(SDL_IOStream* file, const ControllerIdentity& identity) {
-  return write_string(file, identity.guid) && write_string(file, identity.serial);
+  return write_string(file, identity.guid) && write_string(file, identity.serial) &&
+         write_value(file, identity.adapterSlot);
 }
 
-bool read_port_preferences_file(std::array<PortPreference, PAD_MAX_CONTROLLERS>& preferences) {
+bool read_port_preferences_file(std::array<PortPreference, PAD_MAX_CONTROLLERS>& preferences,
+                                std::vector<ControllerIdentity>& unassigned) {
   const auto path = port_preferences_path();
   if (path.empty()) {
     return true;
@@ -166,16 +207,32 @@ bool read_port_preferences_file(std::array<PortPreference, PAD_MAX_CONTROLLERS>&
   uint32_t magic = 0;
   uint32_t version = 0;
   bool ok = read_value(file, magic) && read_value(file, version) && magic == kPortPreferencesMagic &&
-            version == kPortPreferencesVersion;
+            (version == 2 || version == kPortPreferencesVersion);
 
-  for (auto& preference : preferences) {
+  for (uint32_t port = 0; port < preferences.size(); ++port) {
+    auto& preference = preferences[port];
     uint8_t state = 0;
     ControllerIdentity identity;
     ok = ok && read_value(file, state) && state <= static_cast<uint8_t>(PortPreferenceState::Controller) &&
-         read_identity(file, identity);
+         read_identity(file, identity, version);
     if (ok) {
+      // Saved before slots were: an adapter pad most likely sat on the port of its own slot.
+      if (version < 3 && is_gamecube_adapter_guid(identity.guid)) {
+        identity.adapterSlot = static_cast<int32_t>(port);
+      }
       preference.state = static_cast<PortPreferenceState>(state);
       preference.identity = std::move(identity);
+    }
+  }
+  if (ok && version >= 3) {
+    uint32_t count = 0;
+    ok = read_value(file, count) && count <= 64;
+    for (uint32_t i = 0; ok && i < count; ++i) {
+      ControllerIdentity identity;
+      ok = read_identity(file, identity, version);
+      if (ok) {
+        unassigned.push_back(std::move(identity));
+      }
     }
   }
 
@@ -192,8 +249,10 @@ void ensure_port_preferences_loaded() {
   }
 
   std::array<PortPreference, PAD_MAX_CONTROLLERS> preferences;
-  if (read_port_preferences_file(preferences)) {
+  std::vector<ControllerIdentity> unassigned;
+  if (read_port_preferences_file(preferences, unassigned)) {
     g_portPreferences = std::move(preferences);
+    g_unassignedControllers = std::move(unassigned);
   }
   g_portPreferencesLoaded = true;
 }
@@ -220,6 +279,10 @@ void save_port_preferences() {
     const auto state = static_cast<uint8_t>(preference.state);
     ok = ok && write_value(file, state) && write_identity(file, preference.identity);
   }
+  ok = ok && write_value(file, static_cast<uint32_t>(g_unassignedControllers.size()));
+  for (const auto& identity : g_unassignedControllers) {
+    ok = ok && write_identity(file, identity);
+  }
 
   if (!SDL_FlushIO(file)) {
     ok = false;
@@ -242,6 +305,10 @@ IdentityMatch identity_match(const ControllerIdentity& saved, const ControllerId
   if (saved.guid.empty()) {
     return IdentityMatch::None;
   }
+  // Pads on a GameCube adapter are told apart by the slot they're plugged into.
+  if (saved.adapterSlot != current.adapterSlot) {
+    return IdentityMatch::None;
+  }
   if (saved.guid == current.guid) {
     return saved.serial.empty() || serial_matches(saved.serial, current.serial) ? IdentityMatch::Exact
                                                                                 : IdentityMatch::None;
@@ -262,6 +329,13 @@ IdentityMatch identity_match(const ControllerIdentity& saved, const ControllerId
              : IdentityMatch::None;
 }
 
+bool kept_unassigned(const GameController& controller) {
+  const auto identity = controller_identity(controller);
+  return std::any_of(g_unassignedControllers.begin(), g_unassignedControllers.end(), [&](const auto& saved) {
+    return identity_match(saved, identity) == IdentityMatch::Exact;
+  });
+}
+
 void assign_player_index(GameController& controller, int32_t port) {
   SDL_SetGamepadPlayerIndex(controller.m_controller, port);
   controller.m_playerIndex = port;
@@ -269,9 +343,12 @@ void assign_player_index(GameController& controller, int32_t port) {
 
 // SDL forgets the index for devices mapped after connect, so player_index() falls
 // back to the cached copy; both have to move together or a port looks doubly taken.
+// Strikers-WiiCompiled: an index past the last port (SDL moves a pad there when a GameCube adapter
+// pad claims its slot's index) is no port at all.
 int32_t effective_player_index(const GameController& controller) {
-  const int32_t player = SDL_GetGamepadPlayerIndex(controller.m_controller);
-  return player >= 0 ? player : controller.m_playerIndex;
+  const int32_t sdlPlayer = SDL_GetGamepadPlayerIndex(controller.m_controller);
+  const int32_t player = sdlPlayer >= 0 ? sdlPlayer : controller.m_playerIndex;
+  return player < PAD_MAX_CONTROLLERS ? player : -1;
 }
 
 bool is_instance_claimed(const std::array<Uint32, PAD_MAX_CONTROLLERS>& claimedControllers, size_t claimedCount,
@@ -284,9 +361,12 @@ void ensure_player_index(GameController& controller) noexcept;
 
 void apply_port_preferences() noexcept {
   ensure_port_preferences_loaded();
-  // Off the ports another input source owns, whatever put a gamepad there.
+  // Off the ports another input source or the keyboard owns, whatever put a gamepad there, and off
+  // indices past the last port.
   for (auto& [instance, controller] : g_GameControllers) {
-    if (owned_elsewhere(effective_player_index(controller))) {
+    const int32_t player = effective_player_index(controller);
+    if (owned_elsewhere(player) || keyboard_port(player) || (player >= 0 && kept_unassigned(controller)) ||
+        (player < 0 && SDL_GetGamepadPlayerIndex(controller.m_controller) >= PAD_MAX_CONTROLLERS)) {
       assign_player_index(controller, -1);
     }
   }
@@ -312,14 +392,15 @@ void apply_port_preferences() noexcept {
   size_t claimedCount = 0;
   for (uint32_t port = 0; port < g_portPreferences.size(); ++port) {
     const auto& preference = g_portPreferences[port];
-    if (preference.state != PortPreferenceState::Controller || owned_elsewhere(static_cast<int32_t>(port))) {
+    if (preference.state != PortPreferenceState::Controller || owned_elsewhere(static_cast<int32_t>(port)) ||
+        keyboard_port(static_cast<int32_t>(port))) {
       continue;
     }
 
     Uint32 fallbackInstance = 0;
     GameController* fallbackController = nullptr;
     for (auto& [instance, controller] : g_GameControllers) {
-      if (is_instance_claimed(claimedControllers, claimedCount, instance)) {
+      if (is_instance_claimed(claimedControllers, claimedCount, instance) || kept_unassigned(controller)) {
         continue;
       }
 
@@ -360,16 +441,28 @@ void apply_port_preferences() noexcept {
 // SDL only hands out a player index when the device already had a gamepad mapping
 // at connect time, so anything mapped later (the setup wizard) stays at -1.
 void ensure_player_index(GameController& controller) noexcept {
-  const int32_t player = SDL_GetGamepadPlayerIndex(controller.m_controller);
-  if (player >= 0 && !owned_elsewhere(player)) {
+  ensure_port_preferences_loaded();
+  if (kept_unassigned(controller)) {
+    if (effective_player_index(controller) >= 0 || SDL_GetGamepadPlayerIndex(controller.m_controller) >= 0) {
+      assign_player_index(controller, -1);
+    }
+    return;
+  }
+  int32_t player = SDL_GetGamepadPlayerIndex(controller.m_controller);
+  if (player >= PAD_MAX_CONTROLLERS) {
+    player = -1;  // no port (see effective_player_index): one is claimed below
+    controller.m_playerIndex = -1;
+  }
+  const auto usable = [](int32_t port) { return !owned_elsewhere(port) && !keyboard_port(port); };
+  if (player >= 0 && usable(player)) {
     controller.m_playerIndex = player;
     return;
   }
-  if (player < 0 && controller.m_playerIndex >= 0 && !owned_elsewhere(controller.m_playerIndex)) {
+  if (player < 0 && controller.m_playerIndex >= 0 && usable(controller.m_playerIndex)) {
     return;
   }
   if (player >= 0 || controller.m_playerIndex >= 0) {
-    assign_player_index(controller, -1);  // on a port another input source owns
+    assign_player_index(controller, -1);  // on a port another input source or the keyboard owns
   }
   ensure_port_preferences_loaded();
   // Strikers-WiiCompiled: a port saved for a controller that isn't connected is lent out, so a
@@ -386,8 +479,10 @@ void ensure_player_index(GameController& controller) noexcept {
     });
   };
   const auto claim = [&](bool skipConfiguredPorts) {
-    for (int32_t port = 0; port < PAD_MAX_CONTROLLERS; ++port) {
-      if (owned_elsewhere(port) || (skipConfiguredPorts && reserved(port))) {
+    // A pad on a GameCube adapter tries the port of its own slot first.
+    for (int32_t i = -1; i < PAD_MAX_CONTROLLERS; ++i) {
+      const int32_t port = i < 0 ? controller.m_adapterSlot : i;
+      if (port < 0 || owned_elsewhere(port) || keyboard_port(port) || (skipConfiguredPorts && reserved(port))) {
         continue;
       }
       const bool taken = std::any_of(g_GameControllers.begin(), g_GameControllers.end(), [&](const auto& entry) {
@@ -445,6 +540,14 @@ SDL_JoystickID add_controller(SDL_JoystickID which) noexcept {
       return -1;
     }
     controller.m_isGameCube = controller.m_vid == 0x057E && controller.m_pid == 0x0337;
+    if (controller.m_isGameCube) {
+      if (const auto slot = g_adapterSlots.find(which); slot != g_adapterSlots.end()) {
+        controller.m_adapterSlot = slot->second;
+      } else {  // added before the watch (it's set up first, so not expected)
+        const int index = SDL_GetGamepadPlayerIndex(ctrl);
+        controller.m_adapterSlot = index >= 0 && index < PAD_MAX_CONTROLLERS ? index : -1;
+      }
+    }
     const char* serial = SDL_GetGamepadSerial(ctrl);
     controller.m_gameCubeUseOrdinaryStop = controller.m_isGameCube && serial && "GCP+"sv == serial;
     if (controller.m_isGameCube ||
@@ -460,7 +563,7 @@ SDL_JoystickID add_controller(SDL_JoystickID which) noexcept {
     apply_port_preferences();
 #if defined(SDL_PLATFORM_MACOS)
     // First-use convenience only: never override a saved assignment or None.
-    if (g_portPreferences[0].state == PortPreferenceState::Unset) {
+    if (g_portPreferences[0].state == PortPreferenceState::Unset && !kept_unassigned(g_GameControllers[instance])) {
       bool hasOtherPortPreference = false;
       for (size_t port = 1; port < g_portPreferences.size(); ++port) {
         if (g_portPreferences[port].state == PortPreferenceState::Controller &&
@@ -501,6 +604,7 @@ bool refresh_controller(SDL_JoystickID instance) noexcept {
 }
 
 void remove_controller(Uint32 instance) noexcept {
+  g_adapterSlots.erase(instance);
   if (auto it = g_GameControllers.find(instance); it != g_GameControllers.end()) {
     SDL_CloseGamepad(it->second.m_controller);
     g_GameControllers.erase(it);
@@ -517,8 +621,7 @@ bool is_gamecube(Uint32 instance) noexcept {
 
 int32_t player_index(Uint32 instance) noexcept {
   if (auto it = g_GameControllers.find(instance); it != g_GameControllers.end()) {
-    const int player = SDL_GetGamepadPlayerIndex(it->second.m_controller);
-    return player >= 0 ? player : it->second.m_playerIndex;
+    return effective_player_index(it->second);
   }
   return -1;
 }
@@ -577,6 +680,29 @@ void set_external_ports(uint32_t mask) noexcept {
 
 bool is_external_port(uint32_t port) noexcept { return owned_elsewhere(static_cast<int32_t>(port)); }
 
+void set_keyboard_ports(uint32_t mask) noexcept {
+  mask &= (1u << PAD_MAX_CONTROLLERS) - 1;
+  if (mask == g_keyboardPorts) {
+    return;
+  }
+  g_keyboardPorts = mask;
+  apply_port_preferences();  // a gamepad on a port the keyboard now plays on moves to a free one
+}
+
+int32_t free_port() noexcept {
+  for (int32_t port = 0; port < PAD_MAX_CONTROLLERS; ++port) {
+    if (owned_elsewhere(port) || keyboard_port(port)) {
+      continue;
+    }
+    const bool taken = std::any_of(g_GameControllers.begin(), g_GameControllers.end(),
+                                   [&](const auto& entry) { return effective_player_index(entry.second) == port; });
+    if (!taken) {
+      return port;
+    }
+  }
+  return -1;
+}
+
 void persist_controller_for_player(uint32_t player, const GameController* controller) noexcept {
   if (player >= PAD_MAX_CONTROLLERS) {
     return;
@@ -593,7 +719,22 @@ void persist_controller_for_player(uint32_t player, const GameController* contro
   save_port_preferences();
 }
 
+void keep_unassigned(const GameController* controller, bool keep) noexcept {
+  if (controller == nullptr) {
+    return;
+  }
+  ensure_port_preferences_loaded();
+  const auto identity = controller_identity(*controller);
+  std::erase_if(g_unassignedControllers,
+                [&](const auto& saved) { return identity_match(saved, identity) == IdentityMatch::Exact; });
+  if (keep) {
+    g_unassignedControllers.push_back(identity);
+  }
+  save_port_preferences();
+}
+
 void initialize() noexcept {
+  SDL_AddEventWatch(record_adapter_slot, nullptr);
   /* Make sure we initialize everything input related now, this will automatically add all of the connected controllers
    * as expected */
   ASSERT(SDL_Init(SDL_INIT_HAPTIC | SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD), "Failed to initialize SDL subsystems: {}",
@@ -618,6 +759,7 @@ void get_mouse_scroll(float* scrollX, float* scrollY) noexcept {
 }
 
 void shutdown() noexcept {
+  SDL_RemoveEventWatch(record_adapter_slot, nullptr);
   // Upon shutdown we want to ensure all controllers are in a default state, so force all rumble supporting controllers
   // to shut off their rumble motors.
   for (const auto& controller : g_GameControllers) {

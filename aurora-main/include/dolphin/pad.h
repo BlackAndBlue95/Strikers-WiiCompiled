@@ -237,6 +237,11 @@ const char* PADGetAxisDirectionLabel(PADAxis);
 const char* PADGetNativeAxisName(PADSignedNativeAxis axis);
 
 BOOL PADIsGCAdapter(u32 port);
+/* Strikers-WiiCompiled: for an index into the controller map, the GameCube adapter slot (0-3, -1 when
+   it isn't an adapter pad), its port (-1 for none), and whether any button or stick is being pressed. */
+s32 PADGetAdapterSlotForIndex(u32 idx);
+s32 PADGetPortForIndex(u32 idx);
+BOOL PADIsControllerIndexActive(u32 idx);
 
 /**
  * Returns the SDL gamepad for the index into the controller map.
