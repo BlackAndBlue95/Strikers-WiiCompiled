@@ -88,9 +88,40 @@ std::string CurrentNandDataDir() {
     return path;
 }
 
+// Earlier builds kept the game's data under Mario Kart Wii's title type (00010004) instead of the
+// 00010000 its TMD gives, where a Wii, Dolphin and Riivolution keep it. Move it once, unless the
+// right folder already exists.
+static void MoveLegacyTitleDirectory(const std::filesystem::path& root) {
+    char gameId[16];
+    std::snprintf(gameId, sizeof(gameId), "%08x", CurrentTitleIdLo());
+    const std::filesystem::path legacy = root / "title" / "00010004" / gameId;
+    const std::filesystem::path current = root / "title" / "00010000" / gameId;
+    std::error_code ec;
+    if (!std::filesystem::is_directory(legacy, ec)) {
+        return;
+    }
+    if (std::filesystem::exists(current, ec)) {
+        LogNandWarning("NAND", "both '%s' and '%s' exist; using the second (00010000 is the game's "
+                               "title type) and leaving the first untouched",
+                       HostPathText(legacy).c_str(), HostPathText(current).c_str());
+        return;
+    }
+    std::filesystem::create_directories(current.parent_path(), ec);
+    std::filesystem::rename(legacy, current, ec);
+    if (ec) {
+        LogNandError("NAND", "could not move '%s' to '%s': %s", HostPathText(legacy).c_str(),
+                     HostPathText(current).c_str(), ec.message().c_str());
+        return;
+    }
+    RT_LOG(RT_TAG_NAND) << "moved the game's save data from " << HostPathText(legacy) << " to "
+                        << HostPathText(current) << std::endl;
+    std::filesystem::remove(legacy.parent_path(), ec); // only when nothing else is left in it
+}
+
 const std::filesystem::path& GetNandBasePath() {
     std::call_once(g_dolphinWiiBaseOnce, []() {
         g_dolphinWiiBase = RuntimeNandPath::DiscoverNandRootPath();
+        MoveLegacyTitleDirectory(g_dolphinWiiBase);
     });
 
     return g_dolphinWiiBase;

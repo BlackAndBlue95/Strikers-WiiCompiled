@@ -40,10 +40,10 @@
 #include <unistd.h>
 #endif
 
-// Mario Kart Wii Title ID
+// The game's title ID, as its TMD gives it: 00010000 (a disc title), then the game code.
 namespace {
-constexpr uint32_t kNandTitleIdHi = 0x00010004;
-constexpr uint32_t kNandTitleIdLo = 0x52345145; // MSC: "R4QE" fallback
+constexpr uint32_t kNandTitleIdHi = 0x00010000;
+constexpr uint32_t kNandTitleIdLo = 0x52345145; // "R4QE", until the disc header is in low memory
 } // anonymous namespace
 
 // ============================================================================
