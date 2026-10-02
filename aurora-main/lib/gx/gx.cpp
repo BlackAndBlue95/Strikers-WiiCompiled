@@ -1865,7 +1865,8 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   config.pixelFmt = g_gxState.pixelFmt;
   config.dstAlpha = effective_dst_alpha(g_gxState.pixelFmt, g_gxState.alphaUpdate, g_gxState.dstAlpha);
   config.depthCompare = g_gxState.depthCompare;
-  config.depthUpdate = g_gxState.depthUpdate;
+  // As on the hardware (and in Dolphin): with the Z compare off, the Z buffer isn't updated either.
+  config.depthUpdate = g_gxState.depthCompare && g_gxState.depthUpdate;
   config.alphaUpdate = effective_alpha_update(g_gxState.pixelFmt, g_gxState.alphaUpdate);
   config.colorUpdate = g_gxState.colorUpdate;
 }
