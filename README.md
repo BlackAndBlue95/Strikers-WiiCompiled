@@ -1,352 +1,86 @@
 # Strikers-WiiCompiled
 
-<p align="center">
-  <img alt="Windows 10 / 11, x64" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20%C2%B7%20x64-0078D4">
-  <img alt="Linux, x64 / ARM64" src="https://img.shields.io/badge/Linux-x64%20%2F%20ARM64-FCC624?logo=linux&amp;logoColor=white">
-  <img alt="macOS 14+, Apple Silicon" src="https://img.shields.io/badge/macOS-14%2B%20%C2%B7%20Apple%20Silicon-0A84FF?logo=apple&amp;logoColor=white">
-  <img alt="PowerPC static recompilation" src="https://img.shields.io/badge/PowerPC-static%20recompilation-FF9F0A">
-  <a href="LICENSE"><img alt="License: GPLv3" src="https://img.shields.io/badge/license-GPLv3-2EA44F?logo=gnu&amp;logoColor=white"></a>
-</p>
-
-A native PC port of **Mario Strikers Charged**, made with static recompilation.
-
-This is a fork of [WiiCompiled](https://github.com/patchzyy/wiicompiled), the Mario Kart Wii
-static recompilation project, with its translator and runtime retargeted at Mario Strikers
-Charged (USA, Rev 1, `R4QE01`). There's no emulator in the loop, no interpreter, no JIT, and no
-PowerPC anywhere at runtime.
+Strikers-WiiCompiled is a native PC port of **Mario Strikers Charged**, achieved through static recompilation. Forked from the Mario Kart Wii project WiiCompiled, this version retargets the translator and runtime specifically for Mario Strikers Charged (USA, Rev 1, `R4QE01`). It operates entirely without emulators, interpreters, JIT compilers, or PowerPC emulation at runtime.
 
 > [!IMPORTANT]
-> There is no Nintendo code, no assets and no game data anywhere in this repository. You need
-> your own legally dumped copy of the game. The translation runs on your machine against your own
-> copy, and its output is never committed or uploaded.
+> This repository contains zero Nintendo code, game data, or assets. You must provide your own legally dumped copy of the game. The translation runs locally on your machine, and the output is never uploaded or committed.
 
 > [!WARNING]
-> This is an early, work-in-progress port. It's developed and tested on macOS (Apple Silicon);
-> Windows and Linux builds use the same upstream WiiCompiled toolchain but are untested with this
-> port so far, so expect rough edges there. There are no prebuilt releases, and the WiiCompiled
-> setup tool / Wheel Wizard integration is Mario Kart Wii only.
+> This is an early, work-in-progress port. It is primarily developed and tested on macOS (Apple Silicon). Windows and Linux builds use the upstream WiiCompiled toolchain but remain untested, so expect rough edges. There are no prebuilt releases available.
 
----
+The [wiki](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki) has the details: [building](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Building), [controls](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Controls), [Wii Remotes](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Wii-Remotes), [graphics options](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Graphics) and [every tweak](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Tweaks).
 
 ## Status
 
-Boot, menus, the Hub, tutorials, VS matches, music, voices and saving all work. The game runs
-at full speed on Apple Silicon.
+Core gameplay elements—including booting, menus, the Hub, tutorials, VS matches, music, voice lines, and saving—are fully functional. The game runs at full speed on Apple Silicon hardware.
 
-**120 FPS:** set **F10 > Video > Frame rate** to 120 FPS (or `frame_rate = 120` under `[video]`
-in `Config.toml`). This isn't interpolation: the game simulates matches on a fixed clock and
-blends between those steps when it draws, so it really renders twice as many frames at normal
-game speed. It needs a high refresh rate display, such as a ProMotion MacBook or a 120 Hz+
-monitor, and uses more power, so the default is 60.
+* **120 FPS:** You can enable 120 FPS via **F10 > Graphics > Frame rate** or in `Config.toml`. This isn't interpolation; the engine actually renders twice as many frames based on a fixed clock. It requires a high refresh rate display and consumes more power, so the default remains 60 FPS.
+* **Known Issues:** You may encounter occasional rendering differences compared to original hardware. Online play and WiiConnect24 features are entirely unsupported. Only the USA Rev 1 disc (`R4QE01`) is mapped; other regions and revisions will not work.
 
-Known issues:
+### Real Wii Remotes (Experimental)
 
-- Occasional rendering differences from the original hardware.
-- Online play and WiiConnect24 features are not supported.
-- Only the USA Rev 1 disc (`R4QE01`) has been mapped. Other regions and revisions won't work.
+Real Wii Remotes (with or without Nunchuks) connect directly over Bluetooth HID, utilizing the IR camera and accelerometers exactly as Dolphin does.
 
-### Real Wii Remotes (experimental)
+* **Pairing:** Sync via the 1+2 buttons (or SYNC) while the game searches, or connect through your operating system's Bluetooth settings.
+* **Sensor Bar:** An IR source is required for pointing. If it is mounted above your screen, check **F10 > Wii Remotes (Bluetooth) > Sensor bar is above the screen** for accurate aiming.
+* **DolphinBar:** Mayflash DolphinBars must be set to **mode 4** (Wii Remote mode) to function correctly.
+* **Limitations:** Native HID access on macOS may fail entirely, and Wii U Pro Controllers are not supported by this backend.
 
-Real Wii Remotes, with or without a Nunchuk, are driven directly over Bluetooth HID the way
-Dolphin does it: the IR camera is switched on for the **pointer** (menus, Mega Strike defence),
-along with the accelerometers and the Nunchuk. Each remote takes the first free player port and
-keeps it to itself: a gamepad that was on that port moves to a free one (and back when the remote
-leaves).
-
-Connecting: on Windows, press 1+2 (or the red SYNC button) on the remote while the game is looking
-for one, which it does for the first minute after launch, after **F10 > Wii Remotes > Find Wii
-Remotes**, and all the time with **Keep scanning** on. The game connects it itself, as Dolphin does
-(and removes stale Wii Remote pairings Windows remembers but can't use). Adding the remote in
-Windows' Bluetooth settings works too. On other systems, pair it in the system's Bluetooth settings
-(1+2 or SYNC, leave any PIN empty).
-You need a sensor bar (or any IR source) for the pointer. If it sits above your screen rather than
-below, tick **F10 > Sensor bar is above the screen** (like the Wii's sensor bar setting) so the
-pointer lines up with where you aim. The HOME Menu's Wii Menu and Reset options close the game.
-
-**Mayflash DolphinBar:** use it in **mode 4**, its Wii Remote mode (the same mode Dolphin needs),
-and sync the remotes to the bar. In the other modes it presents remotes as mouse, keyboard or
-gamepad input, which the game can't use as Wii Remotes.
-
-This is new and has had little testing, so reports are very welcome. `console.log` lists each step
-("Wii Remote connected on port 1", "Nunchuk connected", "IR camera setup failed", ...). Known gaps:
-
-- On macOS, plain HID access to Wii Remotes may not work at all (Dolphin uses a separate
-  Bluetooth backend there).
-- The Wii U Pro Controller isn't supported by this backend.
-
-Where to start: `runtime/src/wiimote_hid.cpp` (the remote driver) and
-`runtime/src/wii_remote_input.cpp` (how its state reaches the game).
+Full guide, including connecting on Windows: [Wii Remotes](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Wii-Remotes).
 
 ## Controls
 
-Strikers Charged was built for the Wii Remote and Nunchuk. This port plays it on a regular
-controller with **Super Mario Strikers' GameCube controls**, plus Charged's extras on top. Under
-the hood it rebuilds the GameCube controller support the engine inherited from SMS, so passing,
-shooting and the rest go through the game's own GameCube button table, and the moves Charged
-turned into Wii Remote gestures are back on SMS's buttons.
+This port translates the game's Wii-centric gesture controls back to standard gamepads by reviving the underlying *Super Mario Strikers* GameCube control scheme. Face buttons strictly follow the physical **Nintendo layout** (e.g., the bottom button is always 'B').
 
-Face buttons follow **Nintendo's layout by position**: on a Switch-style controller the labels
-match, and on an Xbox-style pad they sit where a Switch controller's would (bottom button = B).
+* **A (Right):** Pass. With **L**, perform a lob pass. Without the ball, switch players.
+* **B (Bottom):** Shoot or hold to charge. Captains execute a Mega Strike. Without the ball, perform a slide tackle.
+* **Y (Left):** Deke. Without the ball, perform a big hit.
+* **X (Top):** Use item.
+* **Triggers/Bumpers:** **R** triggers character special moves. **L** modifies lobs. **Z** (Right Bumper) cycles items.
+* **Right Stick / D-Pad:** The right stick dekes in a specific direction, while the D-Pad mirrors original Charged D-pad moves.
 
-| Button (Nintendo position) | With the ball | Without the ball |
-| --- | --- | --- |
-| **A** (right) | Pass (with L: lob pass) | Switch player |
-| **B** (bottom) | Shoot, hold to charge (captain: Mega Strike) | Slide tackle, when the other team has the ball |
-| **Y** (left) | Deke | Big hit |
-| **X** (top) | Use item | Use item |
-| **Right stick** (C-stick) | Deke in that direction | |
-| **Right bumper** (Z) | Cycle items | Cycle items |
-| **Left trigger** (L) | Lob/chip modifier | |
-| **Right trigger** (R) | Charged extra: the character's special move | Charged extra: special move |
-| **D-pad** | Charged's D-pad moves | Charged's D-pad moves |
-| **Start** | Pause | Pause |
+You can remap inputs per controller via the **F10** menu, which saves directly to `Config.toml`. Original GameCube controllers work natively via the official Wii U/Switch USB adapter, requiring Zadig WinUSB drivers on Windows.
 
-Buttons can be rebound per controller in the **F10** settings bar, which also has resolution,
-FPS counter, volume and the mods below. Settings are saved to `Config.toml` straight away.
+## Mods & Tweaks
 
-Real Wii Remotes use the game's original controls (see *Real Wii Remotes* above).
+Enhance the game by placing mod packages containing a `mod.toml` manifest into the `Mods` directory. Mods can introduce new characters with custom assets, modify shared files, or add native plugins. Toggle them via **F10 > Mods**.
 
-**GameCube controllers** work through the official Wii U / Switch GameCube adapter (WUP-028), or
-a third-party adapter switched to its Wii U mode. As with Dolphin, on Windows the adapter must be
-switched to the WinUSB driver once with [Zadig](https://zadig.akeo.ie/).
+Quality-of-life adjustments are available under **F10 > Tweaks**:
 
-## Mods
-
-Mods are packages you drop in the `Mods` folder of the data folder: a `mod.toml` manifest and the
-files the mod adds. **F10 > Mods** lists them, with a switch for each. A mod can add characters
-(picked on extra pages of captain select, with their own models, animations, voices, cutscenes, menu
-art and teams), add to the game's shared files without replacing them, and include a native plugin.
-How to make one: [docs/modding](docs/modding/README.md).
-
-## Tweaks
-
-Strikers Charged was built around the Wii Remote pointer. These controller-friendly changes are
-switched on or off under **F10 > Tweaks** (or `[mods]` in `Config.toml`):
-
-- **Controller menu navigation** (on): the D-pad and sticks move the game's hand cursor between
-  buttons, row by row (on the main ring menu, the stick picks the icon in that direction). New
-  screens start on their first option, **B** goes back (the on-screen BACK button is never
-  reached by moving), and **L/R** flip pages such as stages on stage select.
-- **Selection badge** (off): marks the selected button with a badge in the player's colour.
-- **Fast menus** (off): skips menu transitions. Panels that slide in and out appear in place, and
-  camera moves such as the zoom from the main menu are over in a frame or two. Idle animations,
-  music and matches are unchanged.
-- **No Mega Strikes with controllers** (on): see below.
-
-The same menu has fixes and extras, several taken from the community's
-[setup guide](https://mariostrikers.gg/msc-setup-guide):
-
-- **Fix the NK bug** (on): a deke or teleport through the goalie that gets cut short (Boo deking
-  into his own Kritter, Dry Bones teleporting behind the goal) no longer leaves every shot passing
-  through Kritter for the rest of the match.
-- **Choose home/away kits on captain select** (on): with both captains picked, **X** switches the
-  home team between its home and away kit and **Y** the away team (Wii Remote: **-** and **2**).
-  Mario, Luigi, Waluigi and Wario have no away kit in the game, so they get generated ones (white
-  with red trim, sky blue, orange, blue), recoloured at runtime from your own disc's textures:
-  captain, sidekicks, goalie and team art.
-- **Unlock everything** (off): all characters, stadiums and cheats through the game's own
-  unlock-all switch. Your save isn't changed.
-- **Win by 2** (off): in first-to-X goal matches, you have to win by at least 2 goals.
-- **Captain-only teams** (off): captains can be teammates, using a switch the developers left in
-  the game. On the sidekick screen, pick a slot and captain select's grid comes up under the team
-  boards: pick a captain. **-** and **+** (**L/R** on a controller) switch to the sidekicks, so a
-  team can mix both (say Waluigi, Waluigi, Boo and Boo). **Default** makes every slot the team's
-  captain and **Random** picks at random from whichever grid is showing. On captain select,
-  **-** and **+** switch the grid to the sidekicks too, so a sidekick can lead a team: it wears a
-  captain's colours, banners, logo and goalie (Mario at home and Luigi away to start; **X/Y** or
-  **L/R** cycle them once both teams are picked), for a team of four Boos in Yoshi green. Teams are
-  kept for next time. The match intro is skipped with this on.
-- **Blue Peach against red teams** (off): Peach wears her blue kit against red captains.
-- **Shot counter on the results screen** (off): the Mega Strike row shows white and yellow shots /
-  red and orange shots instead.
-- **All stadiums fast-paced** (off): every pitch plays like the fast, dry ones.
-
-> [!NOTE]
-> **Mega Strikes are disabled when you play with a controller.** Defending a Mega Strike means
-> pointing the Wii Remote at each incoming ball, which a gamepad or keyboard can't do, so the
-> shots would simply always go in. While a gamepad or keyboard is in use, every match has Mega
-> Strikes off for both sides: a fully charged captain shot becomes a normal strong shot, for you
-> and the CPU alike. Your saved game options aren't changed, and with real Wii Remotes Mega
-> Strikes work as normal. Turn the tweak off under F10 > Tweaks if you want them back.
+* **Menu Navigation & Speed:** Navigate menus with the D-pad/sticks instead of a pointer, enable "Fast menus" to skip UI transitions, and "Skip intro" to boot straight to the main menu.
+* **No Mega Strikes with Controllers:** *On by default.* Because defending a Mega Strike requires a physical IR pointer, they are disabled for both you and the CPU when using a controller to keep matches playable.
+* **Community Fixes:** Toggle options to fix the "NK bug," select home/away kits on the captain screen, enforce "Win by 2" rules, force Blue Peach against red teams, or build all-captain/all-sidekick teams.
 
 ## Requirements
 
-- **Your own dump of Mario Strikers Charged (USA) (Rev 1)**, `R4QE01`, as a disc image (ISO,
-  RVZ, WBFS, WIA, CISO, GCZ, ...). An already-extracted folder works too. Only this version is
-  supported; the build checks `main.dol`'s SHA-256 and rejects anything else.
-- A 64-bit Windows 10/11, Linux or macOS 14+ (Apple Silicon) machine with a GPU that supports
-  Direct3D 12, Vulkan or Metal.
-- About 10 GB of free disk space for the build.
-- The [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0), CMake 3.25+, Ninja, and
-  Clang. Per-platform setup is below.
-
-> [!NOTE]
-> Nobody here will tell you where to get the game. Dumping your own disc is on you, and links to
-> game files won't be provided or tolerated.
-
-### Windows
-
-The runtime builds with **LLVM-MinGW** Clang, not MSVC.
-
-1. Install the tools (from a terminal; or grab the installers from each project's site):
-
-   ```powershell
-   winget install Microsoft.DotNet.SDK.8 Kitware.CMake Ninja-build.Ninja Git.Git
-   ```
-
-2. Download the latest `llvm-mingw-<version>-ucrt-x86_64.zip` from
-   [mstorsjo/llvm-mingw releases](https://github.com/mstorsjo/llvm-mingw/releases), extract it
-   (for example to `C:\llvm-mingw`), and put its `bin` folder first on your `PATH`, so that
-   `clang --version` reports the target `x86_64-w64-windows-gnu`.
-
-### Linux (Debian/Ubuntu shown)
-
-```bash
-sudo apt install git clang lld cmake ninja-build pkg-config dotnet-sdk-8.0 \
-  libasound2-dev libpulse-dev libpipewire-0.3-dev libx11-dev libxext-dev libxrandr-dev \
-  libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libdrm-dev \
-  libgbm-dev libgl1-mesa-dev libegl1-mesa-dev libwayland-dev libdecor-0-dev libdbus-1-dev \
-  libudev-dev libusb-1.0-0-dev
-```
-
-(`dotnet-sdk-8.0` may need [Microsoft's package feed](https://learn.microsoft.com/dotnet/core/install/linux)
-on older distributions. Other distributions need the equivalent packages.)
-
-### macOS (Apple Silicon)
-
-```bash
-xcode-select --install
-brew install cmake ninja
-```
-
-and the [.NET 8 SDK installer](https://dotnet.microsoft.com/download/dotnet/8.0) (Arm64) from Microsoft.
+* **Game:** A personal dump of Mario Strikers Charged (USA) (Rev 1), `R4QE01`. The build checks the SHA-256 hash and strictly rejects any other version.
+* **Hardware:** 64-bit Windows 10/11, Linux, or macOS 14+ (Apple Silicon) with a modern GPU supporting Direct3D 12, Vulkan, or Metal. You need approximately 10 GB of free space.
+* **Dependencies:** .NET 8 SDK, CMake 3.25+, Ninja, and Clang. Windows builds explicitly require LLVM-MinGW Clang. Per-platform setup: [Building](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Building).
 
 ## Building
 
-Clone the repository and run the build script:
+Clone the repository and run the build script (`./build.sh` on Mac/Linux, `build.cmd` on Windows). Provide your game file when prompted.
 
-```bash
-git clone https://github.com/BlackAndBlue95/Strikers-WiiCompiled.git
-cd Strikers-WiiCompiled
-./build.sh
-```
+The script automatically extracts the image, translates the game code, compiles the native runtime, and links your graphics dependencies. Afterward, the original ISO is no longer needed to play. Saved data, configurations, and caches are stored safely in a dedicated `MSCRecomp` folder based on your OS.
 
-On Windows, double-click `build.cmd` in the repository folder (or run it from a terminal).
+## How the Port Works
 
-The script asks you to pick your disc image; that's the only input it needs. You can also pass
-it directly: `./build.sh "/path/to/game.wbfs"` or `build.cmd "C:\path\to\game.wbfs"`. A folder
-extracted with Dolphin works in place of an image.
+While the WiiCompiled translator is game-agnostic, this fork remaps the Mario Kart Wii runtime hooks specifically to Strikers Charged. It utilizes symbol maps and a `datamap.py` script to match guest addresses. Game-specific quirks, like texture details and pointer emulation, are integrated natively into the runtime.
 
-The script:
+## FAQ & Credits
 
-1. installs the game files into the app's data folder (see the table below), extracting a disc
-   image with [nodtool](https://github.com/encounter/nod) (downloaded once, pinned by version
-   and checksum),
-2. checks and copies `sys/main.dol` to `Assets/main.dol`,
-3. builds the translator,
-4. statically translates the game code to C++ under `generated/`,
-5. compiles the runtime and translated code with CMake + Ninja + Clang into
-   `build-windows/`, `build-linux/` or `build-macos/`,
-6. points the runtime's `Config.toml` at the installed game files.
-
-Like a WiiCompiled install, you **don't need the original disc image or folder afterwards**: the
-game reads its files from the data folder. (Keep your dump backed up somewhere if you ever want
-to reinstall.)
-
-The first build takes a while (translation is a few minutes, and compiling the translated code
-and fetching the graphics dependencies can take much longer on slower machines). Logs for every
-step are written to the build folder. Later runs are incremental.
-
-Then run `build-<platform>/Strikers-WiiCompiled` (`Strikers-WiiCompiled.exe` on Windows). The game
-files (`Game/`), config, saves and caches live in a `MSCRecomp` folder, separate from any Mario
-Kart Wii WiiCompiled install:
-
-| Platform | Location |
-| --- | --- |
-| Windows | `%LOCALAPPDATA%\MSCRecomp` |
-| Linux | `$XDG_DATA_HOME/MSCRecomp` (default `~/.local/share/MSCRecomp`) |
-| macOS | `~/Library/Application Support/MSCRecomp` |
-
-> [!IMPORTANT]
-> The installed game files and everything the build produces (`Assets/`, `generated/`, `build-*/`)
-> contain or are derived from the game, and the build output is gitignored. Don't commit it, upload
-> it or share builds. Everyone builds from their own copy.
-
-### Developing
-
-After changing only runtime code, `./build.sh --skip-translate` (`build.cmd -SkipTranslate`) recompiles
-without retranslating. Adding or removing a `PPC_NATIVE_OVERRIDE` or `PPC_NATIVE_WRAP` needs a full
-run, because the translator scans `runtime/src` for them to decide which game functions to leave
-untranslated, or to keep but route through a wrapper.
-
-## How the port works
-
-WiiCompiled's translator is game-agnostic, but its runtime (the HLE for the Wii SDK, GX, audio,
-input, NAND and so on) hooks Mario Kart Wii addresses. This fork re-keys those hooks to Strikers
-Charged:
-
-- `projects/mscharged/`: project config and a function map generated from the
-  [mscharged-decomp](https://github.com/yannicksuter/mscharged-decomp) symbols.
-- `scripts/msc/remap_runtime.py`: rewrites the runtime's MKW guest addresses to MSC ones.
-  Functions are matched by name between the MKW and MSC symbol maps, and SDK globals use a
-  hand-checked table (`scripts/msc/datamap.py`). Hooks with no MSC equivalent are left as
-  `MSC-UNMAPPED` comments.
-- `runtime/src/hle/msc_game.cpp` and the `MSC:` comments across the runtime: game-specific fixes,
-  such as the emulated Wii Remote/Nunchuk, pointer handling, and texture and palette details of
-  MSC's renderer.
-
-## FAQ
-
-**Is this an emulator?**
-No. Everything is compiled to native code before you press play.
-
-**Do you provide the game?**
-No. Nothing in this repository contains Nintendo code or assets.
-
-**Can I use the PAL or Japanese version?**
-Not yet. Each version needs its own address map.
-
-**Will you fix original bugs?**
-The goal is behavior identical to real hardware. Only report things where this port differs from
-the original game.
+* **Is this an emulator?** No. Everything is compiled to native code before you play.
+* **Can I use other regions?** PAL and Japanese releases are currently unsupported as each version requires a custom address map.
+* **Credits:** Built upon [WiiCompiled](https://github.com/patchzyy/wiicompiled), [mscharged-decomp](https://github.com/yannicksuter/mscharged-decomp), [aurora](https://github.com/encounter/aurora), [nod](https://github.com/encounter/nod), and [Dolphin Emulator](https://github.com/dolphin-emu/dolphin). Bundled third-party components and their licenses are listed in [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
 
 ## AI usage
 
 AI coding tools were used heavily in developing this port.
 
-## Credits
-
-- **[WiiCompiled](https://github.com/patchzyy/wiicompiled)** by patchzyy and contributors: the
-  translator, runtime and everything this port builds on. The WiiCompiled logo is by inkwreck.
-- **[mscharged-decomp](https://github.com/yannicksuter/mscharged-decomp)**: the Mario Strikers
-  Charged decompilation whose symbols make the address mapping possible (CC0).
-- **[mkw](https://github.com/riidefi/mkw)** by riidefi and contributors: the Mario Kart Wii
-  decompilation, used for the MKW side of the mapping (CC0).
-- **[Super Mario Strikers decomp](https://github.com/yannicksuter/smstrikers-decomp)**: how the
-  shared engine handled GameCube controls, which made rebuilding them possible.
-- **[aurora](https://github.com/encounter/aurora)**: the GX rendering/windowing backend. MIT
-  licensed.
-- **[Dawn](https://dawn.googlesource.com/dawn)**: Google's WebGPU implementation, powering
-  aurora's backends.
-- **[nod](https://github.com/encounter/nod)**: the disc-image library and `nodtool`, used to read
-  your disc image. MIT licensed.
-- **[Dolphin Emulator](https://github.com/dolphin-emu/dolphin)**: an invaluable hardware
-  reference, and the source of the free DSP coefficient ROM and the default WiiConnect24
-  bootstrap tree bundled with the runtime.
-
-Bundled third-party components and their licenses are listed in
-[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
-
 ## License
 
-Strikers-WiiCompiled, like WiiCompiled, is free software: you can redistribute it and/or modify
-it under the terms of the [GNU General Public License, version 3](LICENSE) as published by the
-Free Software Foundation.
+Strikers-WiiCompiled, like WiiCompiled, is free software: you can redistribute it and/or modify it under the terms of the [GNU General Public License, version 3](LICENSE) as published by the Free Software Foundation.
 
-It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the
-implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General
-Public License for more details.
+It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
-Not affiliated with, endorsed by, or associated with Nintendo. Mario Strikers Charged is a
-trademark of Nintendo. No Nintendo intellectual property is contained in, distributed with, or
-obtainable through this project.
+Not affiliated with, endorsed by, or associated with Nintendo. Mario Strikers Charged is a trademark of Nintendo. No Nintendo intellectual property is contained in, distributed with, or obtainable through this project.
