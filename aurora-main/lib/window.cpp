@@ -646,6 +646,20 @@ void set_fullscreen(bool fullscreen) {
 
 bool get_fullscreen() { return (SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN) != 0u; }
 
+namespace {
+std::atomic<float> g_preferredRefreshRate{60.0f};
+} // namespace
+
+float get_preferred_refresh_rate() { return g_preferredRefreshRate.load(std::memory_order_relaxed); }
+
+void set_preferred_refresh_rate(float hz) {
+  const float previous = g_preferredRefreshRate.exchange(std::max(hz, 30.0f), std::memory_order_relaxed);
+  if (previous != g_preferredRefreshRate.load(std::memory_order_relaxed) &&
+      g_displayMode.load(std::memory_order_acquire) == AURORA_DISPLAY_MODE_EXCLUSIVE) {
+    set_display_mode(AURORA_DISPLAY_MODE_EXCLUSIVE);  // to the closest mode at the new rate
+  }
+}
+
 void set_display_mode(AuroraDisplayMode mode) {
   if (g_window == nullptr) {
     return;
@@ -681,7 +695,7 @@ void set_display_mode(AuroraDisplayMode mode) {
     const SDL_DisplayID display = SDL_GetDisplayForWindow(g_window);
     const SDL_DisplayMode* desktop = display != 0 ? SDL_GetDesktopDisplayMode(display) : nullptr;
     const uint32_t interpolationFps = aurora_get_frame_interpolation_fps();
-    const float targetHz = interpolationFps > 60 ? static_cast<float>(interpolationFps) : 60.0f;
+    const float targetHz = std::max(static_cast<float>(interpolationFps), get_preferred_refresh_rate());
     SDL_DisplayMode closest{};
     if (desktop == nullptr ||
         !SDL_GetClosestFullscreenDisplayMode(display, desktop->w, desktop->h, targetHz, true, &closest)) {

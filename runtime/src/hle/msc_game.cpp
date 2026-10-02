@@ -1,6 +1,7 @@
 // Mario Strikers Charged (R4QE01) game-specific HLE.
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -2747,15 +2748,71 @@ extern "C" void MSC_OSYieldThread_803BBEF0(CpuContext* ctx)
 
 PPC_NATIVE_OVERRIDE_VOID(803BBEF0, MSC_OSYieldThread_803BBEF0, (CpuContext* ctx), (ctx));
 
+double VI_HLE_FrameRate();  // hle/vi.cpp
+
 // glxSetSwapMode: menus run in swap mode 3, which waits an extra retrace whenever a frame ends more
 // than 12 ms after the last one. Frames here can take longer than on a Wii while still fitting in a
 // 60 Hz refresh, so mode 3 dropped those menus to 30 fps; wait one retrace per frame (mode 1) instead.
+// At the 30 FPS frame rate the retrace stays at 60 Hz and frames take two (the game's mode 2).
+namespace SwapMode {
+constexpr uint32_t kGlxSwapMode = 0x806DFA7Cu;  // glx_SwapMode: 0 no wait, 1 a retrace, 2 two, 3 one if late
+int32_t g_requested = 1;                         // glx_SwapMode's initial value
+uint32_t Effective(int32_t mode) {
+    if (mode == 3) mode = 1;
+    if (mode == 1 && VI_HLE_FrameRate() < 59.0) mode = 2;
+    return static_cast<uint32_t>(mode);
+}
+} // namespace SwapMode
+
 extern "C" void MSC_glxSetSwapMode_8036CEB0(int32_t mode)
 {
-    constexpr uint32_t kGlxSwapMode = 0x806DFA7Cu;  // glx_SwapMode
-    Memory::Write32(kGlxSwapMode, static_cast<uint32_t>(mode == 3 ? 1 : mode));
+    SwapMode::g_requested = mode;
+    Memory::Write32(SwapMode::kGlxSwapMode, SwapMode::Effective(mode));
 }
 PPC_NATIVE_OVERRIDE_VOID(8036CEB0, MSC_glxSetSwapMode_8036CEB0, (int32_t mode), (mode));
+
+// The frame rate changed (hle/vi.cpp): the last mode the game asked for, for the new rate.
+void MSC_ApplyFrameRateSwapMode()
+{
+    try {
+        Memory::Write32(SwapMode::kGlxSwapMode, SwapMode::Effective(SwapMode::g_requested));
+    } catch (const Memory::AccessViolation&) {
+    }
+}
+
+// bool MoviePlay(): a movie frame is decoded every second game frame (synced decode, the default),
+// or once per MovieRenderTask tick (stadium previews, the title screen's background), each paced
+// for the game's 60 fps. At other frame rates both are paced by time instead, at the cadence they
+// have at 60: a frame per 1/30 s synced, at most one per 1/60 s and per tick otherwise.
+extern "C" void func_80371264(CpuContext* ctx);
+static void MovieFramePacing(CpuContext* ctx)
+{
+    constexpr uint32_t kSyncedDecode = 0x806DFAC4u;                              // g_bSyncedDecode
+    constexpr uint32_t kNextDecodeFrame = 0x806E2428u, kDecodedFrames = 0x806E2424u;  // synced
+    constexpr uint32_t kTicks = 0x806E2430u, kDecodedTick = 0x806DFAC0u;         // per tick
+    using Clock = std::chrono::steady_clock;
+    static Clock::time_point s_nextDecode{};
+    const double rate = VI_HLE_FrameRate();
+    if (rate > 59.0 && rate < 61.0) {
+        func_80371264(ctx);
+        return;
+    }
+    const bool synced = Memory::Read8(kSyncedDecode) != 0;
+    const auto now = Clock::now();
+    const bool due = now >= s_nextDecode;
+    const uint32_t decodedBefore = Memory::Read32(kDecodedFrames);
+    if (synced) {
+        Memory::Write32(kNextDecodeFrame, due ? 0u : 0xFFFFFFFFu);
+    } else if (!due) {
+        Memory::Write32(kDecodedTick, Memory::Read32(kTicks));  // as if this tick was decoded already
+    }
+    func_80371264(ctx);
+    if (Memory::Read32(kDecodedFrames) != decodedBefore) {
+        const auto period = synced ? std::chrono::nanoseconds(33'333'333) : std::chrono::nanoseconds(16'666'667);
+        s_nextDecode = now - s_nextDecode > 4 * period ? now + period : s_nextDecode + period;
+    }
+}
+PPC_NATIVE_WRAP(80371264, MovieFramePacing);
 
 // ---------------------------------------------------------------------------------------------
 // Super Mario Strikers controls on GameCube-style controllers, with Charged's extras on top.

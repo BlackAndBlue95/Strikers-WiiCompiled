@@ -11,6 +11,8 @@
 #include "runtime_config.h"
 
 #include <dolphin/vi.h>
+#include <aurora/gfx.h>
+#include <SDL3/SDL_video.h>
 
 #include <algorithm>
 #include <array>
@@ -102,7 +104,7 @@ struct ViState {
     uint32_t xfbHeight = 480;
     bool fieldOdd = false;
     Clock::time_point lastRetrace = Clock::now();
-    std::chrono::microseconds retraceInterval{16666us}; // ~60 Hz
+    std::chrono::nanoseconds retraceInterval{16'666'667ns}; // 60 Hz
     bool hasValidXfb = false; // True once we've received at least one GXCopyDisp
     uint32_t readyXfb = 0;    // XFB address from the most recent GXCopyDisp
 
@@ -114,7 +116,7 @@ struct ViState {
     uint32_t pendingNextFrameBuffer = 0;
     bool pendingBlack = false;
     // Matches the active-state default (NTSC before VIInit) and the pending
-    // 16666us interval below; a flush before any VIConfigure must not commit
+    // 60 Hz interval below; a flush before any VIConfigure must not commit
     // PAL timing onto an NTSC-interval state.
     uint32_t pendingTvFormat = 0;
     uint32_t pendingRenderWidth = 640;
@@ -123,7 +125,7 @@ struct ViState {
     uint32_t pendingViYOrigin = 0;
     uint32_t pendingXfbWidth = 640;
     uint32_t pendingXfbHeight = 480;
-    std::chrono::microseconds pendingRetraceInterval{16666us};
+    std::chrono::nanoseconds pendingRetraceInterval{16'666'667ns};
     
     // Set by VIFlush(); cleared after commit in AdvanceRetrace
     bool flushArmed = false;
@@ -147,26 +149,41 @@ constexpr uint32_t kViNextFrameBufferAddr   = 0x806E2B74;
 constexpr uint32_t kViNextFrameBufferHwAddr = 0x805D60D0;
 constexpr uint32_t kViRetraceQueueAddr      = 0x806E2B90; // Thread queue for VIWaitForRetrace
 
-// Native frame rate setting (60 or 120). The game paces itself on VIWaitForRetrace and times its
-// simulation by the OS clock (fixed 50 Hz steps, rendered by blending snapshots), so a faster retrace
-// gives real extra frames at normal game speed.
-std::atomic<uint32_t> g_targetFrameRate{0};
+// Native frame rate (F10 > Graphics > Frame rate). The game paces itself on VIWaitForRetrace and
+// times its simulation by the OS clock (fixed 50 Hz steps, rendered by blending snapshots), so a
+// faster retrace gives real extra frames at normal game speed. 30 keeps the retrace at 60 Hz and
+// has the game take two retraces per frame (its own swap mode 2, msc_game.cpp); "match the display"
+// is resolved to the display's refresh rate when set.
+std::atomic<uint32_t> g_frameRateSetting{0};   // a RuntimeConfigFile::kFrameRates value, 0 until read
+std::atomic<double> g_frameRateHz{0.0};        // the rate in effect, in frames per second
 
-uint32_t TargetFrameRate() {
-    uint32_t hz = g_targetFrameRate.load(std::memory_order_acquire);
-    if (hz == 0) {
-        hz = RuntimeConfigFile::FrameRate(60);
-        g_targetFrameRate.store(hz, std::memory_order_release);
+double DisplayRefreshRate() {
+    int count = 0;
+    SDL_Window** windows = SDL_GetWindows(&count);
+    const SDL_DisplayID display = windows != nullptr && count > 0 ? SDL_GetDisplayForWindow(windows[0]) : SDL_GetPrimaryDisplay();
+    SDL_free(windows);
+    const SDL_DisplayMode* mode = display != 0 ? SDL_GetCurrentDisplayMode(display) : nullptr;
+    return mode != nullptr && mode->refresh_rate >= 30.0f ? mode->refresh_rate : 60.0;
+}
+
+double FrameRateHz() {
+    double hz = g_frameRateHz.load(std::memory_order_acquire);
+    if (hz == 0.0) {
+        const uint32_t setting = RuntimeConfigFile::FrameRate(60);
+        hz = setting == 0 ? 60.0 : setting;  // the display is looked up by VI_HLE_SetFrameRate, at startup
+        g_frameRateSetting.store(setting, std::memory_order_release);
+        g_frameRateHz.store(hz, std::memory_order_release);
     }
     return hz;
 }
 
-std::chrono::microseconds IntervalForFormat(uint32_t tvFormat) {
-    // PAL uses 50 Hz; NTSC/EURGB60 follow the frame rate setting.
+std::chrono::nanoseconds IntervalForFormat(uint32_t tvFormat) {
+    // PAL uses 50 Hz; NTSC/EURGB60 follow the frame rate setting (30 on a 60 Hz retrace).
     if (tvFormat == 1) {
-        return 20000us;
+        return 20ms;
     }
-    return TargetFrameRate() >= 120 ? 8333us : 16666us;
+    const double hz = std::max(FrameRateHz(), 60.0);
+    return std::chrono::nanoseconds(static_cast<int64_t>(1e9 / hz + 0.5));
 }
 
 // Shared busy-wait budget for deadline-precise sleeps (matches Aurora's
@@ -822,7 +839,7 @@ PPC_NATIVE_OVERRIDE_VOID(803C75B8, VIGetRetraceCount_HLE_803C75B8, (CpuContext* 
 extern "C" void VIGetCurrentLine_HLE_803C75C0(CpuContext* ctx)
 {
     uint32_t height = 480;
-    std::chrono::microseconds interval{16666us};
+    std::chrono::nanoseconds interval{16'666'667ns};
     Clock::time_point last;
     {
         std::lock_guard<std::mutex> lock(g_viMutex);
@@ -832,7 +849,7 @@ extern "C" void VIGetCurrentLine_HLE_803C75C0(CpuContext* ctx)
         last = g_vi.lastRetrace;
     }
     const auto now = Clock::now();
-    const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - last);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(now - last);
     uint32_t line = 0;
     if (interval.count() > 0 && height > 0) {
         const uint64_t scaled = static_cast<uint64_t>(elapsed.count()) * height;
@@ -870,7 +887,7 @@ extern "C" void VIWaitForRetrace_HLE_803C6434(CpuContext* ctx)
 
         OS__RestoreInterrupts_803B8F5C(irqState);
     } else {
-        std::chrono::microseconds interval{16666us};
+        std::chrono::nanoseconds interval{16'666'667ns};
         Clock::time_point target;
         {
             std::lock_guard<std::mutex> lock(g_viMutex);
@@ -889,10 +906,23 @@ extern "C" void VIWaitForRetrace_HLE_803C6434(CpuContext* ctx)
 }
 PPC_NATIVE_OVERRIDE_VOID(803C6434, VIWaitForRetrace_HLE_803C6434, (CpuContext* ctx), (ctx));
 
-// Switches the native frame rate at runtime (F10 > Video).
-void VI_HLE_SetFrameRate(uint32_t hz) {
-    g_targetFrameRate.store(hz >= 120 ? 120u : 60u, std::memory_order_release);
-    std::lock_guard<std::mutex> lock(g_viMutex);
-    g_vi.retraceInterval = IntervalForFormat(g_vi.tvFormat);
-    g_vi.pendingRetraceInterval = IntervalForFormat(g_vi.pendingTvFormat);
+void MSC_ApplyFrameRateSwapMode();  // hle/msc_game.cpp
+
+// Sets the native frame rate (a RuntimeConfigFile::kFrameRates value), at startup and from F10 >
+// Graphics; called on the main thread, which may ask SDL for the display's refresh rate.
+void VI_HLE_SetFrameRate(uint32_t setting) {
+    const double hz = setting == 0 ? DisplayRefreshRate() : static_cast<double>(setting);
+    g_frameRateSetting.store(setting, std::memory_order_release);
+    g_frameRateHz.store(hz, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(g_viMutex);
+        g_vi.retraceInterval = IntervalForFormat(g_vi.tvFormat);
+        g_vi.pendingRetraceInterval = IntervalForFormat(g_vi.pendingTvFormat);
+    }
+    MSC_ApplyFrameRateSwapMode();
+    aurora_set_preferred_refresh_rate(static_cast<float>(std::max(hz, 60.0)));
+    RT_LOG(RT_TAG_VI) << "frame rate: " << hz << " fps" << (setting == 0 ? " (the display's)" : "") << std::endl;
 }
+
+// The native frame rate in effect, in frames per second.
+double VI_HLE_FrameRate() { return FrameRateHz(); }

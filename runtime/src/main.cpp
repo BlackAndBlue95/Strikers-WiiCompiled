@@ -79,6 +79,8 @@ extern "C" int g_gxFrameCount;
 extern "C" const char* DVDResolveHostPathForTest(const char* dvdPath);
 bool OS_HLE_InterruptsEnabled() noexcept;
 
+void VI_HLE_SetFrameRate(uint32_t setting);  // hle/vi.cpp
+
 namespace {
 
 // Defined below, beside the fatal-log machinery.
@@ -1448,6 +1450,9 @@ int RuntimeMain(int argc, char** argv) {
                       << std::endl;
         }
         aurora_set_frame_worker_wait_callback(ServiceGuestTimingDuringAuroraFrameWait);
+        // Before the display mode is applied: exclusive fullscreen picks its refresh from it, and
+        // "match the display" needs the window.
+        VI_HLE_SetFrameRate(RuntimeConfigFile::FrameRate(60));
         GxGuestWrite::InstallAuroraHooks();
         UpdateDynamicAspectSurface(auroraInfo.windowSize.native_fb_width,
                                       auroraInfo.windowSize.native_fb_height);

@@ -37,6 +37,12 @@ enum class SoundCategory { Music, Effects, Voices, Menus, Cutscenes };
 inline constexpr std::array<std::string_view, 5> kSoundCategoryKeys{"music_volume", "effects_volume", "voice_volume",
                                                                     "menu_volume", "cutscene_volume"};
 
+// The frame rates the game can run at (F10 > Graphics > Frame rate); 0 matches the display's refresh.
+inline constexpr std::array<uint32_t, 7> kFrameRates{30, 60, 120, 144, 160, 165, 0};
+inline bool IsSupportedFrameRate(uint64_t value) {
+    return std::find(kFrameRates.begin(), kFrameRates.end(), value) != kFrameRates.end();
+}
+
 struct RuntimeUserConfig {
     std::optional<bool> widescreen;
     std::optional<bool> forceAspect169;
@@ -323,7 +329,8 @@ inline void EnsureConfigFile() {
               "widescreen = true\n"
               "force_16_9 = false\n"
               "resolution_multiplier = 1.0\n"
-              "# Native frame rate: 60 or 120. 120 needs a high-refresh display and costs battery.\n"
+              "# Native frame rate: 30, 60, 120, 144, 160 or 165, or 0 to match the display. Above 60\n"
+              "# needs a high-refresh display and costs battery.\n"
               "frame_rate = 60\n"
               "display_mode = \"windowed\"\n"
               "graphics_api = \"auto\"\n"
@@ -532,7 +539,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         config.displayMode = *value;
     }
     if (auto value = FindConfigUint(document, "video", "frame_rate")) {
-        if (*value == 60 || *value == 120) {
+        if (IsSupportedFrameRate(*value)) {
             config.frameRate = static_cast<uint32_t>(*value);
         }
     }
@@ -753,7 +760,7 @@ inline bool SetWindowPosition(int32_t x, int32_t y) {
 }
 
 inline bool SetFrameRate(uint32_t value) {
-    if (value != 60 && value != 120) {
+    if (!IsSupportedFrameRate(value)) {
         return false;
     }
     Mutable().frameRate = value;
@@ -1089,7 +1096,8 @@ inline bool SetWiiAccelOffset(const std::array<double, 3>& offset) {
     return ok;
 }
 
-// Native guest frame rate (the emulated VI retrace rate): 60 or 120.
+// The game's native frame rate: 30, 60, 120, 144, 160 or 165 frames per second, or 0 for the
+// display's refresh rate (hle/vi.cpp: VI_HLE_FrameRate gives the rate in effect).
 inline uint32_t FrameRate(uint32_t fallback = 60) {
     return Get().frameRate.value_or(fallback);
 }

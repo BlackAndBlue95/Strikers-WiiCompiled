@@ -87,6 +87,10 @@ bool aurora_get_disable_copy_filter();
 void aurora_set_scaled_efb_copies(bool scaled);
 bool aurora_get_scaled_efb_copies();
 
+// The refresh rate exclusive fullscreen picks a display mode for: the game's frame rate. Changing it
+// while in exclusive fullscreen switches to the closest mode at the new rate.
+void aurora_set_preferred_refresh_rate(float hz);
+
 // Dolphin-style custom textures (AuroraConfig::allowTextureReplacements / allowTextureDumps): how many
 // replacements were indexed at startup, and how many textures have been dumped since.
 uint32_t aurora_get_texture_replacement_count();

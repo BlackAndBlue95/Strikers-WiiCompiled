@@ -35,9 +35,10 @@ The [wiki](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki) has the 
 Booting, menus, the Hub, tutorials, VS matches, music, voices and saving all work, and the game
 runs at full speed on Apple Silicon.
 
-- **120 FPS:** **F10 > Graphics > Frame rate**, or `frame_rate = 120` in `Config.toml`. It isn't
-  interpolation: matches run on a fixed clock and twice as many frames are really rendered. It
-  needs a high refresh rate display and uses more power, so 60 is the default.
+- **Frame rate:** **F10 > Graphics > Frame rate**: 30, 60, 120, 144, 160 or 165 FPS, or the
+  display's own refresh rate. It isn't interpolation: matches run on a fixed clock and every frame
+  is really rendered. Above 60 needs a display that refreshes that fast and uses more power, so 60
+  is the default.
 - **Known issues:** occasional rendering differences from the original hardware. Online play and
   WiiConnect24 aren't supported. Only the USA Rev 1 disc (`R4QE01`) is mapped; other regions and
   revisions won't work.

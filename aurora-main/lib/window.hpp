@@ -48,6 +48,10 @@ void set_title(const char* title);
 void set_fullscreen(bool fullscreen);
 bool get_fullscreen();
 void set_display_mode(AuroraDisplayMode mode);
+// The refresh rate exclusive fullscreen asks the display for (the game's frame rate); changing it
+// re-applies exclusive fullscreen.
+void set_preferred_refresh_rate(float hz);
+float get_preferred_refresh_rate();
 AuroraDisplayMode get_display_mode();
 void set_window_size(uint32_t width, uint32_t height);
 void set_window_position(uint32_t x, uint32_t y);

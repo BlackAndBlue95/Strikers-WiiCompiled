@@ -52,7 +52,8 @@ extern "C" int g_gxFrameCount;
 // Defined in runtime/src/hle/audio/ax_mix.cpp. That header is private to the HLE
 // directory and is not on this target's include path.
 
-void VI_HLE_SetFrameRate(uint32_t hz);  // hle/vi.cpp
+void VI_HLE_SetFrameRate(uint32_t setting);  // hle/vi.cpp
+double VI_HLE_FrameRate();
 
 namespace AxDspHle {
 void SetMixWorkerEnabled(bool enabled);
@@ -1288,15 +1289,19 @@ void DrawGraphicsSettings() {
     // Native frame rate: the game renders every frame itself (its simulation is time-based), so this is
     // not interpolation.
     {
-        int frameRateMode = RuntimeConfigFile::FrameRate(60) >= 120 ? 1 : 0;
-        constexpr std::array<const char*, 2> kFrameRates{"60 FPS", "120 FPS"};
-        if (ImGui::BeginCombo("Frame rate", kFrameRates[static_cast<size_t>(frameRateMode)])) {
-            for (int mode = 0; mode < static_cast<int>(kFrameRates.size()); ++mode) {
-                const bool selected = frameRateMode == mode;
-                if (ImGui::Selectable(kFrameRates[static_cast<size_t>(mode)], selected) && !selected) {
-                    const uint32_t hz = mode == 1 ? 120u : 60u;
-                    RuntimeConfigFile::SetFrameRate(hz);
-                    VI_HLE_SetFrameRate(hz);
+        const auto label = [](uint32_t rate) {
+            if (rate != 0) return std::to_string(rate) + " FPS";
+            char text[48];
+            std::snprintf(text, sizeof(text), "Match the display (%.0f FPS)", VI_HLE_FrameRate());
+            return std::string(text);
+        };
+        const uint32_t current = RuntimeConfigFile::FrameRate(60);
+        if (ImGui::BeginCombo("Frame rate", label(current).c_str())) {
+            for (const uint32_t rate : kFrameRates) {
+                const bool selected = rate == current;
+                if (ImGui::Selectable(rate == 0 ? "Match the display" : label(rate).c_str(), selected) && !selected) {
+                    RuntimeConfigFile::SetFrameRate(rate);
+                    VI_HLE_SetFrameRate(rate);
                 }
                 if (selected) {
                     ImGui::SetItemDefaultFocus();
@@ -1305,7 +1310,8 @@ void DrawGraphicsSettings() {
             ImGui::EndCombo();
         }
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
-        ImGui::TextDisabled("120 FPS needs a high refresh rate display and uses more battery.");
+        ImGui::TextDisabled("Real frames, not interpolation. Above 60 needs a display that refreshes that fast "
+                            "and uses more power; 30 halves the work for slow machines.");
         ImGui::PopTextWrapPos();
     }
     if (ImGui::Checkbox("Disable copy filter", &g_disableCopyFilter)) {

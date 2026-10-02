@@ -1967,4 +1967,5 @@ void aurora_set_background_input(bool value) {
   aurora::window::set_background_input(value);
 }
 void aurora_set_display_mode(AuroraDisplayMode mode) { aurora::window::set_display_mode(mode); }
+void aurora_set_preferred_refresh_rate(float hz) { aurora::window::set_preferred_refresh_rate(hz); }
 AuroraDisplayMode aurora_get_display_mode() { return aurora::window::get_display_mode(); }

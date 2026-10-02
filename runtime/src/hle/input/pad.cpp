@@ -22,6 +22,8 @@
 #include <cfloat>
 #include <dolphin/pad.h>
 
+double VI_HLE_FrameRate();  // hle/vi.cpp
+
 namespace {
 
 bool NativeButtonHeld(SDL_Gamepad* gamepad, uint32_t nativeButton) {
@@ -134,6 +136,9 @@ bool Present(uint32_t chan) {
 // nothing is highlighted (a menu just opened), the nearest button is selected. Moving the right
 // stick brings the hand back as a free pointer until the D-pad is used again.
 namespace MenuNav {
+// Game frames in `seconds` at the frame rate in effect (navigation runs once a game frame).
+int FramesFor(double seconds) { return std::max(1, static_cast<int>(seconds * ::VI_HLE_FrameRate() + 0.5)); }
+
 constexpr uint32_t kPointerManagerPtr = 0x806E2030u;   // g_pFEPointerManager
 constexpr uint32_t kPointerPositions = 0x80578460u;    // gFEPointerPositions[4]: centre origin, +y up
 constexpr uint32_t kPointerInstances = 0x80578450u;    // gFEPointerInstances[4] (the hand)
@@ -500,7 +505,7 @@ Result Update(uint32_t chan, uint32_t dir, Point stick, bool backButton, int pag
             // (the screen changes before anything is seen moving).
             SnapTo(st, buttons, back->centre, cursor);
             st.backFrames = 2;
-            st.hideHandFrames = RuntimeConfigFile::FrameRate(60) >= 120 ? 40 : 20;  // about 1/3 s
+            st.hideHandFrames = FramesFor(1.0 / 3.0);
         }
         else if (st.overlay) { st.pauseFrames = 4; }
     }
@@ -575,7 +580,7 @@ Result Update(uint32_t chan, uint32_t dir, Point stick, bool backButton, int pag
         SelectAt(chan, buttons, st.goal);
         return r;
     }
-    if (++st.offButtonFrames < 6) return r;
+    if (++st.offButtonFrames < FramesFor(0.1)) return r;
     st.offButtonFrames = 0;
     SnapTo(st, buttons, PickDefault(buttons, stageSelect), cursor);
     SelectAt(chan, buttons, st.goal);
