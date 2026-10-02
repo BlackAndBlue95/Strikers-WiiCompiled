@@ -104,8 +104,16 @@ switched to the WinUSB driver once with [Zadig](https://zadig.akeo.ie/).
 
 ## Mods
 
+Mods are packages you drop in the `Mods` folder of the data folder: a `mod.toml` manifest and the
+files the mod adds. **F10 > Mods** lists them, with a switch for each. A mod can add characters
+(picked on extra pages of captain select, with their own models, animations, voices, cutscenes, menu
+art and teams), add to the game's shared files without replacing them, and include a native plugin.
+How to make one: [docs/modding](docs/modding/README.md).
+
+## Tweaks
+
 Strikers Charged was built around the Wii Remote pointer. These controller-friendly changes are
-switched on or off under **F10 > Mods** (or `[mods]` in `Config.toml`):
+switched on or off under **F10 > Tweaks** (or `[mods]` in `Config.toml`):
 
 - **Controller menu navigation** (on): the D-pad and sticks move the game's hand cursor between
   buttons, row by row (on the main ring menu, the stick picks the icon in that direction). New
@@ -151,7 +159,7 @@ The same menu has fixes and extras, several taken from the community's
 > shots would simply always go in. While a gamepad or keyboard is in use, every match has Mega
 > Strikes off for both sides: a fully charged captain shot becomes a normal strong shot, for you
 > and the CPU alike. Your saved game options aren't changed, and with real Wii Remotes Mega
-> Strikes work as normal. Turn the mod off under F10 > Mods if you want them back.
+> Strikes work as normal. Turn the tweak off under F10 > Tweaks if you want them back.
 
 ## Requirements
 
@@ -259,8 +267,9 @@ Kart Wii WiiCompiled install:
 ### Developing
 
 After changing only runtime code, `./build.sh --skip-translate` (`build.cmd -SkipTranslate`) recompiles
-without retranslating. Adding or removing a `PPC_NATIVE_OVERRIDE` needs a full run, because the
-translator scans `runtime/src` for them to decide which game functions to leave untranslated.
+without retranslating. Adding or removing a `PPC_NATIVE_OVERRIDE` or `PPC_NATIVE_WRAP` needs a full
+run, because the translator scans `runtime/src` for them to decide which game functions to leave
+untranslated, or to keep but route through a wrapper.
 
 ## How the port works
 
