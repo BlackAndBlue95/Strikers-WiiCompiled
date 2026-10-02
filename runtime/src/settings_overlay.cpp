@@ -1118,6 +1118,12 @@ void DrawModSettings() {
     }
     ImGui::TextDisabled("Tied one goal short of the target, the target moves up: you have to\n"
                         "outscore the other side by at least 2 goals to win.");
+    bool fastMenus = RuntimeConfigFile::ModFastMenus();
+    if (ImGui::Checkbox("Fast menus", &fastMenus)) {
+        RuntimeConfigFile::SetModFastMenus(fastMenus);
+    }
+    ImGui::TextDisabled("Skips menu transitions: panels sliding in and out, and camera moves such as\n"
+                        "the zoom from the main menu. Idle animations and matches are unchanged.");
     bool allCaptains = RuntimeConfigFile::ModAllCaptains();
     if (ImGui::Checkbox("Captain-only teams", &allCaptains)) {
         RuntimeConfigFile::SetModAllCaptains(allCaptains);

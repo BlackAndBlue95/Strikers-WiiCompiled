@@ -109,6 +109,7 @@ struct RuntimeUserConfig {
     std::optional<bool> modBluePeach;
     std::optional<bool> modKitChoice;
     std::optional<bool> modAllCaptains;
+    std::optional<bool> modFastMenus;
     std::optional<std::string> modCaptainTeammates[2];  // "a,b,c": character per sidekick slot, -1 = the team's captain
     std::map<std::string, std::string> controllerExpressions;
 };
@@ -458,6 +459,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.modShotCounter = FindConfigValue<bool>(document, "mods", "shot_counter");
     config.modBluePeach = FindConfigValue<bool>(document, "mods", "blue_peach");
     config.modAllCaptains = FindConfigValue<bool>(document, "mods", "all_captains");
+    config.modFastMenus = FindConfigValue<bool>(document, "mods", "fast_menus");
     config.modCaptainTeammates[0] = FindConfigValue<std::string>(document, "mods", "captain_teammates_home");
     config.modCaptainTeammates[1] = FindConfigValue<std::string>(document, "mods", "captain_teammates_away");
     config.modKitChoice = FindConfigValue<bool>(document, "mods", "kit_choice");
@@ -805,6 +807,11 @@ inline bool ModKitChoice() { return Get().modKitChoice.value_or(true); }
 inline bool SetModKitChoice(bool value) {
     Mutable().modKitChoice = value;
     return WriteSetting("mods", "kit_choice", value ? "true" : "false");
+}
+inline bool ModFastMenus() { return Get().modFastMenus.value_or(false); }
+inline bool SetModFastMenus(bool value) {
+    Mutable().modFastMenus = value;
+    return WriteSetting("mods", "fast_menus", value ? "true" : "false");
 }
 inline bool ModAllCaptains() { return Get().modAllCaptains.value_or(false); }
 inline bool SetModAllCaptains(bool value) {

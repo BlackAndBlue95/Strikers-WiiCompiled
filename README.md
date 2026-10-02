@@ -112,6 +112,9 @@ switched on or off under **F10 > Mods** (or `[mods]` in `Config.toml`):
   screens start on their first option, **B** goes back (the on-screen BACK button is never
   reached by moving), and **L/R** flip pages such as stages on stage select.
 - **Selection badge** (off): marks the selected button with a badge in the player's colour.
+- **Fast menus** (off): skips menu transitions. Panels that slide in and out appear in place, and
+  camera moves such as the zoom from the main menu are over in a frame or two. Idle animations,
+  music and matches are unchanged.
 - **No Mega Strikes with controllers** (on): see below.
 
 The same menu has fixes and extras, several taken from the community's

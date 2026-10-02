@@ -958,10 +958,63 @@ void SetSlotCaptain(CpuContext* ctx, uint32_t board, int side, int slot, int cap
 }
 } // namespace PartnerGrid
 
+// Fast menus: menu transitions are skipped, outside matches. 2D: one-shot FE slides (panels sliding
+// in and out, button states) jump to their end (TLSlide::Update override below); long one-shot
+// slides are content (credits), and looping ones idle animation, so those keep their pace. 3D: while
+// the front-end presentation runs a transition script (FrontEndPresentation::IsActive: anything but
+// "Idle", e.g. the zoom from the main menu), the game's time dilation runs the time-dilated tasks
+// (camera animations and moves, FE scenes, effects) kDilation times faster, so they finish within a
+// frame or two, and each scripted wait ends as it starts; audio keeps real time.
+namespace FastMenus {
+constexpr float kDilation = 30.0f;
+constexpr float kLongestTransition = 2.5f;              // seconds; longer one-shot slides are content
+constexpr uint32_t kTaskManager = 0x806E1DA0u;          // nlTaskManager::m_pInstance (mTimeDilation at +0x00)
+constexpr uint32_t kAudioTask = 0x8056F870u;            // audioUpdateTask
+constexpr uint32_t kTaskTimeDilated = 0x1C;             // nlTask::mTimeDilated
+constexpr uint32_t kPresentationInstance = 0x801FEEACu; // FrontEndPresentation::GetInstance()
+constexpr uint32_t kPresentationIsActive = 0x801FF168u; // FrontEndPresentation::IsActive() const
+constexpr uint32_t kPresentationWait = 0xA8;            // FrontEndPresentation::mWaitTime
+
+uint32_t g_presentation = 0;
+bool g_dilating = false;
+
+bool InMenus() { return RuntimeConfigFile::ModFastMenus() && Memory::Read32(kGamePtr) == 0; }
+
+void Update() {
+    bool transition = false;
+    if (InMenus()) {
+        const uint32_t mgr = Memory::Read32(kSceneManager);
+        if (mgr != 0 && Memory::Read32(mgr + 0x04) != 0) {  // front end running: the presentation exists
+            GuestInterruptCallbackContext call;
+            if (g_presentation == 0) {
+                InvokeIndirectCpu(kPresentationInstance, call.get());
+                g_presentation = call.get()->gpr[3];
+            }
+            call.get()->gpr[3] = g_presentation;
+            InvokeIndirectCpu(kPresentationIsActive, call.get());
+            transition = (call.get()->gpr[3] & 0xFF) != 0;
+        }
+    }
+    const uint32_t taskManager = Memory::Read32(kTaskManager);
+    if (transition && taskManager != 0) {
+        Memory::WriteFloat32(taskManager, kDilation);
+        Memory::Write8(kAudioTask + kTaskTimeDilated, 0);
+        g_dilating = true;
+        if (Memory::ReadFloat32(g_presentation + kPresentationWait) > 0.0f)  // a wait started: over
+            Memory::WriteFloat32(g_presentation + kPresentationWait, 0.0f);
+    } else if (g_dilating) {
+        if (taskManager != 0) Memory::WriteFloat32(taskManager, 1.0f);
+        Memory::Write8(kAudioTask + kTaskTimeDilated, 1);
+        g_dilating = false;
+    }
+}
+} // namespace FastMenus
+
 void Apply() {
     try {
         UnlockEverything();
         CaptainVoices();
+        FastMenus::Update();
         PartnerGrid::Update();
         KitChoice();
         BluePeach();
@@ -1179,6 +1232,59 @@ extern "C" void MSC_CaptainComponentRandomizeSidekicks_801DCB28(CpuContext* ctx)
     SavePicks(side);
 }
 PPC_NATIVE_OVERRIDE_VOID(801DCB28, MSC_CaptainComponentRandomizeSidekicks_801DCB28, (CpuContext* ctx), (ctx));
+
+// void TLSlide::Update(float dt). As the original (FE timeline: the slide's time advances by dt,
+// looping or stopping at its end, its animations are evaluated at that time, and its children
+// updated with dt: components' active slides, then UpdateAsset), plus fast menus
+// (FrameMods::FastMenus): a one-shot slide no longer than a transition goes straight to its end.
+extern "C" void MSC_TLSlideUpdate_802FFCD4(CpuContext* ctx)
+{
+    using namespace FrameMods::FastMenus;
+    constexpr uint32_t kAnimationUpdate = 0x802FA19Cu;  // FEAnimation::Update(float time)
+    constexpr uint32_t kComponentUpdate = 0x80302114u;  // TLComponentInstance::Update(float dt)
+    constexpr uint32_t kUpdateAsset = 0x802FFAFCu;      // TLSlide::UpdateAsset(TLInstance*, float dt)
+    constexpr uint32_t kChildren = 0x08, kAnimations = 0x0C, kStart = 0x10, kDuration = 0x14, kTime = 0x18,
+                       kPlayMode = 0x1C, kPaused = 0x44;  // TLSlide
+    const uint32_t slide = ctx->gpr[3];
+    const uint32_t savedLr = ctx->lr;
+    const double dt = Memory::Read8(slide + kPaused) ? 0.0 : ctx->fpr[1].d;
+    const int32_t mode = static_cast<int32_t>(Memory::Read32(slide + kPlayMode));
+    const float start = Memory::ReadFloat32(slide + kStart), duration = Memory::ReadFloat32(slide + kDuration);
+    float time = Memory::ReadFloat32(slide + kTime) + static_cast<float>(dt);
+    const float end = start + duration;
+    if (mode == 0 && duration <= kLongestTransition && !Memory::Read8(slide + kPaused) && InMenus()) time = end;
+    if (time > end) {
+        if (mode == 1) time -= end;      // TLPM_LOOPING
+        else if (mode == 0) time = end;  // TLPM_STOP_AT_END
+    }
+    Memory::WriteFloat32(slide + kTime, time);
+    if (const uint32_t animations = Memory::Read32(slide + kAnimations)) {  // ring of FEAnimation (m_next at +4)
+        for (uint32_t anim = Memory::Read32(animations + 4), guard = 0; anim != 0 && guard < 4096; ++guard) {
+            ctx->gpr[3] = anim;
+            ctx->fpr[1].d = Memory::ReadFloat32(slide + kTime);
+            InvokeIndirectCpu(kAnimationUpdate, ctx);
+            if (anim == Memory::Read32(slide + kAnimations)) break;
+            anim = Memory::Read32(anim + 4);
+        }
+    }
+    if (const uint32_t children = Memory::Read32(slide + kChildren)) {  // ring of TLInstance (m_next at +0)
+        for (uint32_t child = Memory::Read32(children), guard = 0; child != 0 && guard < 4096; ++guard) {
+            if (Memory::Read32(child + 0x88) == 4) {  // TLAT_COMPONENT
+                ctx->gpr[3] = child;
+                ctx->fpr[1].d = dt;
+                InvokeIndirectCpu(kComponentUpdate, ctx);
+            }
+            ctx->gpr[3] = slide;
+            ctx->gpr[4] = child;
+            ctx->fpr[1].d = dt;
+            InvokeIndirectCpu(kUpdateAsset, ctx);
+            if (child == Memory::Read32(slide + kChildren)) break;
+            child = Memory::Read32(child);
+        }
+    }
+    ctx->lr = savedLr;
+}
+PPC_NATIVE_OVERRIDE_VOID(802FFCD4, MSC_TLSlideUpdate_802FFCD4, (CpuContext* ctx), (ctx));
 
 // bool GetTweakBool(const char* path, bool defaultValue). As the original (TweakRegistry.cpp:
 // FindTweakNode, then the value's storage kind), plus the captain-only teams mod: the game's
