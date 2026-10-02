@@ -51,6 +51,11 @@ uint32_t ConnectedCount();
 // Where the sensor bar sits: above the screen, or below it (the default).
 void SetSensorBarAbove(bool above);
 bool SensorBarAbove();
+// The remote's motor on a game channel. The game times its own pulses; a motor left on for more
+// than a second is stopped anyway.
+void SetRumble(uint32_t chan, bool on);
+// The IR camera sensitivity (the Wii's setting, 1-5); connected remotes are reprogrammed.
+void SetIrSensitivity(int level);
 // KPAD's pointer position (KPADStatus.pos) for a sensor-bar midpoint in raw camera pixels with
 // the remote's roll already undone, and the midpoint that gives a pointer position.
 void MidpointToPointer(float mx, float my, float pos[2]);

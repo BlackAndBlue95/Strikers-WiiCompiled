@@ -62,6 +62,9 @@ struct RuntimeUserConfig {
     // The sensor bar (or DolphinBar) sits above the screen rather than below it. KPAD aims the
     // pointer relative to it (KPADCalibrateDPD), like the Wii's sensor bar position setting.
     std::optional<bool> sensorBarAbove;
+    std::optional<bool> rumbleEnabled;     // the game's vibration, on remotes and controllers
+    std::optional<int32_t> irSensitivity;  // the Wii's IR sensitivity setting, 1-5, for real remotes
+    std::optional<double> pointerSpeed;    // the stick-driven pointer's speed (controllers), x1
     // Accelerometer zero-point correction for the Bluetooth Wii Remote, in g and in
     // SDL's sensor frame (x right, y out of the button face, z towards the user).
     // SDL's Wii driver falls back to a nominal zero point when its read of the
@@ -536,6 +539,11 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.wiiRemotes = FindConfigValue<bool>(document, "controller", "wii_remotes");
     config.wiiContinuousScan = FindConfigValue<bool>(document, "controller", "wii_continuous_scan");
     config.sensorBarAbove = FindConfigValue<bool>(document, "controller", "sensor_bar_above");
+    config.rumbleEnabled = FindConfigValue<bool>(document, "controller", "rumble");
+    if (auto value = FindConfigInt(document, "controller", "ir_sensitivity"); value && *value >= 1 && *value <= 5)
+        config.irSensitivity = *value;
+    if (auto value = FindConfigFloat(document, "controller", "pointer_speed"); value && *value >= 0.25f && *value <= 4.0f)
+        config.pointerSpeed = *value;
     config.wiiAccelOffsetX = FindConfigValue<double>(document, "controller", "wii_accel_offset_x");
     config.wiiAccelOffsetY = FindConfigValue<double>(document, "controller", "wii_accel_offset_y");
     config.wiiAccelOffsetZ = FindConfigValue<double>(document, "controller", "wii_accel_offset_z");
@@ -984,6 +992,31 @@ inline bool SetWiiContinuousScanEnabled(bool value) {
 
 // Whether the sensor bar sits above the screen (default: below).
 inline bool SensorBarAbove() { return Get().sensorBarAbove.value_or(false); }
+
+// The game's vibration (on unless turned off).
+inline bool RumbleEnabled() { return Get().rumbleEnabled.value_or(true); }
+inline bool SetRumbleEnabled(bool value) {
+    Mutable().rumbleEnabled = value;
+    return WriteSetting("controller", "rumble", value ? "true" : "false");
+}
+
+// The Wii's IR sensitivity (1-5, default 3): how bright a dot real remotes' cameras report.
+inline int32_t IrSensitivity() { return Get().irSensitivity.value_or(3); }
+inline bool SetIrSensitivity(int32_t value) {
+    value = std::clamp(value, 1, 5);
+    Mutable().irSensitivity = value;
+    return WriteSetting("controller", "ir_sensitivity", std::to_string(value));
+}
+
+// How fast a controller's stick moves the pointer, as a multiple of the normal speed.
+inline double PointerSpeed() { return Get().pointerSpeed.value_or(1.0); }
+inline bool SetPointerSpeed(double value) {
+    value = std::clamp(value, 0.25, 4.0);
+    Mutable().pointerSpeed = value;
+    std::ostringstream formatted;
+    formatted << std::fixed << std::setprecision(2) << value;
+    return WriteSetting("controller", "pointer_speed", formatted.str());
+}
 
 // Persists the sensor bar position.
 inline bool SetSensorBarAbove(bool value) {

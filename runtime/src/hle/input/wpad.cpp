@@ -2,6 +2,8 @@
 #include "hle_stubs.h"
 #include "memory.h"
 #include "runtime_config.h"
+#include "wiimote_hid.h"
+#include <dolphin/pad.h>
 #include "hle/controller_status_contract.h"
 #include "wii_remote_input.h"
 
@@ -11,12 +13,10 @@ void NandQueueIosCallback(uint32_t callbackPtr, int32_t result, uint32_t callbac
 
 namespace {
 
-constexpr uint8_t kDefaultDpdSensitivity = 3;
 constexpr int32_t kStatusOk = 0;
 
 struct WpadStubState {
     bool initSubRan = false;
-    uint8_t dpdSensitivity = kDefaultDpdSensitivity;
     WpadContract::State contract{};
 };
 
@@ -62,22 +62,41 @@ PPC_NATIVE_OVERRIDE(803CBD68, WPADGetStatus_HLE, int32_t, (), ());
 
 extern "C" uint32_t WPADGetDpdSensitivity_HLE()
 {
-    return static_cast<uint32_t>(g_state.dpdSensitivity);
+    return static_cast<uint32_t>(RuntimeConfigFile::IrSensitivity());
 }
 PPC_NATIVE_OVERRIDE(803CF954, WPADGetDpdSensitivity_HLE, uint32_t, (), ());
+
+void SeedWpadSettings();
 
 extern "C" int32_t WPADInitSub_HLE()
 {
     if (!g_state.initSubRan) {
         g_state.initSubRan = true;
+        SeedWpadSettings();
         return InitializeWpadLibrary();
     }
     return kStatusOk;
 }
 PPC_NATIVE_OVERRIDE(803CBAF4, WPADInitSub_HLE, int32_t, (), ());
 
+// The SYSCONF values the SDK's WPADInit copies into its globals, which the translated WPAD accessors
+// read. Without them the motor reads as disabled (WPADIsMotorEnabled), so the game never asks for
+// rumble at all.
+void SeedWpadSettings()
+{
+    constexpr uint32_t kMotorEnabled = 0x806E2C00u;    // _rumble
+    constexpr uint32_t kSensorBarPos = 0x806E2C04u;    // _sensorBarPos: 0 below, 1 above the screen
+    constexpr uint32_t kDpdSensitivity = 0x806E2C05u;  // _dpdSensitivity: 1-5
+    constexpr uint32_t kSpeakerVolume = 0x806E2BFEu;   // _speakerVolume: the Wii's default
+    Memory::Write32(kMotorEnabled, 1);  // the F10 switch decides in WPADControlMotor, so it can change live
+    Memory::Write8(kSensorBarPos, RuntimeConfigFile::SensorBarAbove() ? 1 : 0);
+    Memory::Write8(kDpdSensitivity, static_cast<uint8_t>(RuntimeConfigFile::IrSensitivity()));
+    Memory::Write8(kSpeakerVolume, 89);
+}
+
 extern "C" int32_t WPADInit_HLE()
 {
+    SeedWpadSettings();
     return InitializeWpadLibrary();
 }
 PPC_NATIVE_OVERRIDE(803CBD04, WPADInit_HLE, int32_t, (), ());
@@ -152,10 +171,19 @@ extern "C" int32_t WPADProbe_HLE(uint32_t chan, uint32_t typePtr)
 }
 PPC_NATIVE_OVERRIDE(803CCFE8, WPADProbe_HLE, int32_t, (uint32_t chan, uint32_t typePtr), (chan, typePtr));
 
+// WPADControlMotor(chan, command): 1 starts the remote's motor, 0 stops it. The game times its
+// pulses itself (RumbleActions: 111-666 ms, 45 ms on / 150 ms off while the pointer hovers). A real
+// remote gets it over Bluetooth; an emulated one (a gamepad or GameCube controller on that port) on
+// the controller, as SDL rumble.
 extern "C" void WPADControlMotor_HLE(uint32_t chan, uint32_t command)
 {
-    (void)chan;
-    (void)command;
+    if (chan >= WpadContract::kChannelCount) return;
+    const bool on = command != 0 && RuntimeConfigFile::RumbleEnabled();
+    if (WiimoteHid::Present(chan)) {
+        WiimoteHid::SetRumble(chan, on);
+    } else {
+        PADControlMotor(chan, on ? PAD_MOTOR_RUMBLE : PAD_MOTOR_STOP);
+    }
 }
 PPC_NATIVE_OVERRIDE(803CD57C, WPADControlMotor_HLE, void, (uint32_t chan, uint32_t command), (chan, command));
 

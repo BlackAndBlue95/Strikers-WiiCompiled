@@ -708,8 +708,9 @@ void ApplyCommon(uint32_t chan, WiiRemoteInput::KpadSample& sample, uint32_t nav
         moveX = moveY = 0.0f;  // the pointer belongs to navigation
     }
     NoMegaStrikes::Apply();
-    s_cursor[chan][0] = std::clamp(s_cursor[chan][0] + dz(moveX) * 1.6f * dt, -1.0f, 1.0f);
-    s_cursor[chan][1] = std::clamp(s_cursor[chan][1] - dz(moveY) * 1.6f * dt, -1.0f, 1.0f);
+    const float speed = 1.6f * static_cast<float>(RuntimeConfigFile::PointerSpeed());
+    s_cursor[chan][0] = std::clamp(s_cursor[chan][0] + dz(moveX) * speed * dt, -1.0f, 1.0f);
+    s_cursor[chan][1] = std::clamp(s_cursor[chan][1] - dz(moveY) * speed * dt, -1.0f, 1.0f);
     sample.hasPointer = !navResult.hidePointer;
     sample.pointer[0] = s_cursor[chan][0];
     sample.pointer[1] = s_cursor[chan][1];

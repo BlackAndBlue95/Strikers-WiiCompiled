@@ -267,6 +267,7 @@ void ApplyConfiguredMappings() {
 bool g_wiiRemotesEnabled = RuntimeConfigFile::WiiRemotesEnabled(true);
 bool g_wiiContinuousScan = RuntimeConfigFile::WiiContinuousScanEnabled(false);
 bool g_sensorBarAbove = RuntimeConfigFile::SensorBarAbove();
+void DrawRumbleAndPointerSettings();
 
 // Accelerometer readout and zero-point calibration for a bare remote / remote + Nunchuk.
 void DrawWiiRemoteAccelerometer(uint32_t port) {
@@ -335,6 +336,18 @@ void DrawWiiRemoteSettings(uint32_t selectedGamePort) {
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Like the Wii's Sensor Bar Position setting: where the sensor bar or DolphinBar\n"
                           "sits, so the pointer lines up with where the remote points. Off = below the screen.");
+    }
+    {
+        int irSensitivity = RuntimeConfigFile::IrSensitivity();
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::SliderInt("IR sensitivity", &irSensitivity, 1, 5)) {
+            RuntimeConfigFile::SetIrSensitivity(irSensitivity);
+            WiimoteHid::SetIrSensitivity(irSensitivity);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Like the Wii's IR Sensitivity setting: raise it if the pointer drops out far from\n"
+                              "the sensor bar, lower it if lamps or reflections throw it off.");
+        }
     }
     if (ImGui::Checkbox("Keep scanning for Wii Remotes (like Dolphin's Continuous Scanning)",
                         &g_wiiContinuousScan)) {
@@ -809,6 +822,7 @@ void DrawControllerSettings() {
         ImGui::SeparatorText("Button mapping");
         ImGui::TextDisabled("GameCube controller: its buttons are the game's own, so no mapping is needed.");
         DrawExpressionSettings();
+        DrawRumbleAndPointerSettings();
         return;
     }
 
@@ -967,6 +981,7 @@ void DrawControllerSettings() {
         ImGui::PopID();
     }
     DrawExpressionSettings();
+    DrawRumbleAndPointerSettings();
 }
 
 void DrawAudioSettings() {
@@ -995,6 +1010,35 @@ void DrawAudioSettings() {
         ImGui::SetTooltip(
             "Runs the AX/DSP voice mix off the game thread. Turn this off if you "
             "suspect an audio problem; the mix then runs inline as it used to.");
+    }
+}
+
+// Rumble and the stick-driven pointer, for every port.
+void DrawRumbleAndPointerSettings() {
+    ImGui::SeparatorText("Rumble and pointer");
+    bool rumble = RuntimeConfigFile::RumbleEnabled();
+    if (ImGui::Checkbox("Rumble", &rumble)) {
+        RuntimeConfigFile::SetRumbleEnabled(rumble);
+        if (!rumble) {
+            // Stop whatever is running now: the game won't send another stop until its pulse ends.
+            constexpr std::array<uint32_t, PAD_MAX_CONTROLLERS> stopAll{
+                PAD_MOTOR_STOP_HARD, PAD_MOTOR_STOP_HARD, PAD_MOTOR_STOP_HARD, PAD_MOTOR_STOP_HARD,
+            };
+            PADControlAllMotors(stopAll.data());
+            for (uint32_t chan = 0; chan < PAD_MAX_CONTROLLERS; ++chan) WiimoteHid::SetRumble(chan, false);
+        }
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("The game's vibration, on Wii Remotes and on controllers that can rumble\n"
+                          "(GameCube controllers on the adapter too).");
+    }
+    float pointerSpeed = static_cast<float>(RuntimeConfigFile::PointerSpeed());
+    ImGui::SetNextItemWidth(160.0f);
+    if (ImGui::SliderFloat("Pointer speed", &pointerSpeed, 0.25f, 4.0f, "%.2fx")) {
+        RuntimeConfigFile::SetPointerSpeed(pointerSpeed);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("How fast a controller's stick moves the pointer. Wii Remotes point by themselves.");
     }
 }
 

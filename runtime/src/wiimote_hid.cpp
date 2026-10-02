@@ -102,7 +102,13 @@ struct Remote {
     float lastPair[2] = {200.f, 0.f}; // last seen dot1->dot2 vector, for single-dot frames
     float smoothed[2] = {0.f, 0.f};
     bool smoothedValid = false;
+    bool rumbleOn = false;        // the motor state every output report carries (byte 1, bit 0)
+    uint64_t rumbleSinceMs = 0;
+    int irSensitivity = 0;        // the camera level SetupIr last programmed
 };
+
+std::array<std::atomic<bool>, 4> g_rumbleWanted{};  // per channel, set by the game thread
+std::atomic<int> g_irSensitivity{3};
 
 std::mutex g_mutex;                         // guards g_samples and g_owned
 std::array<Sample, kMaxRemotes> g_samples{};
@@ -135,7 +141,9 @@ bool Send(Remote& r, std::initializer_list<uint8_t> bytes) {
     for (uint8_t b : bytes) {
         if (n < sizeof(buf)) buf[n++] = b;
     }
-    // Byte 1 bit 0 is the rumble motor in every output report; it stays off.
+    // Byte 1 bit 0 is the rumble motor in every output report: each report carries its state, or
+    // any report sent while it runs would stop it.
+    if (n > 1) buf[1] = static_cast<uint8_t>((buf[1] & ~1u) | (r.rumbleOn ? 1u : 0u));
     return SDL_hid_write(r.device, buf, n) >= 0;
 }
 
@@ -170,7 +178,8 @@ constexpr int kAckLength = 5;
 
 // Writes up to 16 bytes to the remote's register space and waits for the acknowledgement.
 bool WriteRegister(Remote& r, uint32_t addr, const uint8_t* data, uint8_t size) {
-    uint8_t buf[kReportSize] = {kOutWriteMemory, kSpaceRegister, static_cast<uint8_t>(addr >> 16),
+    uint8_t buf[kReportSize] = {kOutWriteMemory, static_cast<uint8_t>(kSpaceRegister | (r.rumbleOn ? 1u : 0u)),
+                                static_cast<uint8_t>(addr >> 16),
                                 static_cast<uint8_t>(addr >> 8), static_cast<uint8_t>(addr), size};
     std::memcpy(buf + 6, data, std::min<size_t>(size, 16));
     if (SDL_hid_write(r.device, buf, sizeof(buf)) < 0) return false;
@@ -289,17 +298,26 @@ bool EnableFeature(Remote& r, uint8_t report) {
     return false;
 }
 
-// IR camera in basic mode (10 bytes for 4 dots), Wii sensitivity level 3. The camera only answers
-// on its bus once report 0x13 enabled it, and only produces dots while 0x30 holds 0x08; the
+// IR camera in basic mode (10 bytes for 4 dots), at the Wii's sensitivity setting. The camera only
+// answers on its bus once report 0x13 enabled it, and only produces dots while 0x30 holds 0x08; the
 // console writes 0x01 there before changing sensitivity and mode (WiimoteEmu/Camera.cpp).
 bool SetupIr(Remote& r) {
-    static constexpr uint8_t kSensitivity1[9] = {0x02, 0x00, 0x00, 0x71, 0x01, 0x00, 0xAA, 0x00, 0x64};
-    static constexpr uint8_t kSensitivity2[2] = {0x63, 0x03};
+    // The two sensitivity blocks the Wii writes for its levels 1-5 (wiibrew, IR camera).
+    static constexpr uint8_t kSensitivity1[5][9] = {
+        {0x02, 0x00, 0x00, 0x71, 0x01, 0x00, 0x64, 0x00, 0xFE},
+        {0x02, 0x00, 0x00, 0x71, 0x01, 0x00, 0x96, 0x00, 0xB4},
+        {0x02, 0x00, 0x00, 0x71, 0x01, 0x00, 0xAA, 0x00, 0x64},
+        {0x02, 0x00, 0x00, 0x71, 0x01, 0x00, 0xC8, 0x00, 0x36},
+        {0x07, 0x00, 0x00, 0x71, 0x01, 0x00, 0x72, 0x00, 0x20},
+    };
+    static constexpr uint8_t kSensitivity2[5][2] = {{0xFD, 0x05}, {0xB3, 0x04}, {0x63, 0x03}, {0x35, 0x03}, {0x1F, 0x03}};
+    const int level = std::clamp(g_irSensitivity.load(), 1, 5);
+    r.irSensitivity = level;
     bool ok = EnableFeature(r, kOutIrPixelClock);
     ok = ok && EnableFeature(r, kOutIrLogic);
     ok = ok && WriteRegister8(r, 0xB00030, 0x01);
-    ok = ok && WriteRegister(r, 0xB00000, kSensitivity1, sizeof(kSensitivity1));
-    ok = ok && WriteRegister(r, 0xB0001A, kSensitivity2, sizeof(kSensitivity2));
+    ok = ok && WriteRegister(r, 0xB00000, kSensitivity1[level - 1], sizeof(kSensitivity1[0]));
+    ok = ok && WriteRegister(r, 0xB0001A, kSensitivity2[level - 1], sizeof(kSensitivity2[0]));
     ok = ok && WriteRegister8(r, 0xB00033, 0x01);
     ok = ok && WriteRegister8(r, 0xB00030, 0x08);
     if (!ok) RT_LOGF(RT_TAG_CONFIG, "Wii Remote %u: IR camera setup failed\n", r.chan + 1);
@@ -563,6 +581,10 @@ std::unique_ptr<Remote> Connect(const SDL_hid_device_info* info) {
 void Disconnect(std::vector<std::unique_ptr<Remote>>& remotes, size_t index) {
     Remote& r = *remotes[index];
     RT_LOGF(RT_TAG_CONFIG, "Wii Remote on port %u disconnected\n", r.chan + 1);
+    if (r.rumbleOn) {  // a remote still there (closing at exit) keeps whatever its last report said
+        r.rumbleOn = false;
+        Send(r, {kOutRumble, 0x00});
+    }
     SDL_hid_close(r.device);
     ReleaseChannel(r.chan);
     {
@@ -739,6 +761,18 @@ void ReadThreadMain() {
                 HandleInput(r, buf, n);
             }
             if (!dead && r.needsSetup) Setup(r);
+            // The motor as the game asks, stopped anyway after a second (the game times its own
+            // pulses, 666 ms at most, so a longer one means a stop never came).
+            const uint64_t nowMs = SDL_GetTicks();
+            bool wantRumble = g_rumbleWanted[r.chan].load(std::memory_order_relaxed);
+            if (wantRumble && r.rumbleOn && nowMs - r.rumbleSinceMs > 1000) wantRumble = false;
+            if (!dead && wantRumble != r.rumbleOn) {
+                r.rumbleOn = wantRumble;
+                r.rumbleSinceMs = nowMs;
+                if (!wantRumble) g_rumbleWanted[r.chan].store(false, std::memory_order_relaxed);
+                if (!Send(r, {kOutRumble, 0x00})) dead = true;
+            }
+            if (!dead && r.irSensitivity != 0 && r.irSensitivity != g_irSensitivity.load()) SetupIr(r);
             // Connected but no data reports: the reporting mode never took (logged every 3 s).
             if (!dead && r.dataReports == 0 && SDL_GetTicks() - r.lastLogMs >= 3000) {
                 RT_LOGF(RT_TAG_CONFIG, "Wii Remote %u: connected, but no data reports (0x37) arriving\n", r.chan + 1);
@@ -819,6 +853,12 @@ uint32_t ConnectedCount() { return g_connected.load(); }
 
 void SetSensorBarAbove(bool above) { g_sensorBarAbove.store(above, std::memory_order_relaxed); }
 bool SensorBarAbove() { return g_sensorBarAbove.load(std::memory_order_relaxed); }
+
+void SetRumble(uint32_t chan, bool on) {
+    if (chan < g_rumbleWanted.size()) g_rumbleWanted[chan].store(on, std::memory_order_relaxed);
+}
+
+void SetIrSensitivity(int level) { g_irSensitivity.store(std::clamp(level, 1, 5)); }
 
 void MidpointToPointer(float mx, float my, float pos[2]) {
     pos[0] = -(mx - kDpdCentreX) / kDpdUnit * kDpdToPos;
