@@ -34,15 +34,19 @@ public static class GqrConstantPropagation
             foreach (var block in function.Blocks)
             {
                 var isEntry = Comparer.Equals(block.Label, function.EntryLabel);
+                // Every initialized predecessor counts, the block's own back edge included: a loop
+                // that changes a GQR must not keep the value it had on the way in. Back edges into
+                // the entry block are merged with the entry constants for the same reason.
                 var predecessors = cfg.Predecessors(block.Label)
-                    .Where(p => !Comparer.Equals(p, block.Label) && outputInitialized[p]).ToArray();
+                    .Where(p => outputInitialized[p]).ToArray();
                 // An uninitialized predecessor is lattice top, not an empty
                 // constant map. Do not manufacture a bottom state for blocks
                 // that have not become reachable from the entry yet.
                 if (!isEntry && predecessors.Length == 0)
                     continue;
                 var state = isEntry
-                    ? new Dictionary<string, uint>(entryConstants ?? new Dictionary<string, uint>(), Comparer)
+                    ? Intersect(predecessors.Select(p => output[p]).Prepend(
+                        new Dictionary<string, uint>(entryConstants ?? new Dictionary<string, uint>(), Comparer)))
                     : Intersect(predecessors.Select(p => output[p]));
                 var newInput = new Dictionary<string, uint>(state, Comparer);
                 foreach (var instruction in block.Instructions)

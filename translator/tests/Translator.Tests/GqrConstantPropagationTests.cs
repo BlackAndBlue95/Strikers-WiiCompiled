@@ -57,6 +57,58 @@ public sealed class GqrConstantPropagationTests
     }
 
     [Fact]
+    public void SelfLoopThatChangesAGqrDoesNotKeepTheIncomingConstant()
+    {
+        // The loop reads through gqr5, then changes it: from the second iteration on, the read sees
+        // the new value, so it can't be specialized to the one the loop was entered with.
+        var function = new IrFunction("gqr_self_loop", "entry", new[]
+        {
+            new IrBasicBlock("entry", new IrInstruction[]
+            {
+                new IrAssign("gqr5", IrValue.Imm(0x00070007)),
+                new IrJump("loop")
+            }),
+            new IrBasicBlock("loop", new IrInstruction[]
+            {
+                PsqLoad(5),
+                new IrAssign("gqr5", IrValue.Imm(0x00050005)),
+                new IrBranch("beq", "loop", "exit")
+            }),
+            new IrBasicBlock("exit", new IrInstruction[] { PsqLoad(5), new IrReturn(null) })
+        });
+
+        var specialized = GqrConstantPropagation.Specialize(function);
+
+        Assert.IsType<IrCall>(specialized.Blocks.Single(b => b.Label == "loop").Instructions[0]);
+        Assert.Equal("PPC_PsqL", ((IrCall)specialized.Blocks.Single(b => b.Label == "loop").Instructions[0]).Target);
+        // Every way out of the loop leaves gqr5 = 0x00050005.
+        Assert.Contains(specialized.Blocks.Single(b => b.Label == "exit").Instructions,
+            instruction => instruction is IrCall { Target: "PPC_PsqLKnown_00050005" });
+    }
+
+    [Fact]
+    public void BackEdgeIntoTheEntryBlockIsMergedWithTheEntryConstants()
+    {
+        // A leaf function whose first block is its own loop header.
+        var function = new IrFunction("gqr_entry_loop", "entry", new[]
+        {
+            new IrBasicBlock("entry", new IrInstruction[]
+            {
+                PsqLoad(5),
+                new IrAssign("gqr5", IrValue.Register("r3")),
+                new IrBranch("beq", "entry", "exit")
+            }),
+            new IrBasicBlock("exit", new IrInstruction[] { new IrReturn(null) })
+        });
+        var entryConstants = new Dictionary<string, uint> { ["gqr5"] = 0x00070007 };
+
+        var specialized = GqrConstantPropagation.Specialize(function, entryConstants);
+
+        Assert.Contains(specialized.Blocks.Single(b => b.Label == "entry").Instructions,
+            instruction => instruction is IrCall { Target: "PPC_PsqL" });
+    }
+
+    [Fact]
     public void UnknownWriteAndGuestCallsInvalidateGqrConstants()
     {
         var unknownWrite = Function(new IrInstruction[]
@@ -193,6 +245,38 @@ public sealed class GqrConstantPropagationTests
             new[] { 0x80001000u });
 
         Assert.False(result.EntryConstants[0x80003000].ContainsKey("gqr5"));
+    }
+
+    [Fact]
+    public void InterproceduralAnalysisSeesGqrChangesAcrossALoop()
+    {
+        // The callee runs on every iteration; from the second one on, gqr5 holds the loop's value.
+        var functions = new Dictionary<uint, IrFunction>
+        {
+            [0x80001000] = new IrFunction("gqr_loop_caller", "entry", new[]
+            {
+                new IrBasicBlock("entry", new IrInstruction[]
+                {
+                    new IrAssign("gqr5", IrValue.Imm(0x00070007)),
+                    new IrJump("loop")
+                }),
+                new IrBasicBlock("loop", new IrInstruction[]
+                {
+                    new IrCall(string.Empty, "0x80003000", Array.Empty<IrValue>()),
+                    new IrAssign("gqr5", IrValue.Imm(0x00050005)),
+                    new IrBranch("beq", "loop", "exit")
+                }),
+                new IrBasicBlock("exit", new IrInstruction[] { new IrReturn(null) })
+            }),
+            [0x80003000] = Function(new IrInstruction[] { PsqLoad(5), new IrReturn(null) })
+        };
+
+        var result = GqrInterproceduralAnalysis.Analyze(
+            functions.ToDictionary(pair => pair.Key, pair => GqrFunctionSummary.Create(pair.Value)),
+            new[] { 0x80001000u });
+
+        Assert.False(result.EntryConstants.TryGetValue(0x80003000, out var constants) &&
+                     constants.ContainsKey("gqr5"));
     }
 
     [Fact]
