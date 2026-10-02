@@ -43,6 +43,24 @@ public sealed class RuntimeNativeGuestEffectAnalyzerTests
     }
 
     [Fact]
+    public void WrapIsAFullGuestCodeBoundaryWhateverItsBody()
+    {
+        // The wrapper body only reads r3, but plugin hooks may run any guest code around the
+        // original, so callers must treat the call as a complete-context boundary.
+        using var fixture = new SourceFixture("""
+            extern "C" void func_80004000(CpuContext* ctx);
+            static void Narrow(CpuContext* ctx) { (void)ctx->gpr[3]; func_80004000(ctx); }
+            PPC_NATIVE_WRAP(80004000, Narrow);
+            """);
+
+        var effects = RuntimeNativeGuestEffectAnalyzer.AnalyzeDirectory(fixture.Directory);
+        var contract = effects.Contracts[0x80004000u];
+        Assert.True(contract.HasFullSynchronizationFence);
+        Assert.True((contract.BoundaryFlags & GuestCallBoundaryFlags.InvokesGuestCode) != 0);
+        Assert.Contains(0x80004000u, effects.ConservativeContracts);
+    }
+
+    [Fact]
     public void EscapedContextAndSchedulerCallsRemainExplicitFullBoundaries()
     {
         using var fixture = new SourceFixture("""

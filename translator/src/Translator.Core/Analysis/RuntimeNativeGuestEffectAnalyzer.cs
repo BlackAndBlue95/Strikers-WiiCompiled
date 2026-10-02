@@ -22,6 +22,7 @@ public static class RuntimeNativeGuestEffectAnalyzer
     private static readonly Regex StubRegex = GeneratedMarkers.NativeOverrideSignaturePattern();
     private static readonly Regex RegistrationRegex = GeneratedMarkers.NativeFunctionRegistrationPattern();
     private static readonly Regex FatalRegex = GeneratedMarkers.FatalStubPattern();
+    private static readonly Regex WrapRegex = GeneratedMarkers.NativeWrapPattern();
 
     public static RuntimeNativeGuestEffectSet AnalyzeDirectory(string directory)
         => AnalyzeSources(NativeSourceParsing.ReadDirectory(directory));
@@ -74,6 +75,13 @@ public static class RuntimeNativeGuestEffectAnalyzer
 
             foreach (Match match in FatalRegex.Matches(source))
                 Add(ParseAddress(match.Groups["address"].Value), CompleteContextContract(), false);
+
+            // A wrap runs plugin hooks (arbitrary guest code) around the original, so its callers
+            // treat it as a full boundary whatever the wrapper's own body does. Being a contract
+            // also keeps the original out of leaf inlining, which would bypass the wrapper.
+            foreach (Match match in WrapRegex.Matches(source))
+                Add(ParseAddress(match.Groups["address"].Value),
+                    CompleteContextContract(GuestCallBoundaryFlags.InvokesGuestCode), false);
         }
 
         return new RuntimeNativeGuestEffectSet(contracts, precise, conservative);

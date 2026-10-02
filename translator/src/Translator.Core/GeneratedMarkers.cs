@@ -114,6 +114,16 @@ public static partial class GeneratedMarkers
     [GeneratedRegex(@"PPC_NATIVE_OVERRIDE_VOID\s*\(\s*(?<addr>[0-9A-Fa-f]+)\s*,\s*[^,]+,\s*\((?<args>[^)]*)\)\s*,", RegexOptions.CultureInvariant | RegexOptions.Singleline)]
     public static partial Regex NativeOverrideVoidArgumentsPattern();
 
+    /// <summary>
+    /// <c>PPC_NATIVE_WRAP(ADDR, wrapper)</c>: a native function runs instead of the guest function at
+    /// ADDR for every caller, while the translated original stays in the build under its usual
+    /// <c>func_ADDR</c> symbol for the wrapper to call (runtime/include/hle_stubs.h). The base
+    /// translation is therefore kept, not excluded. Upper-case hex only: the wrapper links against the
+    /// translator's upper-case symbol, so a lower-case address would never reach this scanner.
+    /// </summary>
+    [GeneratedRegex(@"PPC_NATIVE_WRAP\s*\(\s*(?<address>[0-9A-F]{8})\s*,\s*(?<symbol>[A-Za-z_][A-Za-z0-9_]*)", RegexOptions.CultureInvariant)]
+    public static partial Regex NativeWrapPattern();
+
     [GeneratedRegex(@"GX_FATAL_STUB\s*\(\s*(?<address>[0-9A-Fa-f]{8})", RegexOptions.CultureInvariant)]
     public static partial Regex FatalStubPattern();
 }

@@ -82,6 +82,9 @@ public static class RuntimeNativeIndexBuilder
                 Add(match, match.Groups["symbol"].Value, true, true);
             foreach (Match match in GeneratedMarkers.NativeOverridePattern().Matches(source))
                 Add(match, match.Groups["symbol"].Value, false, true);
+            // A wrap wins dispatch like an override but keeps the base translation (the original).
+            foreach (Match match in GeneratedMarkers.NativeWrapPattern().Matches(source))
+                Add(match, match.Groups["symbol"].Value, false, false);
             foreach (Match match in GeneratedMarkers.FatalStubPattern().Matches(source))
                 Add(match, $"GX_FATAL_STUB_{match.Groups["address"].Value}", false, true);
 

@@ -20,10 +20,14 @@ public sealed class RuntimeNativeIndexTests
                 PPC_NATIVE_OVERRIDE_VOID(80000040, Stub, (void), ());
                 GX_FATAL_STUB(80000050, "Fatal")
                 // REGISTER_NATIVE_FUNCTION(0x80000060, CommentedOut);
+                PPC_NATIVE_WRAP(80000070, Wrapper);
                 """);
 
             var registrations = RuntimeNativeIndexBuilder.Build(directory).Registrations;
-            Assert.Equal(5, registrations.Length);
+            Assert.Equal(6, registrations.Length);
+            Assert.Contains(registrations, static entry =>
+                entry.Address == 0x80000070u && entry.Symbol == "Wrapper" &&
+                !entry.ExcludesBaseTranslation && !entry.IsTranslatedOverride);
             Assert.Contains(registrations, static entry =>
                 entry.Address == 0x80000010u && entry.ExcludesBaseTranslation);
             Assert.Contains(registrations, static entry =>
