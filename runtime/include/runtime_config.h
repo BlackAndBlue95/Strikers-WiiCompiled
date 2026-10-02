@@ -31,6 +31,12 @@
 #include <unistd.h>
 #endif
 
+// Sounds with a volume of their own in F10 > Audio: the game's music, sound effects and voices (its
+// own Options sliders' groups), plus its menu sounds and cutscenes.
+enum class SoundCategory { Music, Effects, Voices, Menus, Cutscenes };
+inline constexpr std::array<std::string_view, 5> kSoundCategoryKeys{"music_volume", "effects_volume", "voice_volume",
+                                                                    "menu_volume", "cutscene_volume"};
+
 struct RuntimeUserConfig {
     std::optional<bool> widescreen;
     std::optional<bool> forceAspect169;
@@ -49,6 +55,8 @@ struct RuntimeUserConfig {
     std::optional<bool> textureDumps;
     std::optional<bool> showFps;
     std::optional<float> audioVolume;
+    // Per sound category (SoundCategory above), on top of the game's own Music / SFX / Voice options.
+    std::array<std::optional<float>, kSoundCategoryKeys.size()> soundCategoryVolumes;
     std::optional<bool> audioMuted;
     std::optional<bool> audioMixWorker;
     // Real Wii Remotes (with or without Nunchuk / Classic Controller) and Wii U Pro
@@ -336,6 +344,12 @@ inline void EnsureConfigFile() {
               "[audio]\n"
               "volume = 1.0\n"
               "muted = false\n"
+              "# Each kind of sound's volume (0-1), on top of the game's own Options sliders.\n"
+              "music_volume = 1.0\n"
+              "effects_volume = 1.0\n"
+              "voice_volume = 1.0\n"
+              "menu_volume = 1.0\n"
+              "cutscene_volume = 1.0\n"
               "# Runs the AX/DSP voice mix on its own thread, joined before the\n"
               "# guest can observe it. Set to false to mix inline on the guest thread.\n"
               "mix_worker = true\n\n"
@@ -534,6 +548,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         return value && *value >= 0.0f && *value <= 1.0f ? value : std::nullopt;
     };
     config.audioVolume = readVolume("volume");
+    for (size_t i = 0; i < kSoundCategoryKeys.size(); ++i) config.soundCategoryVolumes[i] = readVolume(kSoundCategoryKeys[i]);
     config.audioMuted = FindConfigValue<bool>(document, "audio", "muted");
     config.audioMixWorker = FindConfigValue<bool>(document, "audio", "mix_worker");
     config.wiiRemotes = FindConfigValue<bool>(document, "controller", "wii_remotes");
@@ -908,6 +923,21 @@ inline bool SetAudioVolume(float value) {
     std::ostringstream formatted;
     formatted << value;
     return WriteSetting("audio", "volume", formatted.str());
+}
+
+// The volume of one sound category, 0-1 (1 by default).
+inline float SoundCategoryVolume(SoundCategory category) {
+    const auto index = static_cast<size_t>(category);
+    return index < kSoundCategoryKeys.size() ? std::clamp(Get().soundCategoryVolumes[index].value_or(1.0f), 0.0f, 1.0f) : 1.0f;
+}
+inline bool SetSoundCategoryVolume(SoundCategory category, float value) {
+    const auto index = static_cast<size_t>(category);
+    if (index >= kSoundCategoryKeys.size()) return false;
+    value = std::clamp(value, 0.0f, 1.0f);
+    Mutable().soundCategoryVolumes[index] = value;
+    std::ostringstream formatted;
+    formatted << value;
+    return WriteSetting("audio", kSoundCategoryKeys[index], formatted.str());
 }
 
 inline bool SetAudioMuted(bool value) {

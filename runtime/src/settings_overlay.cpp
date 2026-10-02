@@ -1000,6 +1000,24 @@ void DrawAudioSettings() {
     ImGui::SameLine();
     DrawKeyBinding("Mute shortcut", g_muteHotkey, RebindKind::MuteHotkey, 0,
                    std::max(60.0f, labelColumn - ImGui::GetCursorPosX()));
+    ImGui::SeparatorText("Volume by kind");
+    static constexpr std::array<std::pair<SoundCategory, const char*>, 5> kCategories{{
+        {SoundCategory::Music, "Music"},
+        {SoundCategory::Effects, "Sound effects"},
+        {SoundCategory::Voices, "Voices"},
+        {SoundCategory::Menus, "Menus"},
+        {SoundCategory::Cutscenes, "Cutscenes"},
+    }};
+    for (const auto& [category, label] : kCategories) {
+        int percent = static_cast<int>(std::lround(RuntimeConfigFile::SoundCategoryVolume(category) * 100.0f));
+        ImGui::SetNextItemWidth(220.0f);
+        if (ImGui::SliderInt(label, &percent, 0, 100, "%d%%"))
+            RuntimeConfigFile::SetSoundCategoryVolume(category, static_cast<float>(percent) / 100.0f);
+    }
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
+    ImGui::TextDisabled("On top of the game's own Music, SFX and Voice options. Menus: the front end's clicks "
+                        "and whooshes. Cutscenes: goal and match intro scenes, and movies (from the next one).");
+    ImGui::PopTextWrapPos();
     ImGui::Separator();
     if (ImGui::Checkbox("Mix audio on a worker thread", &g_audioMixWorker)) {
         // Applies immediately: SetMixWorkerEnabled joins any in-flight mix
