@@ -84,6 +84,7 @@ const char* GraphicsApiDisplayName() {
 }
 
 bool g_topBarVisible = false;
+bool g_settingsOpen = true;  // the settings window, opened again with each F10
 bool g_exitPromptOpen = false;
 int g_controllerPort = 0;
 float g_resolutionScale = RuntimeConfigFile::ResolutionMultiplier(1.0f);
@@ -218,6 +219,7 @@ void SetTopBarVisible(bool visible) {
         return;
     }
     g_topBarVisible = visible;
+    if (visible) g_settingsOpen = true;
 }
 
 void ApplyConfiguredMappings() {
@@ -318,10 +320,11 @@ void DrawWiiRemoteAccelerometer(uint32_t port) {
 }
 
 // Wii Remotes (Bluetooth) menu: driver switch, pairing help, continuous scanning and the port's controller kind.
-void DrawWiiRemoteSettings(uint32_t selectedGamePort) {
-    if (!ImGui::BeginMenu("Wii Remotes (Bluetooth)")) {
-        return;
-    }
+void DrawPortSelector();
+
+// Settings > Wii Remotes: real remotes over Bluetooth (the HID backend), then the selected port's live
+// state.
+void DrawWiiRemoteSettings() {
     if (ImGui::Checkbox("Use Wii Remotes / Wii U Pro Controllers", &g_wiiRemotesEnabled)) {
         RuntimeConfigFile::SetWiiRemotesEnabled(g_wiiRemotesEnabled);
     }
@@ -394,8 +397,9 @@ void DrawWiiRemoteSettings(uint32_t selectedGamePort) {
             ImGui::TextDisabled("Not scanning");
         }
     }
-    ImGui::Separator();
-
+    ImGui::SeparatorText("Port");
+    DrawPortSelector();
+    const uint32_t selectedGamePort = static_cast<uint32_t>(g_controllerPort);
     const WiiRemoteInput::Kind kind = WiiRemoteInput::KindForPort(selectedGamePort);
     ImGui::Text("Port %u: %s", static_cast<unsigned>(selectedGamePort + 1), WiiRemoteInput::KindLabel(kind));
     if (kind == WiiRemoteInput::Kind::RemoteWithClassic) {
@@ -473,8 +477,6 @@ void DrawWiiRemoteSettings(uint32_t selectedGamePort) {
                kind == WiiRemoteInput::Kind::RemoteWithClassic) {
         DrawWiiRemoteAccelerometer(selectedGamePort);
     }
-
-    ImGui::EndMenu();
 }
 
 const char* KeyBindingName(int scancode) {
@@ -775,15 +777,19 @@ void DrawExpressionSettings() {
     }
 }
 
-void DrawControllerSettings() {
+// The player port the Controllers and Wii Remotes tabs show.
+void DrawPortSelector() {
     for (int port = 0; port < PAD_MAX_CONTROLLERS; ++port) {
-        const std::string label = "Port " + std::to_string(port + 1);
+        const std::string label = "Player " + std::to_string(port + 1);
         ImGui::RadioButton(label.c_str(), &g_controllerPort, port);
         if (port + 1 < PAD_MAX_CONTROLLERS) {
             ImGui::SameLine();
         }
     }
+}
 
+void DrawControllerSettings() {
+    DrawPortSelector();
     ImGui::Separator();
     const uint32_t selectedGamePort = static_cast<uint32_t>(g_controllerPort);
     if (DrawKeyboardSettings(selectedGamePort)) {
@@ -803,7 +809,7 @@ void DrawControllerSettings() {
             ImGui::Text("Assigned: %s", currentName != nullptr ? currentName : "None");
         }
     }
-    if (ImGui::MenuItem("Unassign controller")) {
+    if (ImGui::Button("Unassign controller")) {
         PADClearPort(selectedGamePort);
         g_configuredControllerIndices.fill(std::numeric_limits<int32_t>::min());
     }
@@ -813,14 +819,14 @@ void DrawControllerSettings() {
     }
     ImGui::Separator();
     controller_mapping_wizard::DrawSetupList();
-    DrawWiiRemoteSettings(selectedGamePort);
     const uint32_t controllerCount = PADCount();
     if (controllerCount == 0) {
         ImGui::TextDisabled("No controller connected");
         return;
     }
 
-    if (ImGui::BeginMenu("Assign connected controller")) {
+    ImGui::SetNextItemWidth(320.0f);
+    if (ImGui::BeginCombo("##assign", "Assign a connected controller to this player")) {
         // A GameCube adapter's pads share one name: each is told apart by its slot, and the one being
         // pressed is marked.
         for (uint32_t index = 0; index < controllerCount; ++index) {
@@ -831,14 +837,14 @@ void DrawControllerSettings() {
             label += port >= 0 ? "  - player " + std::to_string(port + 1) : "  - unassigned";
             if (PADIsControllerIndexActive(index)) label += "  <- pressing";
             ImGui::PushID(static_cast<int>(index));
-            if (ImGui::MenuItem(label.c_str())) {
+            if (ImGui::Selectable(label.c_str())) {
                 PADSetPortForIndex(index, selectedGamePort);
                 g_configuredControllerIndices.fill(std::numeric_limits<int32_t>::min());
                 ApplyConfiguredMappings();
             }
             ImGui::PopID();
         }
-        ImGui::EndMenu();
+        ImGui::EndCombo();
     }
 
     // A GameCube pad on the adapter (WUP-028 or Wii U mode) has the game's own buttons, so its
@@ -1009,7 +1015,8 @@ void DrawControllerSettings() {
     DrawRumbleAndPointerSettings();
 }
 
-void DrawAudioSettings() {
+// The master volume, mute and its shortcut (Settings > Audio, and the top bar's Audio menu).
+void DrawMasterVolume() {
     ImGui::SetNextItemWidth(220.0f);
     if (ImGui::SliderInt("Master", &g_audioVolumePercent, 0, 100, "%d%%")) {
         const float volume = static_cast<float>(g_audioVolumePercent) / 100.0f;
@@ -1024,6 +1031,10 @@ void DrawAudioSettings() {
     ImGui::SameLine();
     DrawKeyBinding("Mute shortcut", g_muteHotkey, RebindKind::MuteHotkey, 0,
                    std::max(60.0f, labelColumn - ImGui::GetCursorPosX()));
+}
+
+void DrawAudioSettings() {
+    DrawMasterVolume();
     ImGui::SeparatorText("Volume by kind");
     static constexpr std::array<std::pair<SoundCategory, const char*>, 5> kCategories{{
         {SoundCategory::Music, "Music"},
@@ -1593,6 +1604,62 @@ void DrawExitPrompt() {
     ImGui::EndPopup();
 }
 
+// Settings > Graphics: the internal resolution, then the other video options.
+void DrawResolutionChoice() {
+    const auto current = std::find_if(kResolutions.begin(), kResolutions.end(), [](const ResolutionItem& item) {
+        return std::fabs(item.scale - g_resolutionScale) < 0.001f;
+    });
+    ImGui::SetNextItemWidth(220.0f);
+    if (ImGui::BeginCombo("Resolution", current != kResolutions.end() ? current->label : "Custom")) {
+        for (const auto& resolution : kResolutions) {
+            const bool selected = std::fabs(resolution.scale - g_resolutionScale) < 0.001f;
+            if (ImGui::Selectable(resolution.label, selected)) SetResolutionScale(resolution.scale);
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::TextDisabled("The game's internal resolution. Higher is sharper and heavier.");
+    ImGui::Separator();
+}
+
+// The settings window (F10): one tab per area. Its tab bar stays put while a tab's content scrolls.
+void DrawSettingsWindow() {
+    if (!g_settingsOpen) return;
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float top = ImGui::GetFrameHeight() + 12.0f;
+    const ImVec2 available(viewport->Size.x - 24.0f, viewport->Size.y - top - 12.0f);
+    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + top), ImGuiCond_Appearing,
+                            ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowSize(ImVec2(std::min(780.0f, available.x), std::min(680.0f, available.y)), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(std::min(380.0f, available.x), std::min(260.0f, available.y)), available);
+    if (ImGui::Begin("Settings", &g_settingsOpen, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::TextDisabled("Game controls are off while settings are open. F10 returns to the game.");
+        if (ImGui::BeginTabBar("SettingsTabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
+            const auto tab = [](const char* name, void (*draw)()) {
+                if (!ImGui::BeginTabItem(name)) return;
+                if (ImGui::BeginChild("TabContent", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None,
+                                      ImGuiWindowFlags_HorizontalScrollbar)) {
+                    draw();
+                }
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            };
+            tab("Graphics", [] {
+                DrawResolutionChoice();
+                DrawGraphicsSettings();
+            });
+            tab("Audio", DrawAudioSettings);
+            tab("Controllers", DrawControllerSettings);
+            tab("Wii Remotes", DrawWiiRemoteSettings);
+            tab("Tweaks", DrawModSettings);
+            tab("Mods", DrawModPackages);
+            ImGui::EndTabBar();
+        }
+        DrawRebindPrompt();
+    }
+    ImGui::End();
+}
+
 void DrawTopBar() {
     if (!g_topBarVisible) {
         return;
@@ -1602,22 +1669,25 @@ void DrawTopBar() {
     ImGui::GetBackgroundDrawList()->AddRectFilled(viewport->Pos,
         ImVec2(viewport->Pos.x + viewport->Size.x, viewport->Pos.y + viewport->Size.y),
         IM_COL32(0, 0, 0, 70));
-    constexpr float kHintMargin = 10.0f;
-    ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
-                                 viewport->Pos.y + ImGui::GetFrameHeight() + kHintMargin),
-                            ImGuiCond_Always, ImVec2(0.5f, 0.0f));
-    ImGui::SetNextWindowBgAlpha(0.55f);
-    if (ImGui::Begin("Settings input hint", nullptr,
-                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
-                     ImGuiWindowFlags_NoFocusOnAppearing)) {
-        for (const char* line : {"Settings open - game controls disabled.",
-                                 "Press F10 to return to the game."}) {
-            ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(line).x) * 0.5f);
-            ImGui::TextUnformatted(line);
+    if (!g_settingsOpen) {  // the settings window says it itself
+        constexpr float kHintMargin = 10.0f;
+        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
+                                     viewport->Pos.y + ImGui::GetFrameHeight() + kHintMargin),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+        ImGui::SetNextWindowBgAlpha(0.55f);
+        if (ImGui::Begin("Settings input hint", nullptr,
+                         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings |
+                         ImGuiWindowFlags_NoFocusOnAppearing)) {
+            for (const char* line : {"Settings open - game controls disabled.",
+                                     "Press F10 to return to the game."}) {
+                ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(line).x) * 0.5f);
+                ImGui::TextUnformatted(line);
+            }
         }
+        ImGui::End();
     }
-    ImGui::End();
+    DrawSettingsWindow();
     if (!ImGui::BeginMainMenuBar()) return;
 
     if (ImGui::BeginMenu("Strikers Recharged")) {
@@ -1628,44 +1698,11 @@ void DrawTopBar() {
         ImGui::EndMenu();
     }
     ImGui::Separator();
-    const auto resolutionIt = std::find_if(kResolutions.begin(), kResolutions.end(), [](const ResolutionItem& item) {
-        return std::fabs(item.scale - g_resolutionScale) < 0.001f;
-    });
-    const char* resolutionLabel = resolutionIt != kResolutions.end() ? resolutionIt->label : "Custom";
-    const std::string resolutionMenuLabel = std::string("Resolution: ") + resolutionLabel;
-    if (ImGui::BeginMenu(resolutionMenuLabel.c_str())) {
-        for (const auto& resolution : kResolutions) {
-            const bool selected = std::fabs(resolution.scale - g_resolutionScale) < 0.001f;
-            if (ImGui::MenuItem(resolution.label, nullptr, selected)) {
-                SetResolutionScale(resolution.scale);
-            }
-        }
-        ImGui::EndMenu();
+    if (ImGui::MenuItem("Settings", nullptr, g_settingsOpen)) {
+        g_settingsOpen = !g_settingsOpen;
     }
 
-    if (ImGui::BeginMenu("Graphics")) {
-        DrawGraphicsSettings();
-        ImGui::EndMenu();
-    }
-
-    if (ImGui::BeginMenu("Mods")) {
-        DrawModPackages();
-        ImGui::EndMenu();
-    }
-
-    if (ImGui::BeginMenu("Tweaks")) {
-        DrawModSettings();
-        ImGui::EndMenu();
-    }
-
-    if (ImGui::BeginMenu("Controller settings")) {
-        DrawControllerSettings();
-        // Nest capture under this menu so opening/closing the modal preserves
-        // the settings popup and its current port and scroll position.
-        DrawRebindPrompt();
-        ImGui::EndMenu();
-    }
-
+    // Master volume and mute, at hand; the rest is in Settings > Audio.
     const std::string audioLabel = g_audioMuted
         ? "Audio: Muted"
         : "Audio: " + std::to_string(g_audioVolumePercent) + "%";
@@ -1674,7 +1711,8 @@ void DrawTopBar() {
     // different menu and closes the popup on the first drag update.
     const std::string audioMenuLabel = audioLabel + "###AudioSettingsMenu";
     if (ImGui::BeginMenu(audioMenuLabel.c_str())) {
-        DrawAudioSettings();
+        DrawMasterVolume();
+        ImGui::TextDisabled("More in Settings > Audio.");
         DrawRebindPrompt();
         ImGui::EndMenu();
     }

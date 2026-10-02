@@ -51,7 +51,7 @@ camera and accelerometers driven the way Dolphin does it.
 - **Pairing:** press 1+2 (or SYNC) while the game is searching, or pair the remote in your
   system's Bluetooth settings.
 - **Sensor bar:** pointing needs an IR source. If yours sits above the screen, tick
-  **F10 > Wii Remotes (Bluetooth) > Sensor bar is above the screen**.
+  **F10 > Wii Remotes > Sensor bar is above the screen**.
 - **DolphinBar:** use it in **mode 4**, its Wii Remote mode.
 - **Limitations:** plain HID access may not work on macOS, and the Wii U Pro Controller isn't
   supported.
