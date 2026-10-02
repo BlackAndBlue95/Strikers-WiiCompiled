@@ -1,0 +1,12 @@
+[mod]
+id = "example.hello"
+name = "Hello plugin"
+version = "1.0.0"
+framework = 1
+authors = ["Strikers-WiiCompiled"]
+description = "Example native plugin: logs each match's score and the names cutscenes are picked by."
+
+[plugin]
+macos = "hello.dylib"
+windows = "hello.dll"
+linux = "hello.so"

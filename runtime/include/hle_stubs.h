@@ -1,5 +1,6 @@
 #pragma once
 
+#include "mods/mod_plugins.h"
 #include "abi_bridge.h"
 
 // hle/gx/gx_fatal_stubs.cpp includes nothing but this header and reaches
@@ -46,3 +47,16 @@ extern "C" void OS_HLE_EndDeferredGuestCallbacks();
 #define PPC_NATIVE_OVERRIDE_VOID(addr_hex, name, arg_list, call_list) \
     extern "C" void func_##addr_hex arg_list { name call_list; } \
     REGISTER_NATIVE_FUNCTION(0x##addr_hex, name)
+
+// Wraps the guest function at a PPC address instead of replacing it: `name(CpuContext*)` runs for
+// every caller, after any hooks mod plugins put on the address (Mods::Hooks, docs/modding/plugins.md),
+// and calls the translated original, which stays in the build as func_<addr_hex> (declared here).
+// For a wrap point with no runtime logic of its own, pass func_<addr_hex> as `name`. The address must
+// be upper-case hex: it names the translator's upper-case symbol. The translator reads this macro too
+// (GeneratedMarkers.NativeWrapPattern): it keeps the original, makes callers dispatch to the wrapper
+// and never inlines the original into them, so a change needs tools/rebuild.sh like an override.
+#define PPC_NATIVE_WRAP(addr_hex, name) \
+    extern "C" void func_##addr_hex(CpuContext*); \
+    static void name##_WrapEntry(CpuContext* ctx) { ::Mods::Hooks::Run(0x##addr_hex, ctx, &name); } \
+    [[maybe_unused]] static const bool name##_WrapPoint = (::Mods::Hooks::RegisterWrapPoint(0x##addr_hex, #name), true); \
+    REGISTER_NATIVE_FUNCTION_AS(0x##addr_hex, name##_WrapEntry, #name)

@@ -15,6 +15,7 @@
 #define RT_TAG_CONFIG "runtime-config"
 #define RT_TAG_MEMORY "memory"
 #define RT_TAG_MOD "mod"
+#define RT_TAG_MODS "mods"  // mod packages (runtime/src/mods)
 #define RT_TAG_HLE "hle"
 #define RT_TAG_OS "os"
 #define RT_TAG_GX "gx"

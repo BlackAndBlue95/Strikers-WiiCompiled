@@ -84,7 +84,8 @@ add_custom_target(msc_build_version
     BYPRODUCTS "${MSC_BUILD_VERSION_DIR}/msc_build_version.h"
     VERBATIM)
 add_dependencies(mkw_runtime_common msc_build_version)
-target_include_directories(mkw_runtime_common PRIVATE "${MSC_BUILD_VERSION_DIR}")
+target_include_directories(mkw_runtime_common PRIVATE "${MSC_BUILD_VERSION_DIR}"
+    "${MKW_RUNTIME_SOURCE_DIR}/../sdk/include")  # msc_mod_api.h, the native plugin API
 target_compile_features(mkw_runtime_common PRIVATE cxx_std_20)
 target_compile_definitions(mkw_runtime_common PRIVATE
     SDL_MAIN_HANDLED

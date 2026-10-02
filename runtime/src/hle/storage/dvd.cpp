@@ -9,6 +9,8 @@
 // layer's caches must be notified explicitly that these bytes changed.
 extern "C" void GxNotifyGuestRamDmaWrite(uint32_t addr, uint32_t size);
 #include "hle/storage/riivolution.h"
+#include "mods/mod_catalogs.h"
+#include "mods/mod_registry.h"
 #include "ppc_runtime.h"
 #include "recomp_mod_loader.h"
 #include "runtime_config.h"
@@ -23,6 +25,7 @@ extern "C" void GxNotifyGuestRamDmaWrite(uint32_t addr, uint32_t size);
 #include <vector>
 #include <string>
 #include <map>
+#include <optional>
 #include <unordered_set>
 #include <filesystem>
 #include <iostream>
@@ -71,6 +74,9 @@ struct DVDFileEntry {
     uint32_t size;
     uint32_t discOffsetWords = 0;
     bool isDirectory = false;
+    // Data appended after hostPath's (a mod catalog adding streams to a sound bank's .nlxwb): each
+    // {offset in the file, host file}, in order, back to back up to `size`.
+    std::vector<std::pair<uint32_t, fs::path>> appended;
 };
 
 struct FstFileEntry {
@@ -402,6 +408,38 @@ static std::string NormalizePath(const std::string& path) {
     return DvdFstContract::NormalizeLookupPath(path);
 }
 
+// An entry's bytes [offset, offset + length): its host file's, then its appended segments'.
+static bool ReadEntryExact(const DVDFileEntry& entry, uint64_t offset, uint32_t length,
+                           std::vector<uint8_t>& destination, DvdReadContract::HostReadFailure& failure) {
+    if (entry.appended.empty()) {
+        return DvdReadContract::ReadExact(entry.hostPath, offset, length, destination, failure);
+    }
+    destination.clear();
+    destination.reserve(length);
+    uint64_t at = offset;
+    uint32_t left = length;
+    while (left != 0) {
+        size_t segment = 0;  // 0: the host file, i + 1: appended[i]
+        while (segment < entry.appended.size() && entry.appended[segment].first <= at) ++segment;
+        const uint64_t start = segment == 0 ? 0 : entry.appended[segment - 1].first;
+        const uint64_t end = segment < entry.appended.size() ? entry.appended[segment].first : entry.size;
+        if (at >= end) {
+            failure = DvdReadContract::HostReadFailure::ShortRead;
+            return false;
+        }
+        const uint32_t take = static_cast<uint32_t>(std::min<uint64_t>(left, end - at));
+        std::vector<uint8_t> part;
+        if (!DvdReadContract::ReadExact(segment == 0 ? entry.hostPath : entry.appended[segment - 1].second, at - start, take,
+                                        part, failure)) {
+            return false;
+        }
+        destination.insert(destination.end(), part.begin(), part.end());
+        at += take;
+        left -= take;
+    }
+    return true;
+}
+
 static void RegisterFileEntry(std::string dvdPath, const fs::path& hostPath, uint32_t size) {
     dvdPath = DvdFstContract::CanonicalizePath(dvdPath);
 
@@ -556,6 +594,53 @@ static void ApplyFolderByNameMapping(const RuntimeRiivolution::Mapping& mapping)
               << " disc file(s) by filename" << std::endl;
 }
 
+// Mod packages (runtime/src/mods): each active package's files/ folder is disc-shaped and may add
+// files or replace them. A replaced disc file is a global override (it applies whoever plays), so
+// it's reported; two packages shipping the same file is a conflict, and the later one wins.
+static void ScanModPackages(size_t discEntryCount) {
+    std::map<std::string, std::string> owners;  // normalized dvd path -> package id
+    for (const Mods::Package* package : Mods::ActivePackages()) {
+        Mods::MountStats stats;
+        std::vector<std::string> overrides;
+        std::error_code ec;
+        if (fs::is_directory(package->FilesRoot(), ec)) {
+            WalkDirectory(package->FilesRoot(), /*recursive=*/true, /*announceErrors=*/true, [&](const fs::directory_entry& entry) {
+                std::error_code entryEc;
+                if (!entry.is_regular_file(entryEc) || entryEc) return;
+                const std::uintmax_t size = fs::file_size(entry.path(), entryEc);
+                const fs::path relative = fs::relative(entry.path(), package->FilesRoot(), entryEc);
+                if (entryEc) return;
+                // Skip what file managers and version control leave behind (.DS_Store, .git/...,
+                // Thumbs.db, desktop.ini): the game never asks for them.
+                for (const fs::path& part : relative) {
+                    const std::string name = HostPathText(part);
+                    if (name.empty() || name[0] == '.' || name == "Thumbs.db" || name == "desktop.ini") return;
+                }
+                const std::string dvdPath = "/" + HostPathText(relative);
+                const std::string key = NormalizePath(DvdFstContract::CanonicalizePath(dvdPath));
+                if (const auto owner = owners.find(key); owner != owners.end()) {
+                    ++stats.conflicts;
+                    RT_LOG(RT_TAG_MODS) << package->id << ": " << dvdPath << " is also in " << owner->second
+                                        << " (" << package->id << "'s copy wins)" << std::endl;
+                } else if (const auto existing = g_pathToEntry.find(key);
+                           existing != g_pathToEntry.end() && static_cast<size_t>(existing->second) < discEntryCount) {
+                    ++stats.replaced;
+                    overrides.push_back(dvdPath);
+                } else {
+                    ++stats.added;
+                }
+                owners[key] = package->id;
+                RegisterFileEntry(dvdPath, entry.path(), static_cast<uint32_t>(size));
+            });
+        }
+        Mods::SetMountStats(package->id, stats);
+        RT_LOG(RT_TAG_MODS) << package->id << ": " << stats.added << " file(s) added, " << stats.replaced
+                            << " disc file(s) replaced (global overrides)" << std::endl;
+        for (size_t i = 0; i < overrides.size() && i < 8; ++i) RT_LOG(RT_TAG_MODS) << "    replaces " << overrides[i] << std::endl;
+        if (overrides.size() > 8) RT_LOG(RT_TAG_MODS) << "    ... and " << (overrides.size() - 8) << " more" << std::endl;
+    }
+}
+
 static void ScanOverlayRoot(const RuntimeRiivolution::Overlay& overlay) {
     if (!overlay.patches) {
         // Fallback for mod roots that mirror the disc filesystem directly (not a
@@ -626,6 +711,10 @@ static void BuildAndPublishRuntimeFst() {
         }
         g_fileEntries[mapped->second].discOffsetWords = fstFile.start / 4u;
     }
+    // A file grown by appended data no longer fits its disc extent: a synthetic one, as an added file.
+    for (DVDFileEntry& entry : g_fileEntries) {
+        if (!entry.appended.empty()) entry.discOffsetWords = 0;
+    }
 
     // Give runtime-added files unique synthetic disc ranges so reads can find them.
     uint64_t nextFreeBytes = 0;
@@ -664,11 +753,22 @@ static void BuildAndPublishRuntimeFst() {
         FailRuntimeFst(error.what());
     }
 
+    // Appended data (mod catalogs) isn't part of the image's entries: carried over by path.
+    std::map<std::string, std::vector<std::pair<uint32_t, fs::path>>> appended;
+    for (const DVDFileEntry& entry : g_fileEntries) {
+        if (!entry.appended.empty()) appended[NormalizePath(entry.dvdPath)] = entry.appended;
+    }
+
     std::vector<DVDFileEntry> indexedEntries;
     indexedEntries.reserve(image.entries.size());
     for (const DvdFstContract::IndexedEntry& entry : image.entries) {
         indexedEntries.push_back({entry.hostPath, entry.dvdPath, entry.size,
                                   entry.discOffsetWords, entry.isDirectory});
+        if (const auto it = appended.find(NormalizePath(entry.dvdPath)); it != appended.end()) {
+            indexedEntries.back().appended = it->second;
+            RT_LOG(RT_TAG_DVD) << entry.dvdPath << ": " << it->second.size() << " appended segment(s), "
+                               << entry.size << " bytes" << std::endl;
+        }
     }
     g_fileEntries = std::move(indexedEntries);
     g_pathToEntry = std::move(image.pathToEntry);
@@ -747,6 +847,14 @@ extern "C" const char* DVDResolveHostPathForTest(const char* dvdPath)
 // generated away kits read texture bundles). Unlike DVDResolveHostPathForTest it never runs
 // DVDInit, so it is safe while the game runs and from any thread: the file table does not change
 // once DVDInit has built it.
+// Whether the game's file table (disc, mods, overlays) has `dvdPath`, for runtime code such as the
+// mod framework choosing between a mod character's file and its base character's. The table is built
+// once by DVDInit and never changes afterwards, so this needs no lock; before DVDInit it's false.
+bool DVDPathExistsForRuntime(const char* dvdPath)
+{
+    return g_dvdInitialized && dvdPath != nullptr && DvdEntryExists(dvdPath[0] == '/' ? dvdPath : std::string("/") + dvdPath);
+}
+
 bool DVDReadFileForRuntime(const char* dvdPath, std::vector<uint8_t>& out)
 {
     out.clear();
@@ -880,12 +988,34 @@ extern "C" void DVDInit_80396CC0()
     // reverse discovery order: the explicitly configured root outranks the mod
     // manifest.
     const size_t vanillaEntryCount = g_fileEntries.size();
+    // Mod packages first, so an explicitly configured overlay root still outranks them.
+    ScanModPackages(vanillaEntryCount);
+    // Then the catalogs they add to (front-end texture bundles, ...): rebuilt from the file as it
+    // stands now (the disc's, or a package's replacement) and registered in its place.
+    Mods::Catalogs::Merge(
+        [](const std::string& dvdPath) -> std::optional<fs::path> {
+            const auto it = g_pathToEntry.find(NormalizePath(DvdFstContract::CanonicalizePath(dvdPath)));
+            if (it == g_pathToEntry.end() || it->second < 0 || it->second >= static_cast<int32_t>(g_fileEntries.size())) return std::nullopt;
+            return g_fileEntries[it->second].hostPath;
+        },
+        [](const std::string& dvdPath, const fs::path& hostPath, uint32_t size) { RegisterFileEntry(dvdPath, hostPath, size); },
+        [](const std::string& dvdPath, const fs::path& hostPath, uint32_t size) -> std::optional<uint32_t> {
+            const auto it = g_pathToEntry.find(NormalizePath(DvdFstContract::CanonicalizePath(dvdPath)));
+            if (it == g_pathToEntry.end() || it->second < 0 || it->second >= static_cast<int32_t>(g_fileEntries.size())) return std::nullopt;
+            DVDFileEntry& entry = g_fileEntries[it->second];
+            if (entry.isDirectory || static_cast<uint64_t>(entry.size) + size > 0xFFFFFFFFull) return std::nullopt;
+            const uint32_t at = entry.size;
+            entry.appended.emplace_back(at, hostPath);
+            entry.size += size;
+            return at;
+        });
+    const size_t modEntryCount = g_fileEntries.size() - vanillaEntryCount;
     for (auto overlay = overlays.rbegin(); overlay != overlays.rend(); ++overlay) {
         ScanOverlayRoot(*overlay);
     }
-    RT_LOG(RT_TAG_DVD) << "disc index: " << vanillaEntryCount << " disc file(s), "
-              << (g_fileEntries.size() - vanillaEntryCount) << " overlay registration(s) from "
-              << overlays.size() << " root(s)" << std::endl;
+    RT_LOG(RT_TAG_DVD) << "disc index: " << vanillaEntryCount << " disc file(s), " << modEntryCount
+              << " mod file(s), " << (g_fileEntries.size() - vanillaEntryCount - modEntryCount)
+              << " overlay registration(s) from " << overlays.size() << " root(s)" << std::endl;
 
     // Load FST mapping so real files keep their physical disc extents.
     LoadFstIndex();
@@ -956,7 +1086,7 @@ extern "C" int32_t DVDReadPrio_8015E834(uint32_t fileInfoPtr, uint32_t bufferPtr
 
     std::vector<uint8_t> tempBuf;
     DvdReadContract::HostReadFailure failure;
-    if (!DvdReadContract::ReadExact(entry.hostPath, uOffset, uLength, tempBuf, failure)) {
+    if (!ReadEntryExact(entry, uOffset, uLength, tempBuf, failure)) {
         return DvdReadFatal(fileInfoPtr, HostPathText(entry.hostPath), offset, uLength,
                             DvdReadContract::Describe(failure));
     }
@@ -1025,11 +1155,11 @@ extern "C" int32_t DVD__ReadAbsAsyncPrio_HLE_8039A5F0(uint32_t cmdBlockPtr,
         } else {
             std::vector<uint8_t> tempBuf;
             DvdReadContract::HostReadFailure failure;
-            if (!DvdReadContract::ReadExact(readInfo.entry->hostPath,
-                                            readInfo.fileOffset,
-                                            readInfo.readLength,
-                                            tempBuf,
-                                            failure)) {
+            if (!ReadEntryExact(*readInfo.entry,
+                                readInfo.fileOffset,
+                                readInfo.readLength,
+                                tempBuf,
+                                failure)) {
                 bytesRead = DvdReadFatal(cmdBlockPtr, HostPathText(readInfo.entry->hostPath),
                                          readInfo.fileOffset, readInfo.readLength,
                                          DvdReadContract::Describe(failure));
@@ -1141,11 +1271,11 @@ extern "C" int32_t DVDLowRead_8039CC3C(uint32_t buffer, uint32_t length, uint32_
 
     std::vector<uint8_t> tempBuf;
     DvdReadContract::HostReadFailure failure;
-    if (!DvdReadContract::ReadExact(readInfo.entry->hostPath,
-                                    readInfo.fileOffset,
-                                    readInfo.readLength,
-                                    tempBuf,
-                                    failure)) {
+    if (!ReadEntryExact(*readInfo.entry,
+                        readInfo.fileOffset,
+                        readInfo.readLength,
+                        tempBuf,
+                        failure)) {
         ReportDvdReadError(HostPathText(readInfo.entry->hostPath), readInfo.fileOffset,
                            readInfo.readLength, DvdReadContract::Describe(failure));
         return finish(false);

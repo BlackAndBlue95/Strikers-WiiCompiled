@@ -1,3 +1,4 @@
+#include "mods/mod_plugins.h"
 #include "msc_build_version.h"
 #include <algorithm>
 #include <atomic>
@@ -1475,6 +1476,9 @@ int RuntimeMain(int argc, char** argv) {
         }
         currentEntryLabel = label;
         g_lastEntryLabel = currentEntryLabel;
+
+        // Mod packages' native plugins, last thing before the game starts (docs/modding/plugins.md).
+        Mods::LoadPlugins();
 
         InvokeIndirectCpu(entry->address, &cpu);
         const uint32_t result = cpu.gpr[3];

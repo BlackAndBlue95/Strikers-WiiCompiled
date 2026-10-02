@@ -6,6 +6,8 @@
 #include "input_bindings.h"
 #include "game_graphics_options.h"
 #include "music_attenuation.h"
+#include "mods/mod_plugins.h"
+#include "mods/mod_registry.h"
 #include "runtime_config.h"
 #include "runtime_log.h"
 #include "wii_remote_input.h"
@@ -15,6 +17,7 @@
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_keyboard.h>
+#include <SDL3/SDL_misc.h>
 #include <SDL3/SDL_mouse.h>
 #include <SDL3/SDL_scancode.h>
 #include <SDL3/SDL_timer.h>
@@ -1068,7 +1071,75 @@ void DrawAudioSettings() {
     }
 }
 
-// Controller-friendly changes to the game, all on by default (Config.toml [mods]).
+// F10 > Mods: the installed mod packages (runtime/src/mods). Switches are saved to Config.toml and
+// apply on the next launch: the disc file table is built once, at boot.
+void DrawModPackages() {
+    const auto& packages = Mods::Packages();
+    const std::string dir = RuntimeConfigFile::PathToUtf8(Mods::Directory());
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 34.0f);
+    if (packages.empty()) {
+        ImGui::TextUnformatted("No mods installed.");
+        ImGui::TextDisabled("Put each mod's folder (the one holding its mod.toml) in %s", dir.c_str());
+    }
+    const ImVec4 errorColour(1.0f, 0.45f, 0.35f, 1.0f), warningColour(1.0f, 0.75f, 0.25f, 1.0f);
+    for (const Mods::Package& package : packages) {
+        ImGui::PushID(package.id.c_str());
+        bool enabled = RuntimeConfigFile::ModPackageEnabled(package.id).value_or(true);
+        const std::string label = package.name + (package.version.empty() ? "" : "  " + package.version);
+        if (ImGui::Checkbox(label.c_str(), &enabled)) Mods::SetEnabled(package.id, enabled);
+        std::string authors;
+        for (const std::string& author : package.authors) authors += (authors.empty() ? "" : ", ") + author;
+        ImGui::TextDisabled("%s%s%s", package.id.c_str(), authors.empty() ? "" : " - by ", authors.c_str());
+        if (!package.description.empty()) ImGui::TextDisabled("%s", package.description.c_str());
+        if (package.active) {
+            const Mods::MountStats mount = Mods::GetMountStats(package.id);
+            ImGui::TextDisabled("%zu character(s), %d file(s) added", package.characters.size(), mount.added);
+            if (mount.replaced > 0)
+                ImGui::TextColored(warningColour, "Replaces %d game file(s) for every match and menu.", mount.replaced);
+            if (mount.conflicts > 0)
+                ImGui::TextColored(warningColour, "%d file(s) are also in another mod (this one wins).", mount.conflicts);
+        }
+        for (const std::string& error : package.errors) ImGui::TextColored(errorColour, "%s", error.c_str());
+        for (const std::string& warning : package.warnings) ImGui::TextColored(warningColour, "%s", warning.c_str());
+        if (package.HasPlugin()) {
+            bool allowed = RuntimeConfigFile::ModPluginEnabled(package.id).value_or(false);
+            if (ImGui::Checkbox("Allow its native code", &allowed)) Mods::SetPluginAllowed(package.id, allowed);
+            ImGui::TextDisabled("This mod includes a native plugin, which runs with your account's permissions. "
+                                "Only allow mods you trust.");
+            if (const Mods::PluginStatus* plugin = Mods::GetPluginStatus(package.id)) {
+                if (!plugin->loaded && !plugin->error.empty())
+                    ImGui::TextColored(package.pluginSetting ? errorColour : warningColour, "Plugin: %s", plugin->error.c_str());
+                for (const Mods::PluginSetting& setting : plugin->settings) {
+                    bool value = Mods::PluginSettingValue(package.id, setting);
+                    if (ImGui::Checkbox(setting.label.c_str(), &value)) Mods::SetPluginSettingValue(package.id, setting, value);
+                    if (!setting.help.empty()) ImGui::TextDisabled("%s", setting.help.c_str());
+                }
+            }
+        }
+        ImGui::PopID();
+        ImGui::Separator();
+    }
+    if (Mods::RestartRequired()) ImGui::TextColored(warningColour, "Restart the game to apply these changes.");
+    if (ImGui::Button("Open the mods folder")) {
+        std::string path = dir;  // a file:// URL: forward slashes, a leading one before a drive letter
+        std::replace(path.begin(), path.end(), '\\', '/');
+        if (path.empty() || path[0] != '/') path.insert(0, "/");
+        std::string url = "file://";
+        for (const unsigned char c : path) {
+            if (std::isalnum(c) || c == '/' || c == ':' || c == '-' || c == '_' || c == '.' || c == '~') {
+                url += static_cast<char>(c);
+            } else {
+                char escaped[4];
+                std::snprintf(escaped, sizeof(escaped), "%%%02X", c);
+                url += escaped;
+            }
+        }
+        SDL_OpenURL(url.c_str());
+    }
+    ImGui::PopTextWrapPos();
+}
+
+// F10 > Tweaks: changes to the game built into the runtime ([mods] in Config.toml).
 void DrawModSettings() {
     bool navigation = RuntimeConfigFile::ModMenuNavigation();
     if (ImGui::Checkbox("Controller menu navigation", &navigation)) {
@@ -1427,6 +1498,11 @@ void DrawTopBar() {
     }
 
     if (ImGui::BeginMenu("Mods")) {
+        DrawModPackages();
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Tweaks")) {
         DrawModSettings();
         ImGui::EndMenu();
     }
