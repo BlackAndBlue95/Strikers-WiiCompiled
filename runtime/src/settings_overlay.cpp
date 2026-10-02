@@ -355,9 +355,15 @@ void DrawWiiRemoteSettings(uint32_t selectedGamePort) {
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Takes effect on the next launch. A Mayflash DolphinBar works too, in mode 4.");
     }
-    ImGui::TextDisabled("Pairing: Windows Settings > Bluetooth > Add device, then press 1+2");
-    ImGui::TextDisabled("(or the red SYNC button) on the remote. Leave the PIN empty.");
+#if defined(_WIN32)
+    ImGui::TextDisabled("Connecting: press 1+2 (or the red SYNC button) on the remote while the game");
+    ImGui::TextDisabled("is looking: the first minute after launch, after Find Wii Remotes, or all the");
+    ImGui::TextDisabled("time with Keep scanning on. Adding it in Windows' Bluetooth settings works too.");
+#else
+    ImGui::TextDisabled("Pairing: add the remote in the system's Bluetooth settings, pressing 1+2");
+    ImGui::TextDisabled("(or the red SYNC button) on it. Leave the PIN empty.");
     ImGui::TextDisabled("A remote that was paired before also needs to be turned on with 1+2/SYNC.");
+#endif
     if (ImGui::Checkbox("Sensor bar is above the screen", &g_sensorBarAbove)) {
         RuntimeConfigFile::SetSensorBarAbove(g_sensorBarAbove);
         WiimoteHid::SetSensorBarAbove(g_sensorBarAbove);
@@ -369,24 +375,39 @@ void DrawWiiRemoteSettings(uint32_t selectedGamePort) {
     if (ImGui::Checkbox("Keep scanning for Wii Remotes (like Dolphin's Continuous Scanning)",
                         &g_wiiContinuousScan)) {
         RuntimeConfigFile::SetWiiContinuousScanEnabled(g_wiiContinuousScan);
+        WiimoteHid::SetContinuousSearch(g_wiiContinuousScan);
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("While no Wii controller is connected, re-check Bluetooth every 2 seconds so a\n"
-                          "remote that dropped out (\"Communications with the controller have been\n"
-                          "interrupted\") or was turned on after launch comes back by itself.");
+        ImGui::SetTooltip("While no Wii Remote is connected, keep looking for one, so a remote that dropped\n"
+                          "out or was turned on later comes back by itself. Each search takes the PC's\n"
+                          "Bluetooth for a moment, which Bluetooth headphones may notice.");
     }
     // The driver hint is only read at launch, so a rescan after the user turned
     // the setting off would still re-enumerate Wii devices in this session.
     ImGui::BeginDisabled(!g_wiiRemotesEnabled);
-    if (ImGui::Button("Rescan now")) {
-        WiiRemoteInput::RescanNow();
-    }
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    if (WiiRemoteInput::IsScanning()) {
-        ImGui::TextDisabled("Scanning... (%u so far) - press 1+2 on the remote", WiiRemoteInput::ScanCount());
+    if (WiimoteHid::Running()) {
+        // The HID backend (the usual way): it scans by itself; this searches Bluetooth now.
+        if (ImGui::Button("Find Wii Remotes")) {
+            WiimoteHid::FindRemotes();
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (WiimoteHid::Searching()) {
+            ImGui::TextDisabled("Searching... press 1+2 on the remote");
+        } else {
+            ImGui::TextDisabled("%u connected", WiimoteHid::ConnectedCount());
+        }
     } else {
-        ImGui::TextDisabled("Not scanning");
+        if (ImGui::Button("Rescan now")) {
+            WiiRemoteInput::RescanNow();
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (WiiRemoteInput::IsScanning()) {
+            ImGui::TextDisabled("Scanning... (%u so far) - press 1+2 on the remote", WiiRemoteInput::ScanCount());
+        } else {
+            ImGui::TextDisabled("Not scanning");
+        }
     }
     ImGui::Separator();
 

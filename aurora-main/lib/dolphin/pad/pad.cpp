@@ -404,7 +404,7 @@ const char* PADGetNameForControllerIndex(const u32 idx) {
 }
 
 void PADSetPortForIndex(const u32 idx, const u32 port) {
-  if (port >= PAD_MAX_CONTROLLERS) return;
+  if (port >= PAD_MAX_CONTROLLERS || aurora::input::is_external_port(port)) return;
   const auto* ctrl = __PADGetControllerForIndex(idx);
   if (ctrl == nullptr) {
     return;
@@ -420,6 +420,8 @@ void PADSetPortForIndex(const u32 idx, const u32 port) {
   aurora::input::set_player_index(ctrl->m_index, static_cast<Sint32>(port));
   aurora::input::persist_controller_for_player(port, ctrl);
 }
+
+void PADSetExternalPorts(const u32 mask) { aurora::input::set_external_ports(mask); }
 
 int32_t PADGetIndexForPort(const u32 port) {
   const auto* ctrl = aurora::input::get_controller_for_player(port);

@@ -44,6 +44,13 @@ struct PortPreference {
 
 std::array<PortPreference, PAD_MAX_CONTROLLERS> g_portPreferences;
 bool g_portPreferencesLoaded = false;
+// Strikers-WiiCompiled: ports another input source owns (the runtime's Wii Remotes, read over raw
+// HID), as a bitmask. No gamepad is put on one: each port has a single owner, never a mix.
+uint32_t g_externalPorts = 0;
+
+bool owned_elsewhere(int32_t port) {
+  return port >= 0 && port < PAD_MAX_CONTROLLERS && ((g_externalPorts >> port) & 1u) != 0;
+}
 
 std::string port_preferences_path() {
   if (g_config.userPath == nullptr) {
@@ -277,8 +284,19 @@ void ensure_player_index(GameController& controller) noexcept;
 
 void apply_port_preferences() noexcept {
   ensure_port_preferences_loaded();
+  // Off the ports another input source owns, whatever put a gamepad there.
+  for (auto& [instance, controller] : g_GameControllers) {
+    if (owned_elsewhere(effective_player_index(controller))) {
+      assign_player_index(controller, -1);
+    }
+  }
   if (!std::any_of(g_portPreferences.begin(), g_portPreferences.end(),
                    [](const auto& preference) { return preference.state != PortPreferenceState::Unset; })) {
+    for (auto& [instance, controller] : g_GameControllers) {
+      if (effective_player_index(controller) < 0) {
+        ensure_player_index(controller);
+      }
+    }
     return;
   }
 
@@ -294,7 +312,7 @@ void apply_port_preferences() noexcept {
   size_t claimedCount = 0;
   for (uint32_t port = 0; port < g_portPreferences.size(); ++port) {
     const auto& preference = g_portPreferences[port];
-    if (preference.state != PortPreferenceState::Controller) {
+    if (preference.state != PortPreferenceState::Controller || owned_elsewhere(static_cast<int32_t>(port))) {
       continue;
     }
 
@@ -343,12 +361,15 @@ void apply_port_preferences() noexcept {
 // at connect time, so anything mapped later (the setup wizard) stays at -1.
 void ensure_player_index(GameController& controller) noexcept {
   const int32_t player = SDL_GetGamepadPlayerIndex(controller.m_controller);
-  if (player >= 0) {
+  if (player >= 0 && !owned_elsewhere(player)) {
     controller.m_playerIndex = player;
     return;
   }
-  if (controller.m_playerIndex >= 0) {
+  if (player < 0 && controller.m_playerIndex >= 0 && !owned_elsewhere(controller.m_playerIndex)) {
     return;
+  }
+  if (player >= 0 || controller.m_playerIndex >= 0) {
+    assign_player_index(controller, -1);  // on a port another input source owns
   }
   ensure_port_preferences_loaded();
   // Strikers-WiiCompiled: a port saved for a controller that isn't connected is lent out, so a
@@ -366,7 +387,7 @@ void ensure_player_index(GameController& controller) noexcept {
   };
   const auto claim = [&](bool skipConfiguredPorts) {
     for (int32_t port = 0; port < PAD_MAX_CONTROLLERS; ++port) {
-      if (skipConfiguredPorts && reserved(port)) {
+      if (owned_elsewhere(port) || (skipConfiguredPorts && reserved(port))) {
         continue;
       }
       const bool taken = std::any_of(g_GameControllers.begin(), g_GameControllers.end(), [&](const auto& entry) {
@@ -451,7 +472,7 @@ SDL_JoystickID add_controller(SDL_JoystickID which) noexcept {
       }
       if (!hasOtherPortPreference) {
         const auto* p0 = get_controller_for_player(0);
-        if (p0 == nullptr) {
+        if (p0 == nullptr && !owned_elsewhere(0)) {
           assign_player_index(g_GameControllers[instance], 0);
           persist_controller_for_player(0, &g_GameControllers[instance]);
         } else if (p0 == &g_GameControllers[instance]) {
@@ -503,6 +524,9 @@ int32_t player_index(Uint32 instance) noexcept {
 }
 
 void set_player_index(Uint32 instance, Sint32 index) noexcept {
+  if (owned_elsewhere(index)) {
+    return;
+  }
   if (auto it = g_GameControllers.find(instance); it != g_GameControllers.end()) {
     SDL_SetGamepadPlayerIndex(it->second.m_controller, index);
     it->second.m_playerIndex = index;
@@ -541,6 +565,17 @@ void controller_rumble(uint32_t instance, uint16_t low_freq_intensity, uint16_t 
 }
 
 uint32_t controller_count() noexcept { return g_GameControllers.size(); }
+
+void set_external_ports(uint32_t mask) noexcept {
+  mask &= (1u << PAD_MAX_CONTROLLERS) - 1;
+  if (mask == g_externalPorts) {
+    return;
+  }
+  g_externalPorts = mask;
+  apply_port_preferences();  // gamepads step off the new ports, and back onto freed ones they prefer
+}
+
+bool is_external_port(uint32_t port) noexcept { return owned_elsewhere(static_cast<int32_t>(port)); }
 
 void persist_controller_for_player(uint32_t player, const GameController* controller) noexcept {
   if (player >= PAD_MAX_CONTROLLERS) {

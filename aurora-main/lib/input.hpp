@@ -56,6 +56,9 @@ bool refresh_controller(SDL_JoystickID instance) noexcept;
 void remove_controller(Uint32 instance) noexcept;
 Sint32 player_index(Uint32 instance) noexcept;
 void set_player_index(Uint32 instance, Sint32 index) noexcept;
+// Strikers-WiiCompiled: ports another input source owns (bitmask); gamepads are kept off them.
+void set_external_ports(uint32_t mask) noexcept;
+bool is_external_port(uint32_t port) noexcept;
 std::string controller_name(Uint32 instance) noexcept;
 bool is_gamecube(Uint32 instance) noexcept;
 bool controller_has_rumble(Uint32 instance) noexcept;

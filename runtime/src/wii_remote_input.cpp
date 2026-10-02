@@ -434,6 +434,7 @@ void ConfigureSdlHints(bool enabled) {
         SDL_SetHint(SDL_HINT_GAMECONTROLLER_IGNORE_DEVICES, ignored.c_str());
         g_wiiDriverEnabled = false;
         WiimoteHid::SetSensorBarAbove(RuntimeConfigFile::SensorBarAbove());
+        WiimoteHid::SetContinuousSearch(RuntimeConfigFile::WiiContinuousScanEnabled(false));
         WiimoteHid::Start();
         RT_LOG(RT_TAG_CONFIG) << "Bluetooth Wii Remote support enabled (HID backend)" << std::endl;
         return;
@@ -482,6 +483,17 @@ void Poll() {
     // Remember what each port had, so EffectiveKind can bridge a swap.
     for (uint32_t port = 0; port < PAD_MAX_CONTROLLERS; ++port) {
         (void)EffectiveKind(port);
+    }
+    // One owner per port: the ports Wii Remotes hold (HID backend) are kept free of SDL gamepads,
+    // which aurora moves to free ports (and back once the remote leaves).
+    static uint32_t s_remotePorts = 0;
+    uint32_t remotePorts = 0;
+    for (uint32_t port = 0; port < PAD_MAX_CONTROLLERS; ++port) {
+        if (WiimoteHid::Present(port)) remotePorts |= 1u << port;
+    }
+    if (remotePorts != s_remotePorts) {
+        s_remotePorts = remotePorts;
+        PADSetExternalPorts(remotePorts);
     }
     if (!g_wiiDriverEnabled) {
         return;

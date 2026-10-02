@@ -203,6 +203,9 @@ u32 PADCount();
 /* Returns the controller name for the given index into the controller map */
 const char* PADGetNameForControllerIndex(u32 idx);
 void PADSetPortForIndex(u32 index, u32 port);
+/* Strikers-WiiCompiled: ports another input source owns (bitmask, bit n = port n); no controller is
+   assigned to them, and a controller on one moves to a free port. */
+void PADSetExternalPorts(u32 mask);
 s32 PADGetIndexForPort(u32 port);
 void PADGetVidPid(u32 port, u32* vid, u32* pid);
 void PADClearPort(u32 port);

@@ -26,11 +26,21 @@ struct Sample {
     uint16_t dotY[4] = {0x3FF, 0x3FF, 0x3FF, 0x3FF};
 };
 
-// Starts the background thread that finds, initialises and reads remotes. Idempotent.
+// Starts the background threads that find, initialise and read remotes. Idempotent.
 void Start();
-// Stops it and closes every remote.
+// Stops them and closes every remote.
 void Stop();
 bool Running();
+// Looks for remotes now. On Windows this also connects remotes in discoverable mode (1+2 or SYNC
+// pressed) over Bluetooth, as adding one in Windows' Bluetooth settings does, and removes Wii Remote
+// pairings Windows remembers that aren't connected (they keep a remote from being found again).
+// While no remote is connected, searches also run one after another for the first minute after
+// Start, and always with continuous searching on.
+void FindRemotes();
+// True while a Bluetooth search (FindRemotes) is running.
+bool Searching();
+// Whether to search continuously while no remote is connected (Windows; [input] Keep scanning).
+void SetContinuousSearch(bool on);
 // Latest state of the remote on a game channel; false when none is there.
 bool Read(uint32_t chan, Sample& out);
 // True when a remote currently owns `chan`.

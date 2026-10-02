@@ -13,9 +13,15 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
+
+#if defined(_WIN32)
+#include <windows.h>
+#include <bluetoothapis.h>
+#endif
 
 // Protocol details checked against Dolphin (dolphin-emu/dolphin 771fb15): WiimoteReal (connection
 // probing, I/O), WiimoteCommon (report and calibration layouts) and WiimoteEmu (IR camera registers
@@ -103,8 +109,23 @@ std::array<Sample, kMaxRemotes> g_samples{};
 std::array<bool, kMaxRemotes> g_owned{};
 std::atomic<bool> g_running{false};
 std::atomic<bool> g_stop{false};
-std::thread g_thread;
+std::thread g_readThread;  // reads the connected remotes, and nothing else
+std::thread g_scanThread;  // finds and sets up new ones
 std::atomic<uint32_t> g_connected{0};
+
+// Remotes the scan thread has set up, waiting for the read thread to take them over, and the paths
+// that are connected or being set up (so a scan doesn't open one twice).
+std::mutex g_handoffMutex;
+std::vector<std::unique_ptr<Remote>> g_handoff;
+std::set<std::string> g_openPaths;
+
+// Bluetooth searches (Windows): one asked for (FindRemotes), or one after another while nothing is
+// connected, for the first minute after start and always with continuous searching on.
+constexpr uint64_t kSearchAfterStartMs = 60000;
+std::atomic<bool> g_searchRequested{false};
+std::atomic<bool> g_continuousSearch{false};
+std::atomic<bool> g_searching{false};
+uint64_t g_startMs = 0;
 
 // --- low-level I/O ---------------------------------------------------------------------------------
 
@@ -467,20 +488,15 @@ bool CoolingDown(const char* path) {
     return std::ranges::any_of(g_cooldowns, [&](const Cooldown& c) { return c.path == path; });
 }
 
-bool IsOpen(const std::vector<std::unique_ptr<Remote>>& remotes, const char* path) {
-    for (const auto& r : remotes) {
-        if (r->path == path) return true;
-    }
-    return false;
-}
-
-void Connect(std::vector<std::unique_ptr<Remote>>& remotes, const SDL_hid_device_info* info) {
+// Opens and sets up the remote at a path (on the scan thread); nullptr if it isn't there or doesn't
+// answer.
+std::unique_ptr<Remote> Connect(const SDL_hid_device_info* info) {
     SDL_hid_device* device = SDL_hid_open_path(info->path);
-    if (device == nullptr) return;
+    if (device == nullptr) return nullptr;
     const int chan = ClaimChannel();
     if (chan < 0) {
         SDL_hid_close(device);
-        return;
+        return nullptr;
     }
     auto r = std::make_unique<Remote>();
     r->device = device;
@@ -499,19 +515,20 @@ void Connect(std::vector<std::unique_ptr<Remote>>& remotes, const SDL_hid_device
         writeAccepted = true;
         return WaitFor(*r, kInStatus, status, 300);
     };
+    // A fresh connection may need a moment to settle (Dolphin retries once): a few tries.
     bool answered = probe();
-    if (!answered) {
-        SDL_Delay(100); // Dolphin retries once: a fresh connection may need a moment to settle
+    for (int retry = 0; !answered && retry < 3; ++retry) {
+        SDL_Delay(150);
         answered = probe();
     }
     if (answered) r->extensionAttached = (status[3] & 0x02) != 0;
     if (!answered) {
         // A failed write costs nothing to retry next scan; an accepted write that nobody answers
-        // cost a timeout, so that path rests for a while.
-        if (writeAccepted) g_cooldowns.push_back({info->path, SDL_GetTicks() + 15000});
+        // cost the scan thread a timeout, so that path rests for a few seconds.
+        if (writeAccepted) g_cooldowns.push_back({info->path, SDL_GetTicks() + 5000});
         ReleaseChannel(r->chan);
         SDL_hid_close(device);
-        return;
+        return nullptr;
     }
     ReadAccelCalibration(*r);
     Setup(*r);
@@ -520,8 +537,7 @@ void Connect(std::vector<std::unique_ptr<Remote>>& remotes, const SDL_hid_device
         g_samples[r->chan].connected = true;
     }
     RT_LOGF(RT_TAG_CONFIG, "Wii Remote connected on port %u (HID, product %04X)\n", r->chan + 1, info->product_id);
-    remotes.push_back(std::move(r));
-    g_connected.store(static_cast<uint32_t>(remotes.size()));
+    return r;
 }
 
 void Disconnect(std::vector<std::unique_ptr<Remote>>& remotes, size_t index) {
@@ -529,6 +545,10 @@ void Disconnect(std::vector<std::unique_ptr<Remote>>& remotes, size_t index) {
     RT_LOGF(RT_TAG_CONFIG, "Wii Remote on port %u disconnected\n", r.chan + 1);
     SDL_hid_close(r.device);
     ReleaseChannel(r.chan);
+    {
+        std::lock_guard<std::mutex> lock(g_handoffMutex);
+        g_openPaths.erase(r.path);
+    }
     remotes.erase(remotes.begin() + static_cast<std::ptrdiff_t>(index));
     g_connected.store(static_cast<uint32_t>(remotes.size()));
 }
@@ -543,30 +563,149 @@ bool IsWiiRemote(const SDL_hid_device_info* info) {
     return info->vendor_id == kNintendoVid && (info->product_id == kPidRvlCnt01 || info->product_id == kPidRvlCnt01Tr);
 }
 
-void Scan(std::vector<std::unique_ptr<Remote>>& remotes) {
-    if (remotes.size() >= kMaxRemotes) return;
+#if defined(_WIN32)
+// --- Windows Bluetooth -----------------------------------------------------------------------------
+// Windows lists a Wii Remote as a HID device only once its HID service is enabled, which "Add device"
+// in its Bluetooth settings does. A remote added that way doesn't pair permanently (it can't reconnect
+// to the PC by itself), so after it's been switched off it has to be removed and added again. As
+// Dolphin does (IOWin.cpp, WiimoteScannerWindows), a search does that itself: Wii Remote pairings
+// Windows remembers but that aren't connected are removed, a Bluetooth inquiry finds remotes in
+// discoverable mode (1+2 or SYNC pressed), and their HID service is enabled; the next HID scan opens
+// them. An inquiry takes the radio for about 2.5 s, so it only runs when asked for, or while nothing
+// is connected with continuous searching on.
+
+bool IsWiiRemoteName(const wchar_t* name) {
+    const std::wstring n = name;
+    return n.rfind(L"Nintendo RVL-CNT", 0) == 0 && n.find(L"-UC") == std::wstring::npos;
+}
+
+template <typename Callback>
+void ForEachBluetoothWiiRemote(bool inquiry, Callback&& callback) {
+    BLUETOOTH_FIND_RADIO_PARAMS radioParams = {};
+    radioParams.dwSize = sizeof(radioParams);
+    HANDLE radio = nullptr;
+    HBLUETOOTH_RADIO_FIND radios = BluetoothFindFirstRadio(&radioParams, &radio);
+    if (radios == nullptr) return;
+    do {
+        BLUETOOTH_DEVICE_SEARCH_PARAMS search = {};
+        search.dwSize = sizeof(search);
+        search.fReturnAuthenticated = TRUE;
+        search.fReturnRemembered = TRUE;
+        search.fReturnConnected = TRUE;
+        search.fReturnUnknown = TRUE;
+        search.fIssueInquiry = inquiry ? TRUE : FALSE;
+        search.cTimeoutMultiplier = 2;  // x 1.28 s
+        search.hRadio = radio;
+        BLUETOOTH_DEVICE_INFO device = {};
+        device.dwSize = sizeof(device);
+        if (HBLUETOOTH_DEVICE_FIND devices = BluetoothFindFirstDevice(&search, &device)) {
+            do {
+                if (IsWiiRemoteName(device.szName)) callback(radio, device);
+                device.dwSize = sizeof(device);
+            } while (!g_stop.load() && BluetoothFindNextDevice(devices, &device));
+            BluetoothFindDeviceClose(devices);
+        }
+        CloseHandle(radio);
+        radio = nullptr;
+    } while (!g_stop.load() && BluetoothFindNextRadio(radios, &radio));
+    BluetoothFindRadioClose(radios);
+}
+
+std::string BluetoothAddressText(const BLUETOOTH_ADDRESS& address) {
+    char text[18];
+    std::snprintf(text, sizeof(text), "%02X:%02X:%02X:%02X:%02X:%02X", address.rgBytes[5], address.rgBytes[4],
+                  address.rgBytes[3], address.rgBytes[2], address.rgBytes[1], address.rgBytes[0]);
+    return text;
+}
+
+void SearchBluetooth() {
+    // The Bluetooth HID service, 00001124-0000-1000-8000-00805F9B34FB.
+    static const GUID kHidService = {0x00001124, 0x0000, 0x1000, {0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB}};
+    ForEachBluetoothWiiRemote(false, [](HANDLE, BLUETOOTH_DEVICE_INFO& device) {
+        if (device.fConnected || !device.fRemembered) return;
+        const DWORD result = BluetoothRemoveDevice(&device.Address);
+        RT_LOGF(RT_TAG_CONFIG, "Wii Remote %s: Windows remembered it but it isn't connected; %s\n",
+                BluetoothAddressText(device.Address).c_str(),
+                result == ERROR_SUCCESS ? "removed, so it can be found again (press 1+2)" : "couldn't remove it");
+    });
+    ForEachBluetoothWiiRemote(true, [](HANDLE radio, BLUETOOTH_DEVICE_INFO& device) {
+        if (device.fConnected || device.fRemembered) return;
+        const DWORD result = BluetoothSetServiceState(radio, &device, &kHidService, BLUETOOTH_SERVICE_ENABLE);
+        if (result == ERROR_SUCCESS) {
+            RT_LOGF(RT_TAG_CONFIG, "Wii Remote %s found: HID service enabled\n", BluetoothAddressText(device.Address).c_str());
+        } else {
+            RT_LOGF(RT_TAG_CONFIG, "Wii Remote %s found, but enabling its HID service failed (error %lu)\n",
+                    BluetoothAddressText(device.Address).c_str(), static_cast<unsigned long>(result));
+        }
+    });
+}
+#endif
+
+// Looks for remotes that aren't connected yet and sets them up for the read thread. This runs on a
+// thread of its own: enumerating HID devices can take a long time (on Windows, asking a paired
+// Bluetooth device that's switched off for its name waits for a timeout, every scan), and the
+// connected remotes' input must not wait for it.
+void Scan() {
     SDL_hid_device_info* list = SDL_hid_enumerate(0, 0);
-    for (SDL_hid_device_info* info = list; info != nullptr; info = info->next) {
-        if (!IsWiiRemote(info)) continue;
-        if (info->path == nullptr || IsOpen(remotes, info->path) || CoolingDown(info->path)) continue;
-        Connect(remotes, info);
-        if (remotes.size() >= kMaxRemotes) break;
+    for (SDL_hid_device_info* info = list; info != nullptr && !g_stop.load(); info = info->next) {
+        if (!IsWiiRemote(info) || info->path == nullptr || CoolingDown(info->path)) continue;
+        {
+            std::lock_guard<std::mutex> lock(g_handoffMutex);
+            if (g_openPaths.size() >= kMaxRemotes || !g_openPaths.insert(info->path).second) continue;
+        }
+        if (std::unique_ptr<Remote> r = Connect(info)) {
+            std::lock_guard<std::mutex> lock(g_handoffMutex);
+            g_handoff.push_back(std::move(r));
+        } else {
+            std::lock_guard<std::mutex> lock(g_handoffMutex);
+            g_openPaths.erase(info->path);
+        }
     }
     SDL_hid_free_enumeration(list);
 }
 
-void ThreadMain() {
-    std::vector<std::unique_ptr<Remote>> remotes;
+void ScanThreadMain() {
     uint64_t lastScan = 0;
+    while (!g_stop.load()) {
+        const bool idle = g_connected.load() == 0;
+        const bool searchWhileIdle = g_continuousSearch.load() || SDL_GetTicks() - g_startMs < kSearchAfterStartMs;
+        const bool search = g_searchRequested.exchange(false) || (idle && searchWhileIdle && SDL_GetTicks() - lastScan >= 2000);
+#if defined(_WIN32)
+        if (search) {
+            g_searching.store(true);
+            SearchBluetooth();
+            g_searching.store(false);
+            SDL_Delay(1000);  // Windows adds the HID interface of a remote just enabled
+            lastScan = 0;     // and the scan right after opens it
+        }
+#else
+        if (search) lastScan = 0;  // macOS, Linux: the system connects remotes; scan for them now
+#endif
+        // Often while nothing is connected; less often once a remote is (a second player joining).
+        const uint64_t interval = idle ? 2000 : 5000;
+        if (lastScan == 0 || SDL_GetTicks() - lastScan >= interval) {
+            Scan();
+            lastScan = SDL_GetTicks();
+        }
+        SDL_Delay(50);
+    }
+}
+
+void ReadThreadMain() {
+    std::vector<std::unique_ptr<Remote>> remotes;
     uint8_t buf[kReportSize];
     while (!g_stop.load()) {
-        const uint64_t now = SDL_GetTicks();
-        if (now - lastScan >= 2000) {
-            lastScan = now;
-            Scan(remotes);
+        {
+            std::lock_guard<std::mutex> lock(g_handoffMutex);
+            for (auto& r : g_handoff) {
+                r->lastInputMs = SDL_GetTicks();
+                remotes.push_back(std::move(r));
+            }
+            g_handoff.clear();
         }
+        g_connected.store(static_cast<uint32_t>(remotes.size()));
         if (remotes.empty()) {
-            SDL_Delay(50);
+            SDL_Delay(20);
             continue;
         }
         for (size_t i = 0; i < remotes.size();) {
@@ -586,8 +725,10 @@ void ThreadMain() {
                 r.lastLogMs = SDL_GetTicks();
             }
             // Windows and the DolphinBar only report a remote that went away when it is written to
-            // (Dolphin's WRITE_TEST_INTERVAL): send a rumble-off report every second.
-            if (!dead && SDL_GetTicks() - r.lastWriteTestMs >= 1000) {
+            // (Dolphin's WRITE_TEST_INTERVAL): once it has gone quiet, a rumble-off report each second
+            // tells a dropped link from a pause. Not while it reports: a Bluetooth write can block
+            // for a while, and nothing would read the remote meanwhile.
+            if (!dead && SDL_GetTicks() - r.lastInputMs > 500 && SDL_GetTicks() - r.lastWriteTestMs >= 1000) {
                 r.lastWriteTestMs = SDL_GetTicks();
                 if (!Send(r, {kOutRumble, 0x00})) dead = true;
             }
@@ -613,17 +754,32 @@ void Start() {
         return;
     }
     g_stop.store(false);
-    g_thread = std::thread(ThreadMain);
+    g_startMs = SDL_GetTicks();
+    g_readThread = std::thread(ReadThreadMain);
+    g_scanThread = std::thread(ScanThreadMain);
     RT_LOGF(RT_TAG_CONFIG, "Wii Remotes: HID backend started (IR pointer, Nunchuk)\n");
 }
 
 void Stop() {
     if (!g_running.exchange(false)) return;
     g_stop.store(true);
-    if (g_thread.joinable()) g_thread.join();
+    if (g_scanThread.joinable()) g_scanThread.join();
+    if (g_readThread.joinable()) g_readThread.join();
+    // Set up after the read thread stopped: never taken over.
+    std::lock_guard<std::mutex> lock(g_handoffMutex);
+    for (auto& r : g_handoff) {
+        SDL_hid_close(r->device);
+        ReleaseChannel(r->chan);
+    }
+    g_handoff.clear();
+    g_openPaths.clear();
 }
 
 bool Running() { return g_running.load(); }
+
+void FindRemotes() { g_searchRequested.store(true); }
+bool Searching() { return g_searching.load(); }
+void SetContinuousSearch(bool on) { g_continuousSearch.store(on); }
 
 bool Read(uint32_t chan, Sample& out) {
     if (chan >= kMaxRemotes) return false;

@@ -49,8 +49,16 @@ Known issues:
 
 Real Wii Remotes, with or without a Nunchuk, are driven directly over Bluetooth HID the way
 Dolphin does it: the IR camera is switched on for the **pointer** (menus, Mega Strike defence),
-along with the accelerometers and the Nunchuk. Pair the remote in your system's Bluetooth settings
-(press 1+2 or the red SYNC button, leave any PIN empty), and it takes the first free player port.
+along with the accelerometers and the Nunchuk. Each remote takes the first free player port and
+keeps it to itself: a gamepad that was on that port moves to a free one (and back when the remote
+leaves).
+
+Connecting: on Windows, press 1+2 (or the red SYNC button) on the remote while the game is looking
+for one, which it does for the first minute after launch, after **F10 > Wii Remotes > Find Wii
+Remotes**, and all the time with **Keep scanning** on. The game connects it itself, as Dolphin does
+(and removes stale Wii Remote pairings Windows remembers but can't use). Adding the remote in
+Windows' Bluetooth settings works too. On other systems, pair it in the system's Bluetooth settings
+(1+2 or SYNC, leave any PIN empty).
 You need a sensor bar (or any IR source) for the pointer. If it sits above your screen rather than
 below, tick **F10 > Sensor bar is above the screen** (like the Wii's sensor bar setting) so the
 pointer lines up with where you aim. The HOME Menu's Wii Menu and Reset options close the game.
