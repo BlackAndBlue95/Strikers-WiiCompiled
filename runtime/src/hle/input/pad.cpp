@@ -186,6 +186,8 @@ struct State {
     bool hadButtons = false;  // buttons last frame (false: a menu/overlay just appeared)
     bool overlay = false;     // this menu appeared over an unchanged scene (e.g. the pause menu)
     uint32_t sceneWhenEmpty = 0;
+    uint32_t selectedListener = 0;  // the button last selected (buttons move: a screen slides out)
+    int offButtonFrames = 0;        // frames the pointer has rested on no button
 };
 State s_state[PAD_CHANMAX];
 // Player 1 always navigates; other pads join in once they're used, so an idle second
@@ -556,9 +558,27 @@ Result Update(uint32_t chan, uint32_t dir, Point stick, bool backButton, int pag
         if (std::hypot(st.aim.x - at.x, st.aim.y - at.y) < 2.0f) st.settleFrames = 0;
         return r;
     }
-    // Keep something selected: if the pointer rests on no button, select the default.
+    // Keep something selected. Off every button, the pointer follows the button it was on if that's
+    // still there (moved: a screen's buttons slide as it comes or goes), and only after a few frames
+    // goes to the default: a screen in transition briefly shows its buttons elsewhere, and snapping
+    // there every other frame makes the pointer jitter.
     const bool onButton = std::any_of(buttons.begin(), buttons.end(), [&](const Button& b) { return b.Contains(at); });
-    if (!onButton) { SnapTo(st, buttons, PickDefault(buttons, stageSelect), cursor); SelectAt(chan, buttons, st.goal); return r; }
+    if (onButton) {
+        st.offButtonFrames = 0;
+        if (s_hasSelected[chan]) st.selectedListener = s_selected[chan].listener;
+        return r;
+    }
+    const auto followed = std::find_if(buttons.begin(), buttons.end(),
+                                       [&](const Button& b) { return b.listener == st.selectedListener; });
+    if (st.selectedListener != 0 && followed != buttons.end()) {
+        SnapTo(st, buttons, followed->centre, cursor);
+        SelectAt(chan, buttons, st.goal);
+        return r;
+    }
+    if (++st.offButtonFrames < 6) return r;
+    st.offButtonFrames = 0;
+    SnapTo(st, buttons, PickDefault(buttons, stageSelect), cursor);
+    SelectAt(chan, buttons, st.goal);
     return r;
 }
 // Selection marker: a round badge with the player number, in that player's colour, on the

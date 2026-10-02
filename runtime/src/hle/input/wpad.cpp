@@ -1,6 +1,7 @@
 #include <cstdio>
 #include "hle_stubs.h"
 #include "memory.h"
+#include "runtime_config.h"
 #include "hle/controller_status_contract.h"
 #include "wii_remote_input.h"
 
@@ -203,7 +204,11 @@ extern "C" int32_t MSC_WPADControlDpd_803CF9D0(uint32_t chan, uint32_t command, 
     if (!WiiRemoteInput::IsRemoteChannel(chan)) {
         return CompleteWpadRequest(chan, callback, WpadContract::kErrorNoController);
     }
-    if (command != 0 && !g_mscDpdEnabled[chan]) MscEmulatedRemote::RecenterPointer(chan);
+    // The pointer comes back centred when the game turns it on, unless menu navigation is placing it:
+    // the game turns it off and on again around screen changes (leaving a match), and recentring
+    // there fights navigation's own snap.
+    if (command != 0 && !g_mscDpdEnabled[chan] && !RuntimeConfigFile::ModMenuNavigation())
+        MscEmulatedRemote::RecenterPointer(chan);
     g_mscDpdEnabled[chan] = command != 0;
     return CompleteWpadRequest(chan, callback, 0);
 }

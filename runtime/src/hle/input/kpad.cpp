@@ -159,10 +159,29 @@ uint16_t WpadAcc(float g, float perG) {
 }
 
 // Neutral sticks and no buttons while an overlay owns input; the remote stays connected.
+// The game reads each remote twice a frame (WPADRead, then KPADRead): both get the frame's one
+// sample, since making one also runs menu navigation, which counts frames.
 bool ReadSample(uint32_t chan, WiiRemoteInput::KpadSample& sample) {
-    if (!WiiRemoteInput::ReadKpadSample(chan, sample)) {
+    constexpr uint32_t kViRetraceCount = 0x806E2BB4u;  // advanced by the VI HLE every retrace
+    struct Cached {
+        uint32_t retrace = ~0u;
+        bool have = false;
+        WiiRemoteInput::KpadSample sample;
+    };
+    static std::array<Cached, 4> s_cache;
+    if (chan >= s_cache.size()) {
         return false;
     }
+    Cached& cached = s_cache[chan];
+    const uint32_t retrace = Memory::Read32(kViRetraceCount);
+    if (cached.retrace != retrace) {
+        cached.retrace = retrace;
+        cached.have = WiiRemoteInput::ReadKpadSample(chan, cached.sample);
+    }
+    if (!cached.have) {
+        return false;
+    }
+    sample = cached.sample;
     if (InputBindings::InputBlocked()) {
         sample.hold = 0;
         sample.clHold = 0;
