@@ -132,8 +132,8 @@ The same menu has fixes and extras, several taken from the community's
   unlock-all switch. Your save isn't changed.
 - **Win by 2** (off): in first-to-X goal matches, you have to win by at least 2 goals.
 - **Captain-only teams** (off): captains can be teammates, using a switch the developers left in
-  the game. On the sidekick screen, captain select's grid stays up under the team boards: pick a
-  slot, then a captain. **-** and **+** (**L/R** on a controller) switch to the sidekicks, so a
+  the game. On the sidekick screen, pick a slot and captain select's grid comes up under the team
+  boards: pick a captain. **-** and **+** (**L/R** on a controller) switch to the sidekicks, so a
   team can mix both (say Waluigi, Waluigi, Boo and Boo). **Default** makes every slot the team's
   captain and **Random** picks at random from whichever grid is showing. Teams are kept for next
   time. The match intro is skipped with this on.

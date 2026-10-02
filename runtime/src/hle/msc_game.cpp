@@ -520,7 +520,7 @@ void CaptainVoices() {
 // from partner select's own row of partners (- and + switch between the two), so a team can mix
 // both. Confirming captains keeps captain select on the scene stack under partner select (the
 // BaseGameSceneManager::Pop override below; coming back from choose sides goes through captain select
-// again) with only its grid showing; partner select keeps its teammate boards. Choosing a board slot and then a
+// again), its grid coming up under partner select's teammate boards while a slot is being chosen. Choosing a board slot and then a
 // character puts them in the slot ([mods] captain_teammates_home/away: character indices, captains
 // 0-11 and partners 12-19, which the CharacterLoader overrides use). The boards show the picks
 // (FECaptainComponent overrides below). Leaving partner select either way closes both screens.
@@ -573,6 +573,7 @@ constexpr int kFirstSidekickCharacter = 12, kLastCharacter = 19;  // CharacterIn
 uint32_t g_captains = 0;  // the captain select scene kept under partner select
 bool g_gridShown = false;
 bool g_showPartners = false;  // the partner row is up instead of the captain grid
+bool g_rowShown = false;      // the row is up: while a slot is being chosen
 bool g_locked[12] = {};
 std::array<int, 3> g_picks[2] = {{-1, -1, -1}, {-1, -1, -1}};  // per board slot: character, -1 = the team's captain
 int g_hover[4] = {-1, -1, -1, -1};                            // grid button under each pad's pointer while choosing
@@ -683,6 +684,7 @@ void KeepScene(uint32_t captains) {
     g_captains = captains;
     g_gridShown = false;
     g_showPartners = false;
+    g_rowShown = false;
     for (int side = 0; side < 2; ++side) {
         g_picks[side] = RuntimeConfigFile::ModCaptainTeammates(side);
         g_preview[side] = -1;
@@ -794,17 +796,31 @@ void Assign(CpuContext* ctx, uint32_t scene, int side, int pad, int button) {
     Call(ctx, kPlayAudioEvent, {Call(ctx, kCaptainAcceptSound, {static_cast<uint32_t>(captain)}), 0, 0, 1});
 }
 
-// - and + swap the captain grid and the partner row, each sliding out and in.
-void ShowPartners(CpuContext* ctx, uint32_t scene, bool partners) {
-    g_showPartners = partners;
-    for (int pad = 0; pad < 4; ++pad) ClearHover(ctx, pad);
-    g_preview[0] = g_preview[1] = -1;
+// The captain grid or the partner row slides in (the other out, if it was up), with the sound partner
+// select plays when its row comes up.
+void ShowRow(CpuContext* ctx, uint32_t scene, bool partners) {
     const uint32_t grid = Memory::Read32(g_captains + kCaptainsLayer);
     const uint32_t row = Memory::Read32(scene + kSidekicksLayer);
     Memory::Write8((partners ? row : grid) + kInstanceVisible, 1);
     SetActiveSlide(ctx, partners ? row : grid, "in");
-    SetActiveSlide(ctx, partners ? grid : row, "out");
-    Call(ctx, kPlayAudioEvent, {0xDF52130Fu, 0, 0, 1});  // as when captain/partner select show their row
+    if (g_rowShown) SetActiveSlide(ctx, partners ? grid : row, "out");
+    Call(ctx, kPlayAudioEvent, {0xDF52130Fu, 0, 0, 1});
+    g_rowShown = true;
+}
+
+// The row slides away once no slot is being chosen, with the sound captain select's grid leaves with.
+void HideRow(CpuContext* ctx, uint32_t scene) {
+    SetActiveSlide(ctx, Memory::Read32(g_showPartners ? scene + kSidekicksLayer : g_captains + kCaptainsLayer), "out");
+    Call(ctx, kPlayAudioEvent, {0x0B8C09FAu, 0, 0, 1});
+    g_rowShown = false;
+}
+
+// - and + swap the captain grid and the partner row; with neither up, they pick which comes up next.
+void ShowPartners(CpuContext* ctx, uint32_t scene, bool partners) {
+    g_showPartners = partners;
+    for (int pad = 0; pad < 4; ++pad) ClearHover(ctx, pad);
+    g_preview[0] = g_preview[1] = -1;
+    if (g_rowShown) ShowRow(ctx, scene, partners);
 }
 
 // A scene whose package is loaded and SceneCreated has run (FESceneManager::InitializeScene).
@@ -845,9 +861,7 @@ void Update() {
     GuestInterruptCallbackContext call;
     CpuContext* ctx = call.get();
     if (!g_gridShown) {
-        const uint32_t grid = Memory::Read32(g_captains + kCaptainsLayer);
-        Memory::Write8(grid + kInstanceVisible, 1);
-        SetActiveSlide(ctx, grid, "in");
+        Memory::Write8(Memory::Read32(g_captains + kCaptainsLayer) + kInstanceVisible, 0);  // until a slot is chosen
         const char* const titlesPath[] = {"Layer", "SCREEN_TITLES"};
         const uint32_t presentation = Memory::Read32(g_captains + kHandlerPresentation);
         if (const uint32_t titles = FindInSlide(Memory::Read32(presentation + 0x04), titlesPath))
@@ -861,7 +875,7 @@ void Update() {
     // The partner row only comes up with - or +, not when a slot is chosen (OnSlotPointerPress).
     Memory::Write8(scene + kSidekicksShown, 1);
     for (uint32_t i = 0; i < 8; ++i)
-        Memory::Write8(scene + kSidekickButtons + i * kPointerButtonSize + kPointerDisabled, g_showPartners ? 0 : 1);
+        Memory::Write8(scene + kSidekickButtons + i * kPointerButtonSize + kPointerDisabled, g_showPartners && g_rowShown ? 0 : 1);
     // A team's picks that are partners are its board's partners too (pictures, and the game's own
     // choice when Done commits them).
     for (uint32_t side = 0; side < 2; ++side)
@@ -880,6 +894,10 @@ void Update() {
             break;
         }
     }
+    const bool choosingSlot = static_cast<int32_t>(Memory::Read32(scene + kSelectedSlots)) >= 0 ||
+                              static_cast<int32_t>(Memory::Read32(scene + kSelectedSlots + 4)) >= 0;
+    if (choosingSlot && !g_rowShown) ShowRow(ctx, scene, g_showPartners);
+    else if (!choosingSlot && g_rowShown) HideRow(ctx, scene);
     for (int pad = 0; pad < 4; ++pad) {
         int side = -1;
         for (int s = 0; s < 2; ++s)
