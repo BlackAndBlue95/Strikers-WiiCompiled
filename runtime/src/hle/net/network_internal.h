@@ -131,7 +131,6 @@ struct WiiSocket {
     uint16_t peerPort = 0;
     bool hasPeerAddr = false;
     sockaddr_in peerAddr{};
-    std::vector<uint8_t> nasWriteBuffer;
     uint64_t generation = 0;
     // Failure-report one-shots: a failing send/recv repeats every retry, so only
     // a change of error is reported. Reset with the rest of the struct when the
@@ -187,7 +186,6 @@ enum NetIoctl {
 };
 
 // network_core.cpp
-bool RetroRewindProfileActive();
 const std::array<uint8_t, 6>& RuntimeMacAddress();
 uint64_t RuntimeGeneratedUserId();
 void ZeroMemoryRange(uint32_t addr, uint32_t size);
@@ -216,7 +214,6 @@ int32_t ClassifySettledConnect(NativeSocket socket);
 bool WaitForReadable(NativeSocket socket, int timeoutMs);
 void CloseNativeSocket(NativeSocket socket);
 void SetNonBlocking(NativeSocket socket, bool enabled);
-int32_t ReconnectWiiSocket(WiiSocket& socket, uint16_t port);
 int MapWiiAf(uint32_t af);
 int MapNativeAfToWii(int af);
 int MapWiiSocketType(uint32_t type);
@@ -252,8 +249,6 @@ int32_t HandleIpTopIoctlv(uint32_t cmd, const std::vector<IoVector>& in,
 
 // network_ssl.cpp
 void ClearSslSessionsForSocket(uint32_t fd);
-NasSslWriteAction PreparePlainNasTcpWrite(WiiSocket& socket, const uint8_t* data,
-                                         uint32_t size, std::vector<uint8_t>& patched);
 int32_t HandleSslIoctlv(uint32_t cmd, const std::vector<IoVector>& in,
                         const std::vector<IoVector>& out);
 

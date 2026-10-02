@@ -5,21 +5,15 @@
 #include <cmath>
 #include <cstdint>
 
-// EGG::Screen picks a canvas record at 0x802A3EE8 via SCGetAspectRatio, squeezed into the fixed
-// 608x456 framebuffer by xScale=fbWidth/width; only gScreenScaleX/Y (0x80386F20/24) feed vertical
-// FOV, so records can only widen horizontal FOV. Solving for k = surfaceAspect/(16:9): record
-// width = base*max(k,1), gScreenScaleY = max(1/k,1), giving Hor+ above 16:9 and Vert+ below it
-// without cropping either axis. Verified bit-exact against the reference Gecko patch at 2560x1080.
-namespace MkwDynamicAspect {
+// The window-shape correction for full-screen perspective projections (dynamic_aspect.cpp). With
+// k = surfaceAspect / (16:9), the horizontal FOV widens by max(k, 1) and the vertical by
+// max(1/k, 1): Hor+ above 16:9 and Vert+ below it, without cropping either axis.
+namespace DynamicAspect {
 
 inline constexpr float kPresentationAspect169 = 16.0f / 9.0f;
-inline constexpr float kEggFramebufferWidth = 608.0f;
-inline constexpr uint32_t kEggScreenHeight = 456u;
-inline constexpr uint32_t kEggRecordWidth43 = 608u;
-inline constexpr uint32_t kEggRecordWidth169 = 832u;
-// Guard against a degenerate window turning the world inside out: 6.0 is a
-// ~145 degree vertical FOV at MKW's stock 45 degree base, past which the
-// 10.0 near plane and the game's own culling stop behaving.
+// Guard against a degenerate window turning the world inside out: a 6x vertical expansion of a
+// 45 degree FOV is already ~145 degrees, past which near-plane clipping and the game's own
+// culling stop behaving.
 inline constexpr float kMaxVerticalExpansion =
     aurora::render_size_limits::kMaxDynamicPortraitExpansion;
 
@@ -53,16 +47,4 @@ inline float VerticalExpansion(uint32_t width, uint32_t height) noexcept {
     return std::clamp(1.0f / factor, 1.0f, kMaxVerticalExpansion);
 }
 
-inline uint32_t EggRecordWidth(uint32_t baseWidth, uint32_t surfaceWidth,
-                               uint32_t surfaceHeight) noexcept {
-    const float scaledWidth =
-        static_cast<float>(baseWidth) * HorizontalExpansion(surfaceWidth, surfaceHeight);
-    return std::clamp<uint32_t>(
-        static_cast<uint32_t>(std::lround(scaledWidth / 4.0f)) * 4u, 4u, 0xFFFCu);
-}
-
-inline float EggHorizontalScale(uint32_t recordWidth) noexcept {
-    return kEggFramebufferWidth / static_cast<float>(std::max(recordWidth, 1u));
-}
-
-} // namespace MkwDynamicAspect
+} // namespace DynamicAspect

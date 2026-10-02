@@ -220,8 +220,7 @@ const std::filesystem::path& GetRunLogDirectory() {
         const auto secs = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
 
         std::ostringstream name;
-        name << (RuntimeProduct::IsRetroRewind() ? "retro_rewind" : "base")
-             << "_" << secs << "_pid" << pid;
+        name << "run_" << secs << "_pid" << pid;
         const std::filesystem::path directory = logRoot / name.str();
         std::filesystem::create_directories(directory, ec);
         return directory;
@@ -778,7 +777,7 @@ void ShowRuntimeFatalPopup(std::string_view category, std::string_view details) 
                 message.append("\n\n[Additional details were written to the crash log.]");
             }
         }
-        message.append("\n\nSee the WiiCompiled Logs folder for the full diagnostic.");
+        message.append("\n\nSee the Logs folder in the MSCRecomp data folder for the full diagnostic.");
 #if defined(_WIN32)
         ::MessageBoxA(nullptr, message.c_str(), "Strikers-WiiCompiled - Fatal Error",
                       MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TASKMODAL);
@@ -1329,11 +1328,11 @@ int RuntimeMain(int argc, char** argv) {
 
     try {
         if (argc != 1) {
-            throw std::invalid_argument("The game runtime does not accept command-line options; use Config.toml through the installed host.");
+            throw std::invalid_argument("The game takes no command-line options; its settings are in Config.toml.");
         }
         RuntimeConfigFile::LogLoadedConfig();
         if (RuntimeConfigFile::DiscordPresenceEnabled()) {
-            DiscordPresence::Initialize(RuntimeConfigFile::DiscordClientId(), "Mario Kart Wii");
+            DiscordPresence::Initialize(RuntimeConfigFile::DiscordClientId(), "Mario Strikers Charged");
         }
         SystemBridge::Initialize();
         TranslatedFunctionRegistry::Finalize();
@@ -1379,7 +1378,7 @@ int RuntimeMain(int argc, char** argv) {
         // No vsync knob: aurora always configures a non-blocking present mode.
         auroraConfig.desiredBackend = BACKEND_AUTO;
         const float resolutionMultiplier = RuntimeConfigFile::ResolutionMultiplier(1.0f);
-        ConfigureMkwDynamicAspect(configWidescreen, forceAspect169,
+        ConfigureDynamicAspect(configWidescreen, forceAspect169,
                                   auroraConfig.windowWidth, auroraConfig.windowHeight);
         VISetFrameBufferScale(resolutionMultiplier);
         // One table for both directions. RuntimeConfigFile::IsSupportedGraphicsApi
@@ -1443,7 +1442,7 @@ int RuntimeMain(int argc, char** argv) {
         }
         aurora_set_frame_worker_wait_callback(ServiceGuestTimingDuringAuroraFrameWait);
         GxGuestWrite::InstallAuroraHooks();
-        UpdateMkwDynamicAspectSurface(auroraInfo.windowSize.native_fb_width,
+        UpdateDynamicAspectSurface(auroraInfo.windowSize.native_fb_width,
                                       auroraInfo.windowSize.native_fb_height);
         settings_overlay::InitializeRuntimeSettings();
         RT_LOG(RT_TAG_CONFIG) << "video.widescreen=" << (configWidescreen ? "true" : "false")
@@ -1455,7 +1454,7 @@ int RuntimeMain(int argc, char** argv) {
                   << auroraInfo.windowSize.native_fb_height
                   << " viewportPolicy=" << (forceAspect169 ? "16:9" : (configWidescreen ? "stretch" : "fit"))
                   << " presentAspect="
-                  << (forceAspect169 ? "16:9" : (configWidescreen ? "surface (dynamic EGG canvas)" : "4:3"))
+                  << (forceAspect169 ? "16:9" : (configWidescreen ? "window shape (dynamic aspect)" : "4:3"))
                   << std::endl;
         g_auroraInitialized.store(true, std::memory_order_release);
 

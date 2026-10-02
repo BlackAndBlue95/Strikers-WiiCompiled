@@ -57,47 +57,6 @@ extern "C" void GX__SetVtxDesc_803A26DC(uint32_t a, uint32_t t) {
 }
 PPC_NATIVE_OVERRIDE_VOID(803A26DC, GX__SetVtxDesc_803A26DC, (uint32_t a, uint32_t t), (a, t));
 
-extern "C" void GX__SetVtxDescv_8016d608(uint32_t la) {
-    if(!la) return; uint32_t p=la;
-    while(true){
-        uint32_t a=Memory::Read32(p);
-        if(a==0xFFu) break;
-        GX__SetVtxDesc_803A26DC(a, Memory::Read32(p+4));
-        p+=8;
-    }
-}
-// MSC-UNMAPPED(GX::SetVtxDescv) PPC_NATIVE_OVERRIDE_VOID(8016d608, GX__SetVtxDescv_8016d608, (uint32_t la), (la));
-
-extern "C" void GX__GetVtxDesc_8016d9f0(uint32_t a, uint32_t tp) {
-    GXAttrType type = GX_NONE;
-    const uint32_t attr = CanonicalVtxAttr(a);
-    if (attr < GX_VA_MAX_ATTR && attr != GX_VA_NULL) {
-        type = g_hleGxState.vtxDesc[attr];
-    }
-    if (tp) {
-        Memory::Write32(tp, static_cast<uint32_t>(type));
-    }
-}
-// MSC-UNMAPPED(GX::GetVtxDesc) PPC_NATIVE_OVERRIDE_VOID(8016d9f0, GX__GetVtxDesc_8016d9f0, (uint32_t a, uint32_t tp), (a, tp));
-
-extern "C" void GX__GetVtxDescv_8016dba4(uint32_t la) {
-    if (!la) {
-        return;
-    }
-
-    uint32_t p = la;
-    for (uint32_t a = GX_VA_PNMTXIDX; a <= GX_VA_TEX7; ++a) {
-        Memory::Write32(p, a);
-        Memory::Write32(p + 4, static_cast<uint32_t>(g_hleGxState.vtxDesc[a]));
-        p += 8;
-    }
-    Memory::Write32(p, GX_VA_NBT);
-    Memory::Write32(p + 4, static_cast<uint32_t>(g_hleGxState.vtxDesc[GX_VA_NRM]));
-    p += 8;
-    Memory::Write32(p, GX_VA_NULL);
-}
-// MSC-UNMAPPED(GX::GetVtxDescv) PPC_NATIVE_OVERRIDE_VOID(8016dba4, GX__GetVtxDescv_8016dba4, (uint32_t la), (la));
-
 // ============================================================================
 // Vertex Attribute Format
 // ============================================================================
@@ -135,45 +94,6 @@ extern "C" void GX__SetVtxAttrFmtv_803A2CF0(uint32_t vf, uint32_t la) {
 }
 PPC_NATIVE_OVERRIDE_VOID(803A2CF0, GX__SetVtxAttrFmtv_803A2CF0, (uint32_t vf, uint32_t la), (vf, la));
 
-extern "C" void GX__GetVtxAttrFmt_8016e04c(uint32_t vf, uint32_t a, uint32_t cp, uint32_t tp, uint32_t fp) {
-    VtxAttrFmt fmt{};
-    const uint32_t attr = CanonicalVtxAttr(a);
-    if (vf < 8 && attr < GX_VA_MAX_ATTR && attr != GX_VA_NULL) {
-        fmt = g_hleGxState.vtxAttrFmt[vf][attr];
-    }
-    if (cp) {
-        Memory::Write32(cp, static_cast<uint32_t>(fmt.cnt));
-    }
-    if (tp) {
-        Memory::Write32(tp, static_cast<uint32_t>(fmt.type));
-    }
-    if (fp) {
-        Memory::Write8(fp, fmt.frac);
-    }
-}
-// MSC-UNMAPPED(GX::GetVtxAttrFmt) PPC_NATIVE_OVERRIDE_VOID(8016e04c, GX__GetVtxAttrFmt_8016e04c, (uint32_t vf, uint32_t a, uint32_t cp, uint32_t tp, uint32_t fp), (vf, a, cp, tp, fp));
-
-extern "C" void GX__GetVtxAttrFmtv_8016e2b8(uint32_t vf, uint32_t la) {
-    if (!la) {
-        return;
-    }
-
-    uint32_t p = la;
-    for (uint32_t a = GX_VA_POS; a <= GX_VA_TEX7; ++a) {
-        VtxAttrFmt fmt{};
-        if (vf < 8) {
-            fmt = g_hleGxState.vtxAttrFmt[vf][a];
-        }
-        Memory::Write32(p, a);
-        Memory::Write32(p + 4, static_cast<uint32_t>(fmt.cnt));
-        Memory::Write32(p + 8, static_cast<uint32_t>(fmt.type));
-        Memory::Write8(p + 12, fmt.frac);
-        p += 16;
-    }
-    Memory::Write32(p, GX_VA_NULL);
-}
-// MSC-UNMAPPED(GX::GetVtxAttrFmtv) PPC_NATIVE_OVERRIDE_VOID(8016e2b8, GX__GetVtxAttrFmtv_8016e2b8, (uint32_t vf, uint32_t la), (vf, la));
-
 // ============================================================================
 // Vertex Arrays
 // ============================================================================
@@ -183,11 +103,6 @@ extern "C" void GX__SetArray_803A2F34(uint32_t a, uint32_t ba, uint32_t str) {
     if(attr<26){ g_hleGxState.vtxArray[attr].base=ba; g_hleGxState.vtxArray[attr].stride=str; }
 }
 PPC_NATIVE_OVERRIDE_VOID(803A2F34, GX__SetArray_803A2F34, (uint32_t a, uint32_t ba, uint32_t str), (a, ba, str));
-
-// Switch-artifact entry point for the same SDK function; forwards rather than
-// repeating the body.
-extern "C" void GX__SetArray_8016e1c4(uint32_t a, uint32_t b, uint32_t s) { GX__SetArray_803A2F34(a, b, s); }
-PPC_NATIVE_OVERRIDE_VOID(8016e1c4, GX__SetArray_8016e1c4, (uint32_t a, uint32_t b, uint32_t s), (a, b, s));
 
 // ============================================================================
 // Texture Coordinate Generation
@@ -288,114 +203,3 @@ extern "C" void GX__Begin_803A3D60(uint32_t t, uint32_t vf, uint32_t nv) {
     g_hleGxState.fifoByteCount=0; g_hleGxState.ResetVertex();
 }
 PPC_NATIVE_OVERRIDE_VOID(803A3D60, GX__Begin_803A3D60, (uint32_t t, uint32_t vf, uint32_t nv), (t, vf, nv));
-
-extern "C" void GX__End_80044b30() { g_hleGxState.inBegin=false; GXEnd(); }
-// MSC-UNMAPPED(GXEnd) PPC_NATIVE_OVERRIDE_VOID(80044b30, GX__End_80044b30, (), ());
-
-extern "C" void GX__End_80048c30() { GX__End_80044b30(); }
-// MSC-UNMAPPED(GXEnd) PPC_NATIVE_OVERRIDE_VOID(80048c30, GX__End_80048c30, (), ());
-
-extern "C" void GX__DrawSphere_80172a30(uint32_t numMajor, uint32_t numMinor) {
-    constexpr uint32_t kAttrCount = 26;
-    constexpr float kSphereRadius = 1.0f;
-    constexpr float kPi = 3.14159265358979323846f;
-    constexpr float kTwoPi = kPi * 2.0f;
-
-    std::array<GXAttrType, kAttrCount> savedVtxDesc{};
-    std::array<VtxAttrFmt, kAttrCount> savedFmt3{};
-    for (uint32_t i = 0; i < kAttrCount; ++i) {
-        savedVtxDesc[i] = g_hleGxState.vtxDesc[i];
-        savedFmt3[i] = g_hleGxState.vtxAttrFmt[GX_VTXFMT3][i];
-    }
-
-    const bool hadTex0 = savedVtxDesc[GX_VA_TEX0] != GX_NONE;
-
-    bool drawOpen = false;
-    try {
-        EnsureAuroraFrameActive();
-
-        for (uint32_t i = 0; i < kAttrCount; ++i) {
-            g_hleGxState.vtxDesc[i] = GX_NONE;
-        }
-        g_hleGxState.InvalidateVtxLayoutHash();
-        GXClearVtxDesc();
-
-        GX__SetVtxDesc_803A26DC(GX_VA_POS, GX_DIRECT);
-        GX__SetVtxDesc_803A26DC(GX_VA_NRM, GX_DIRECT);
-        GX__SetVtxAttrFmt_803A2B50(GX_VTXFMT3, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
-        GX__SetVtxAttrFmt_803A2B50(GX_VTXFMT3, GX_VA_NRM, GX_NRM_XYZ, GX_F32, 0);
-        if (hadTex0) {
-            GX__SetVtxDesc_803A26DC(GX_VA_TEX0, GX_DIRECT);
-            GX__SetVtxAttrFmt_803A2B50(GX_VTXFMT3, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
-        }
-
-        const float majorStep = kPi / static_cast<float>(numMajor);
-        const float minorStep = kTwoPi / static_cast<float>(numMinor);
-        const float invRadius = 1.0f / kSphereRadius;
-
-        for (uint32_t major = 0; major < numMajor; ++major) {
-            const float major0 = static_cast<float>(major) * majorStep;
-            const float major1 = major0 + majorStep;
-
-            const float ring0 = kSphereRadius * std::sin(major0);
-            const float ring1 = kSphereRadius * std::sin(major1);
-            const float z0 = kSphereRadius * std::cos(major0);
-            const float z1 = kSphereRadius * std::cos(major1);
-
-            const uint16_t vertexCount = static_cast<uint16_t>(((numMinor + 1u) * 2u) & 0xFFFEu);
-            GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT3, vertexCount);
-            drawOpen = true;
-
-            const float nz0 = z0 * invRadius;
-            const float nz1 = z1 * invRadius;
-
-            for (uint32_t minor = 0; minor <= numMinor; ++minor) {
-                const float minorAngle = static_cast<float>(minor) * minorStep;
-                const float c = std::cos(minorAngle);
-                const float s = std::sin(minorAngle);
-
-                const float x1 = c * ring1;
-                const float y1 = s * ring1;
-                GXPosition3f32(x1, y1, z1);
-                GXNormal3f32(x1 * invRadius, y1 * invRadius, nz1);
-                if (hadTex0) {
-                    GXTexCoord2f32(static_cast<float>(minor) / static_cast<float>(numMinor),
-                                   static_cast<float>(major + 1u) / static_cast<float>(numMajor));
-                }
-
-                const float x0 = c * ring0;
-                const float y0 = s * ring0;
-                GXPosition3f32(x0, y0, z0);
-                GXNormal3f32(x0 * invRadius, y0 * invRadius, nz0);
-                if (hadTex0) {
-                    GXTexCoord2f32(static_cast<float>(minor) / static_cast<float>(numMinor),
-                                   static_cast<float>(major) / static_cast<float>(numMajor));
-                }
-            }
-            GXEnd();
-            drawOpen = false;
-        }
-    } catch (...) {
-        if (drawOpen) {
-            GXEnd();
-            drawOpen = false;
-        }
-    }
-
-    for (uint32_t i = 0; i < kAttrCount; ++i) {
-        g_hleGxState.vtxDesc[i] = GX_NONE;
-    }
-    g_hleGxState.InvalidateVtxLayoutHash();
-    GXClearVtxDesc();
-    for (uint32_t attr = 0; attr < kAttrCount; ++attr) {
-        const GXAttrType type = savedVtxDesc[attr];
-        if (type != GX_NONE) {
-            GX__SetVtxDesc_803A26DC(attr, static_cast<uint32_t>(type));
-        }
-    }
-    for (uint32_t attr = GX_VA_POS; attr <= GX_VA_TEX7; ++attr) {
-        const VtxAttrFmt& fmt = savedFmt3[attr];
-        GX__SetVtxAttrFmt_803A2B50(GX_VTXFMT3, attr, static_cast<uint32_t>(fmt.cnt), static_cast<uint32_t>(fmt.type), fmt.frac);
-    }
-}
-// MSC-UNMAPPED(GX::DrawSphere) PPC_NATIVE_OVERRIDE_VOID(80172a30, GX__DrawSphere_80172a30, (uint32_t numMajor, uint32_t numMinor), (numMajor, numMinor));

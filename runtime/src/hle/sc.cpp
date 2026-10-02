@@ -53,7 +53,7 @@ PPC_NATIVE_OVERRIDE(8040A884, SCCheckStatus_HLE, uint32_t, (), ());
 // Returns: 0 = 4:3, 1 = 16:9
 extern "C" uint32_t SCGetAspectRatio_HLE()
 {
-    return (RuntimeConfigFile::WidescreenEnabled(true) || MkwForceAspect169Requested()) ? 1u : 0u;
+    return (RuntimeConfigFile::WidescreenEnabled(true) || DynamicAspectForce169Requested()) ? 1u : 0u;
 }
 
 PPC_NATIVE_OVERRIDE(8040C148, SCGetAspectRatio_HLE, uint32_t, (), ());
@@ -106,39 +106,3 @@ extern "C" uint32_t SCGetProductSN_HLE(uint32_t serialAddress)
 
 PPC_NATIVE_OVERRIDE(8040C8B8, SCGetProductSN_HLE, uint32_t, (uint32_t serialAddress), (serialAddress));
 
-extern "C" uint32_t SCGetProductGameRegion_HLE()
-{
-    return LookupProductRegion(0x8029CEF8u, 4, 4,
-                               RuntimeConsoleIdentity::Current().gameRegion);
-}
-
-// MSC-UNMAPPED(SCGetProductGameRegion) PPC_NATIVE_OVERRIDE(801B24C8, SCGetProductGameRegion_HLE, uint32_t, (), ());
-
-// These stubs make the game think all titles are installed; otherwise it checks title ID
-// 0x00010004524d4350 ("RMCP", Mario Kart Wii PAL) and reports error code 5.
-
-// 0x801AE4A0 -> OS__IsTitleInstalled(titleIdHi, titleIdLo)
-// Returns: 1 = installed, 0 = not installed
-extern "C" uint32_t OS__IsTitleInstalled(uint32_t titleIdHi, uint32_t titleIdLo)
-{
-    RT_LOGF(RT_TAG_HLE, "CINS: OSIsTitleInstalled(0x%08X%08X) -> 1 (stubbed as installed)\n",
-            titleIdHi, titleIdLo);
-    return 1; // Always report installed
-}
-
-// MSC-UNMAPPED(OS::IsTitleInstalled) PPC_NATIVE_OVERRIDE(801AE4A0, OS__IsTitleInstalled, uint32_t, (uint32_t titleIdHi, uint32_t titleIdLo), (titleIdHi, titleIdLo));
-
-// 0x801AD1D4 -> OS__CheckInstall(requiredBlocks, titleIdHi, titleIdLo, outFlagsPtr): returns 0 with
-// outFlagsPtr = 0x3 (bit0 has data, bit1 has update; bit2 would be needs-blocks) i.e. fully installed.
-extern "C" uint32_t OS__CheckInstall(uint32_t requiredBlocks, uint32_t titleIdHi, 
-                                      uint32_t titleIdLo, uint32_t outFlagsPtr)
-{
-    RT_LOGF(RT_TAG_HLE, "OS__CheckInstall(blocks=%u, 0x%08X%08X) -> success (stubbed)\n",
-            requiredBlocks, titleIdHi, titleIdLo);
-    if (outFlagsPtr != 0) {
-        Memory::Write32(outFlagsPtr, 0x3); // has data + has update = fully installed
-    }
-    return 0; // Success
-}
-
-// MSC-UNMAPPED(OS::CheckInstall) PPC_NATIVE_OVERRIDE(801AD1D4, OS__CheckInstall, uint32_t, (uint32_t requiredBlocks, uint32_t titleIdHi, uint32_t titleIdLo, uint32_t outFlagsPtr), (requiredBlocks, titleIdHi, titleIdLo, outFlagsPtr));

@@ -82,7 +82,7 @@ static void WriteNcdConfig(uint32_t addr, uint32_t len) {
         const uint32_t connection = addr + 8;
         Memory::Write8(connection, 0xA7);  // selected, tested, DHCP IP/DNS, wired
         Memory::Write8(connection + 1, 3); // wired link
-        const char* name = "MKW Recompiled";
+        const char* name = "WiiCompiled";
         for (uint32_t i = 0; i < 14 && i + 2 < len - 8 && name[i]; ++i) {
             Memory::Write8(connection + 2 + i, static_cast<uint8_t>(name[i]));
         }

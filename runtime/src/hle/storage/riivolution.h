@@ -1,6 +1,7 @@
-// Riivolution overlay loading: host-IO shim around hle/riivolution_contract.h. Discovers DVD
-// overlay roots (Config.toml/CLI/recomp mod manifest), parses each root's XML, applies option
-// selections, and exposes the resulting disc mappings (dvd.cpp) and savegame redirect (nand_fs.cpp).
+// Riivolution packs: host-IO shim around hle/riivolution_contract.h. Discovers the overlay roots
+// (Config.toml [paths] overlay_roots, then <data>/Riivolution), parses each root's XMLs, applies the
+// remembered option choices, and exposes the resulting disc mappings (dvd.cpp) and savegame redirect
+// (nand_fs.cpp). Memory patches are not applied: see riivolution_contract.h.
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 

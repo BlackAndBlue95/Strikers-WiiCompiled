@@ -290,7 +290,7 @@ extern "C" void OS__SleepTicks_HLE_803BCBC4(CpuContext* ctx)
         ScheduleSleepTimer(currentThread, ticks);
         MarkParkOutstanding(currentThread);
         cpu->gpr[3] = currentThread;
-        OSSuspendThread_HLE_801aa6a8(cpu);
+        OSSuspendThread_HLE(cpu);
 
         // Defence in depth: SelectThread has other refusal paths (context mismatch, drained run
         // queues), and there's a fire-before-park race where the timer fires and its resume is

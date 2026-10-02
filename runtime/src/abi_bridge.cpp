@@ -326,7 +326,7 @@ void TranslatedFunctionRegistry::Register(TranslatedFunctionInfo info) {
     auto bestAddressIt = addrIndex.find(entries[index].address);
     if (bestAddressIt == addrIndex.end() || IsBetterCandidate(entries[index], entries[bestAddressIt->second])) {
         if (bestAddressIt != addrIndex.end()) {
-            // Expected on every mod entry - a Retro Rewind boot has thousands.
+            // Expected on every entry a mod replaces.
             // Counted here and reported once by Finalize instead of per address.
             ++PriorityOverrideCount();
         }

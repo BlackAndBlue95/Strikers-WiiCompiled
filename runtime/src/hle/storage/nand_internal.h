@@ -9,12 +9,11 @@
 #include "hle/runtime_parse_helpers.h"
 #include "memory.h"
 #include "nand_path.h"
-#include "nand_save_probe.h"
 #include "hle/net/network.h"
 #include "recomp_mod_loader.h"
 #include "runtime_config.h"
-#include "runtime_product.h"
-#include "wii_es_crypto.h"
+#include "sha1.h"
+#include "wii_console_identity.h"
 
 #include <algorithm>
 #include <cstdarg>
@@ -58,10 +57,6 @@ constexpr uint32_t kNandTitleIdLo = 0x52345145; // MSC: "R4QE" fallback
 void LogNandError(const char* func, const char* fmt, ...);
 void LogNandWarning(const char* func, const char* fmt, ...);
 
-// An empty optional means continue opening normally; otherwise return the
-// supplied NAND/IOS error without exposing a failed scan as a missing save.
-std::optional<int32_t> NandCheckSystemSaveRead(const char* who,
-    const std::filesystem::path& hostPath, int mode, bool ios = false);
 
 // ============================================================================
 // File Descriptor Management
@@ -89,7 +84,7 @@ void CloseFd(int32_t fd);
 // Path Translation
 // ============================================================================
 
-uint32_t CurrentMkwTitleIdLo();
+uint32_t CurrentTitleIdLo();
 std::string CurrentNandDataDir();
 const std::filesystem::path& GetNandBasePath();
 std::filesystem::path TranslateNandPath(const char* wiiPath);

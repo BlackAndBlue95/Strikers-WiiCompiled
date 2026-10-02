@@ -70,23 +70,6 @@ static void MsgQueueEnqueue(uint32_t queuePtr, uint32_t msg)
     ::Memory::Write32(queuePtr + kMsgQueueUsedOffset, used + 1u);
 }
 
-static void MsgQueueJam(uint32_t queuePtr, uint32_t msg)
-{
-    const uint32_t arrayPtr = ::Memory::Read32(queuePtr + kMsgQueueArrayOffset);
-    const uint32_t count = ::Memory::Read32(queuePtr + kMsgQueueCountOffset);
-    uint32_t first = ::Memory::Read32(queuePtr + kMsgQueueFirstOffset);
-    uint32_t used = ::Memory::Read32(queuePtr + kMsgQueueUsedOffset);
-
-    if (count == 0) {
-        return;
-    }
-
-    first = (first == 0) ? (count - 1u) : (first - 1u);
-    ::Memory::Write32(arrayPtr + first * 4u, msg);
-    ::Memory::Write32(queuePtr + kMsgQueueFirstOffset, first);
-    ::Memory::Write32(queuePtr + kMsgQueueUsedOffset, used + 1u);
-}
-
 static uint32_t MsgQueueDequeue(uint32_t queuePtr)
 {
     const uint32_t arrayPtr = ::Memory::Read32(queuePtr + kMsgQueueArrayOffset);
@@ -194,25 +177,3 @@ extern "C" int32_t OS__ReceiveMessage_HLE_803B97F8(CpuContext* ctx)
         kMsgQueueSendOffset, kMsgQueueRecvOffset);
 }
 REGISTER_NATIVE_FUNCTION(0x803B97F8, OS__ReceiveMessage_HLE_803B97F8);
-
-extern "C" int32_t OS__JamMessage_HLE_801a7500(CpuContext* ctx)
-{
-    CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
-    const uint32_t queuePtr = cpu->gpr[3];
-    const uint32_t msg = cpu->gpr[4];
-    const uint32_t flags = cpu->gpr[5];
-    const bool block = (flags & 1u) != 0;
-
-    if (queuePtr == 0) {
-        cpu->gpr[3] = 0;
-        return 0;
-    }
-
-    // Prepend instead of append; otherwise identical to OSSendMessage.
-    return MsgQueueOp(
-        cpu, "OS__JamMessage", queuePtr, block,
-        [](uint32_t queue) { return !MsgQueueIsFull(queue); },
-        [msg](uint32_t queue) { MsgQueueJam(queue, msg); },
-        kMsgQueueRecvOffset, kMsgQueueSendOffset);
-}
-// MSC-UNMAPPED(OS::JamMessage) REGISTER_NATIVE_FUNCTION(0x801A7500, OS__JamMessage_HLE_801a7500);

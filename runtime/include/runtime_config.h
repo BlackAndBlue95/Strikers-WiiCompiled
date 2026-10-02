@@ -41,7 +41,6 @@ struct RuntimeUserConfig {
     std::optional<float> resolutionMultiplier;
     std::optional<std::string> graphicsApi;
     std::optional<std::string> displayMode;
-    std::optional<uint32_t> frameInterpolationFps;
     std::optional<uint32_t> frameRate;
     std::optional<bool> skipUnreadyPipelines;
     std::optional<bool> disableCopyFilter;
@@ -49,15 +48,9 @@ struct RuntimeUserConfig {
     std::optional<bool> textureReplacements;
     std::optional<bool> textureDumps;
     std::optional<bool> showFps;
-    std::optional<uint32_t> disabledPostProcessingPaths;
     std::optional<float> audioVolume;
-    std::optional<float> audioMusicVolume;
-    std::optional<float> audioSoundEffectsVolume;
-    std::optional<float> audioUiVolume;
-    std::optional<float> audioVoicesVolume;
     std::optional<bool> audioMuted;
     std::optional<bool> audioMixWorker;
-    std::optional<bool> attenuateMusicWhenMediaPlays;
     // Real Wii Remotes (with or without Nunchuk / Classic Controller) and Wii U Pro
     // Controllers paired over Bluetooth, driven by SDL's HIDAPI Wii driver. The driver
     // is opt-in on SDL's side, so this decides whether the runtime turns it on.
@@ -82,15 +75,12 @@ struct RuntimeUserConfig {
     std::optional<bool> wiiAccelTrace;
     std::optional<bool> networkEnabled;
     std::optional<bool> discordPresenceEnabled;
-    // The application ID of the WiiCompiled Discord application. This is only
-    // used by the base product; Retro Rewind supplies its own ID through the
-    // standard Dolphin /dev/dolphin interface.
+    // The ID of a Discord application to show Rich Presence under (none by default).
     std::optional<std::string> discordClientId;
     std::optional<std::string> nandRoot;
     std::optional<std::string> dvdRoot;
-    // The one canonical Retro Rewind installation, owned and updated by the frontend. Setup records
-    // it here instead of copying the pack, so an asset-only update is visible on the next launch.
-    std::optional<std::string> retroRewindRoot;
+    // Riivolution packs: each root is laid out like a Wii SD card (riivolution/*.xml and the pack
+    // folders). <data>/Riivolution is used too when it exists (hle/storage/riivolution.cpp).
     std::vector<std::string> overlayRoots;
     // Mod packages (runtime/src/mods): [paths] mods_dir, and per mod id whether it is enabled
     // ([mod_packages]) and whether its native plugin may load ([mod_plugins]).
@@ -103,7 +93,6 @@ struct RuntimeUserConfig {
     // comma-separated SDL-style physical button names ("south", or
     // "dpad_up,left_shoulder") as values; pressing either bound button counts.
     std::array<std::optional<std::string>, 12> controllerButtons;
-    std::optional<bool> rumbleEnabled;
     std::optional<int32_t> muteHotkey;
     // [mods]: controller-friendly changes to the game, all on by default.
     std::optional<bool> modMenuNavigation;
@@ -213,12 +202,6 @@ inline bool IsSupportedDisplayMode(std::string_view value) {
     return std::find(values.begin(), values.end(), value) != values.end();
 }
 
-// 240 was offered by an early build and is no longer supported; a saved 240 is
-// migrated to 180 at the parse site.
-inline bool IsSupportedFrameInterpolationFps(uint32_t value) {
-    return value == 0 || value == 120 || value == 180;
-}
-
 inline std::optional<std::filesystem::path> ExecutableDirectory() {
 #ifdef _WIN32
     std::wstring buffer(MAX_PATH, L'\0');
@@ -323,13 +306,12 @@ inline void EnsureConfigFile() {
     if (!output) {
         return;
     }
-    output << "# WiiCompiled user configuration\n"
-              "# Set paths.dvd_root to an extracted Mario Kart Wii DATA directory.\n\n"
+    output << "# Strikers-WiiCompiled user configuration. The F10 bar in the game writes most of\n"
+              "# these; anything it doesn't show can be set here.\n\n"
               "[video]\n"
               "widescreen = true\n"
               "force_16_9 = false\n"
               "resolution_multiplier = 1.0\n"
-              "frame_interpolation_fps = 0\n"
               "# Native frame rate: 60 or 120. 120 needs a high-refresh display and costs battery.\n"
               "frame_rate = 60\n"
               "display_mode = \"windowed\"\n"
@@ -350,18 +332,12 @@ inline void EnsureConfigFile() {
               "texture_dumps = false\n\n"
               "[audio]\n"
               "volume = 1.0\n"
-              "music_volume = 1.0\n"
-              "sound_effects_volume = 1.0\n"
-              "ui_volume = 1.0\n"
-              "voices_volume = 1.0\n"
               "muted = false\n"
-              "attenuate_music_when_media_plays = false\n"
               "# Runs the AX/DSP voice mix on its own thread, joined before the\n"
-              "# guest can observe it. Set to false to mix inline on the guest\n"
-              "# thread exactly as the runtime did before.\n"
+              "# guest can observe it. Set to false to mix inline on the guest thread.\n"
               "mix_worker = true\n\n"
               "[mods]\n"
-              "# Controller-friendly changes (also in the F10 bar, Mods menu).\n"
+              "# Controller-friendly changes (also in the F10 bar, Tweaks menu).\n"
               "menu_navigation = true\n"
               "selection_badge = false\n"
               "no_mega_strikes = true\n"
@@ -378,16 +354,18 @@ inline void EnsureConfigFile() {
               "[network]\n"
               "enabled = true\n\n"
               "[discord]\n"
-              "# Rich Presence talks only to a locally-running Discord client.\n"
-              "# Retro Rewind supplies its official app ID automatically. Set this\n"
-              "# to WiiCompiled's Discord application ID for basic base-game presence.\n"
-              "enabled = true\n"
+              "# Rich Presence talks only to a locally running Discord client, and\n"
+              "# needs the ID of a Discord application to show the game under.\n"
+              "enabled = false\n"
               "# client_id = \"123456789012345678\"\n\n"
               "[paths]\n"
-              "# dvd_root = \"D:\\\\MarioKartWii\\\\DATA\"\n"
-              "# nand_root = \"D:\\\\WiiNand\"\n"
-              "# retro_rewind_root = \"D:\\\\RetroRewind\\\\RetroRewind6\"\n"
-              "# overlay_roots = [\"D:\\\\RetroRewind\"]\n";
+              "# Relative paths are relative to this file.\n"
+              "# dvd_root = \"Game\"\n"
+              "# nand_root = \"NAND\"\n"
+              "# mods_dir = \"Mods\"\n"
+              "# Riivolution packs, each laid out like a Wii SD card (riivolution/*.xml\n"
+              "# plus the pack folders). A Riivolution folder next to this file is used too.\n"
+              "# overlay_roots = [\"D:\\\\Riivolution\"]\n";
 }
 
 template <typename T>
@@ -461,7 +439,6 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
             FindConfigValue<std::string>(document, "controller", buttonKeys[index]);
     }
 
-    config.rumbleEnabled = FindConfigValue<bool>(document, "controller", "rumble");
     config.modMenuNavigation = FindConfigValue<bool>(document, "mods", "menu_navigation");
     config.modSelectionBadge = FindConfigValue<bool>(document, "mods", "selection_badge");
     config.modNoMegaStrikes = FindConfigValue<bool>(document, "mods", "no_mega_strikes");
@@ -537,12 +514,6 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         value && IsSupportedDisplayMode(*value)) {
         config.displayMode = *value;
     }
-    if (auto value = FindConfigUint(document, "video", "frame_interpolation_fps")) {
-        const uint32_t migrated = *value == 240u ? 180u : *value;
-        if (IsSupportedFrameInterpolationFps(migrated)) {
-            config.frameInterpolationFps = migrated;
-        }
-    }
     if (auto value = FindConfigUint(document, "video", "frame_rate")) {
         if (*value == 60 || *value == 120) {
             config.frameRate = static_cast<uint32_t>(*value);
@@ -554,24 +525,14 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.showFps = FindConfigValue<bool>(document, "video", "show_fps");
     config.textureReplacements = FindConfigValue<bool>(document, "video", "texture_replacements");
     config.textureDumps = FindConfigValue<bool>(document, "video", "texture_dumps");
-    if (auto value = FindConfigUint(document, "video", "disabled_post_processing_paths");
-        value && (*value & ~0x10u) == 0) {
-        config.disabledPostProcessingPaths = *value & 0x10u;
-    }
 
     auto readVolume = [&](std::string_view key) -> std::optional<float> {
         auto value = FindConfigFloat(document, "audio", key);
         return value && *value >= 0.0f && *value <= 1.0f ? value : std::nullopt;
     };
     config.audioVolume = readVolume("volume");
-    config.audioMusicVolume = readVolume("music_volume");
-    config.audioSoundEffectsVolume = readVolume("sound_effects_volume");
-    config.audioUiVolume = readVolume("ui_volume");
-    config.audioVoicesVolume = readVolume("voices_volume");
     config.audioMuted = FindConfigValue<bool>(document, "audio", "muted");
     config.audioMixWorker = FindConfigValue<bool>(document, "audio", "mix_worker");
-    config.attenuateMusicWhenMediaPlays =
-        FindConfigValue<bool>(document, "audio", "attenuate_music_when_media_plays");
     config.wiiRemotes = FindConfigValue<bool>(document, "controller", "wii_remotes");
     config.wiiContinuousScan = FindConfigValue<bool>(document, "controller", "wii_continuous_scan");
     config.sensorBarAbove = FindConfigValue<bool>(document, "controller", "sensor_bar_above");
@@ -585,7 +546,6 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
 
     config.nandRoot = FindConfigValue<std::string>(document, "paths", "nand_root");
     config.dvdRoot = FindConfigValue<std::string>(document, "paths", "dvd_root");
-    config.retroRewindRoot = FindConfigValue<std::string>(document, "paths", "retro_rewind_root");
     config.modsDirectory = FindConfigValue<std::string>(document, "paths", "mods_dir");
     config.modSelection[0] = FindConfigValue<std::string>(document, "mod_selection", "home");
     config.modSelection[1] = FindConfigValue<std::string>(document, "mod_selection", "away");
@@ -689,10 +649,8 @@ inline bool WriteSetting(std::string_view section, std::string_view key, std::st
         }
         if (!replaced) {
             // Append after the section's last real line rather than after the blank line that
-            // separates it from the next header: this file is edited by hand and by the host
-            // installer as well, and a key parked below the separator reads as if it belonged to
-            // the next section. The host writer (Launcher/WiiCompiled.Setup/RuntimeConfiguration.cs)
-            // applies exactly this rule.
+            // separates it from the next header: this file is edited by hand as well, and a key
+            // parked below the separator reads as if it belonged to the next section.
             size_t insertAt = sectionEnd;
             while (insertAt > sectionStart + 1 && Trim(lines[insertAt - 1]).empty()) {
                 --insertAt;
@@ -754,14 +712,6 @@ inline bool SetFrameRate(uint32_t value) {
     return WriteSetting("video", "frame_rate", std::to_string(value));
 }
 
-inline bool SetFrameInterpolationFps(uint32_t value) {
-    if (!IsSupportedFrameInterpolationFps(value)) {
-        return false;
-    }
-    Mutable().frameInterpolationFps = value;
-    return WriteSetting("video", "frame_interpolation_fps", std::to_string(value));
-}
-
 inline bool SetDisplayMode(std::string value) {
     if (!IsSupportedDisplayMode(value)) {
         return false;
@@ -790,13 +740,6 @@ inline bool SetShowFps(bool value) {
     return WriteSetting("video", "show_fps", value ? "true" : "false");
 }
 
-inline bool SetDisabledPostProcessingPaths(uint32_t value) {
-    Mutable().disabledPostProcessingPaths = value;
-    std::ostringstream formatted;
-    formatted << "0x" << std::hex << std::uppercase << value;
-    return WriteSetting("video", "disabled_post_processing_paths", formatted.str());
-}
-
 inline bool SetControllerButton(size_t index, std::string value) {
     if (index >= kControllerButtonKeys.size()) {
         return false;
@@ -813,15 +756,6 @@ inline std::string ControllerExpression(const std::string& key) {
 inline bool SetControllerExpression(const std::string& key, const std::string& value) {
     Mutable().controllerExpressions[key] = value;
     return WriteSetting("controller", key, FormatString(value));
-}
-
-inline bool RumbleEnabled(bool fallback = true) {
-    return Get().rumbleEnabled.value_or(fallback);
-}
-
-inline bool SetRumbleEnabled(bool value) {
-    Mutable().rumbleEnabled = value;
-    return WriteSetting("controller", "rumble", value ? "true" : "false");
 }
 
 // Mods (F10 > Mods). Each is on unless disabled.
@@ -943,38 +877,6 @@ inline bool SetAudioVolume(float value) {
     return WriteSetting("audio", "volume", formatted.str());
 }
 
-inline bool SetMusicVolume(float value) {
-    value = std::clamp(value, 0.0f, 1.0f);
-    Mutable().audioMusicVolume = value;
-    std::ostringstream formatted;
-    formatted << value;
-    return WriteSetting("audio", "music_volume", formatted.str());
-}
-
-inline bool SetSoundEffectsVolume(float value) {
-    value = std::clamp(value, 0.0f, 1.0f);
-    Mutable().audioSoundEffectsVolume = value;
-    std::ostringstream formatted;
-    formatted << value;
-    return WriteSetting("audio", "sound_effects_volume", formatted.str());
-}
-
-inline bool SetUiVolume(float value) {
-    value = std::clamp(value, 0.0f, 1.0f);
-    Mutable().audioUiVolume = value;
-    std::ostringstream formatted;
-    formatted << value;
-    return WriteSetting("audio", "ui_volume", formatted.str());
-}
-
-inline bool SetVoicesVolume(float value) {
-    value = std::clamp(value, 0.0f, 1.0f);
-    Mutable().audioVoicesVolume = value;
-    std::ostringstream formatted;
-    formatted << value;
-    return WriteSetting("audio", "voices_volume", formatted.str());
-}
-
 inline bool SetAudioMuted(bool value) {
     Mutable().audioMuted = value;
     return WriteSetting("audio", "muted", value ? "true" : "false");
@@ -983,11 +885,6 @@ inline bool SetAudioMuted(bool value) {
 inline bool SetAudioMixWorker(bool value) {
     Mutable().audioMixWorker = value;
     return WriteSetting("audio", "mix_worker", value ? "true" : "false");
-}
-
-inline bool SetAttenuateMusicWhenMediaPlays(bool value) {
-    Mutable().attenuateMusicWhenMediaPlays = value;
-    return WriteSetting("audio", "attenuate_music_when_media_plays", value ? "true" : "false");
 }
 
 inline bool WidescreenEnabled(bool fallback = false) {
@@ -1028,22 +925,6 @@ inline float AudioVolume(float fallback = 1.0f) {
     return std::clamp(Get().audioVolume.value_or(fallback), 0.0f, 1.0f);
 }
 
-inline float MusicVolume(float fallback = 1.0f) {
-    return std::clamp(Get().audioMusicVolume.value_or(fallback), 0.0f, 1.0f);
-}
-
-inline float SoundEffectsVolume(float fallback = 1.0f) {
-    return std::clamp(Get().audioSoundEffectsVolume.value_or(fallback), 0.0f, 1.0f);
-}
-
-inline float UiVolume(float fallback = 1.0f) {
-    return std::clamp(Get().audioUiVolume.value_or(fallback), 0.0f, 1.0f);
-}
-
-inline float VoicesVolume(float fallback = 1.0f) {
-    return std::clamp(Get().audioVoicesVolume.value_or(fallback), 0.0f, 1.0f);
-}
-
 inline bool AudioMuted(bool fallback = false) {
     return Get().audioMuted.value_or(fallback);
 }
@@ -1051,11 +932,6 @@ inline bool AudioMuted(bool fallback = false) {
 // Off-thread AX/DSP mix. Default on; false restores the fully synchronous mix.
 inline bool AudioMixWorkerEnabled(bool fallback = true) {
     return Get().audioMixWorker.value_or(fallback);
-}
-
-// Whether background music should duck automatically for other media playback.
-inline bool AttenuateMusicWhenMediaPlays(bool fallback = false) {
-    return Get().attenuateMusicWhenMediaPlays.value_or(fallback);
 }
 
 // Bluetooth Wii Remotes / Wii U Pro Controllers. Read once before SDL's joystick
@@ -1125,14 +1001,9 @@ inline bool SetWiiAccelOffset(const std::array<double, 3>& offset) {
     return ok;
 }
 
-// Target frame rate for frame interpolation, or 0 to disable it.
 // Native guest frame rate (the emulated VI retrace rate): 60 or 120.
 inline uint32_t FrameRate(uint32_t fallback = 60) {
     return Get().frameRate.value_or(fallback);
-}
-
-inline uint32_t FrameInterpolationFps(uint32_t fallback = 0) {
-    return Get().frameInterpolationFps.value_or(fallback);
 }
 
 // Whether to skip draws whose graphics pipeline has not finished compiling yet.
@@ -1162,10 +1033,6 @@ inline bool TextureDumps(bool fallback = false) {
     return Get().textureDumps.value_or(fallback);
 }
 
-inline uint32_t DisabledPostProcessingPaths(uint32_t fallback = 0) {
-    return Get().disabledPostProcessingPaths.value_or(fallback) & 0x10u;
-}
-
 inline std::string GraphicsApi(std::string fallback = "auto") {
     return Get().graphicsApi.value_or(std::move(fallback));
 }
@@ -1188,7 +1055,7 @@ inline std::string DvdRoot(std::string fallback = "") {
 
 // The one resolver for configured paths. A relative value means the same thing
 // everywhere it can be configured: relative to the config file that named it,
-// never to the process working directory (docs/WHEELWIZARD_CONTRACT.md).
+// never to the process working directory.
 inline std::filesystem::path ResolveRelativeTo(const std::filesystem::path& base,
                                                const std::string& value) {
     std::filesystem::path path = PathFromUtf8(value);
@@ -1208,16 +1075,11 @@ inline std::filesystem::path ResolvedDvdRoot() {
     return configured.empty() ? std::filesystem::path{} : ResolveRelativeToConfig(configured);
 }
 
-/// The canonical Retro Rewind installation the frontend owns, or "" when none is recorded.
-inline std::string RetroRewindRoot(std::string fallback = "") {
-    return Get().retroRewindRoot.value_or(std::move(fallback));
-}
-
-inline bool DiscordPresenceEnabled(bool fallback = true) {
+inline bool DiscordPresenceEnabled(bool fallback = false) {
     return Get().discordPresenceEnabled.value_or(fallback);
 }
 
-inline std::string DiscordClientId(std::string fallback = "1543984562369990706") {
+inline std::string DiscordClientId(std::string fallback = "") {
     return Get().discordClientId.value_or(std::move(fallback));
 }
 
@@ -1298,9 +1160,6 @@ inline void LogLoadedConfig() {
             if (config.graphicsApi) {
                 std::cout << " graphics_api=" << *config.graphicsApi;
             }
-            if (config.frameInterpolationFps) {
-                std::cout << " frame_interpolation_fps=" << *config.frameInterpolationFps;
-            }
             if (config.skipUnreadyPipelines) {
                 std::cout << " skip_unready_pipelines=" << (*config.skipUnreadyPipelines ? "true" : "false");
             }
@@ -1333,9 +1192,6 @@ inline void LogLoadedConfig() {
             }
             if (config.nandRoot) {
                 std::cout << " nand_root=" << *config.nandRoot;
-            }
-            if (config.retroRewindRoot) {
-                std::cout << " retro_rewind_root=" << *config.retroRewindRoot;
             }
         }
         std::cout << std::endl;

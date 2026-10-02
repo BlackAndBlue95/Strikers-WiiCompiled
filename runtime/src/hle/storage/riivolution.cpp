@@ -11,10 +11,8 @@
 #include "hle/runtime_parse_helpers.h"
 #include "memory.h"
 #include "nand_path.h"
-#include "recomp_mod_loader.h"
 #include "runtime_config.h"
 #include "runtime_log.h"
-#include "runtime_product.h"
 
 #include <algorithm>
 #include <cctype>
@@ -46,11 +44,11 @@ std::optional<std::string> RiivoReadFile(const fs::path& path) {
     return buffer.str();
 }
 
-// Six-character game ID ("RMCP01") from guest low memory, with the same RMCP
+// Six-character game ID ("R4QE01") from guest low memory, with the same R4QE
 // fallback the rest of the storage HLE uses for boots that have not written
 // the disc header yet.
 std::string RiivoGameId() {
-    const uint32_t code = RuntimeHle::CurrentGameCode(0x524D4350u); // "RMCP"
+    const uint32_t code = RuntimeHle::CurrentGameCode(0x52345145u); // "R4QE"
     std::string id(6, '\0');
     id[0] = static_cast<char>((code >> 24) & 0xffu);
     id[1] = static_cast<char>((code >> 16) & 0xffu);
@@ -123,29 +121,21 @@ void RiivoAddRoot(std::vector<RuntimeRiivolution::Overlay>& overlays, fs::path r
 std::vector<RuntimeRiivolution::Overlay> RiivoDiscoverRoots() {
     std::vector<RuntimeRiivolution::Overlay> overlays;
 
-    // Discovery order is precedence order: DVDInit applies the roots in
-    // reverse, so an explicitly configured root (command line first, then
-    // Config.toml) always outranks the mod manifest.
+    // Discovery order is precedence order (DVDInit applies the roots in
+    // reverse): the roots Config.toml names, then the default folder.
     for (const auto& root : RuntimeConfigFile::OverlayRoots()) {
         // A relative overlay root resolves against the config file that named
         // it, never against whatever working directory the process happened
         // to be started in.
-        RiivoAddRoot(overlays, RuntimeNandPath::ResolveConfiguredPath(root),
-                     "command line or Config.toml");
+        RiivoAddRoot(overlays, RuntimeNandPath::ResolveConfiguredPath(root), "Config.toml");
     }
 
-    // The one canonical Retro Rewind installation setup recorded. Only the
-    // Retro Rewind product applies it: overlaying the base product with the
-    // pack's menu archives made "base game" boot as a half-Retro-Rewind build.
-    if (const auto retroRewindRoot =
-            RuntimeProduct::IsRetroRewind() ? RuntimeConfigFile::RetroRewindRoot() : std::string{};
-        !retroRewindRoot.empty()) {
-        RiivoAddRoot(overlays, RuntimeNandPath::ResolveConfiguredPath(retroRewindRoot),
-                     "canonical Retro Rewind installation");
-    }
-
-    for (const auto& root : RecompMod::DvdOverlayRoots()) {
-        RiivoAddRoot(overlays, root, "recomp mod manifest");
+    // <data>/Riivolution, laid out like a Wii SD card (riivolution/*.xml plus
+    // the pack folders), like Dolphin's Load/Riivolution.
+    const fs::path defaultRoot = RuntimeConfigFile::ResolveConfigPath().parent_path() / "Riivolution";
+    std::error_code ec;
+    if (fs::is_directory(defaultRoot / "riivolution", ec)) {
+        RiivoAddRoot(overlays, defaultRoot, "default folder");
     }
 
     return overlays;
@@ -160,17 +150,6 @@ struct RiivoXmlSet {
 
 std::optional<RiivoXmlSet> RiivoFindXmls(const fs::path& overlayRoot) {
     std::error_code ec;
-
-    // Distribution-pinned XML from recomp.yml: a path relative to the pack
-    // folder. The pack folder sits inside the virtual SD root (e.g.
-    // <sd>/RetroRewind6), so externals resolve against the root's parent.
-    const std::string& configured = RecompMod::RiivolutionXml();
-    if (!configured.empty()) {
-        const fs::path configuredXml = overlayRoot / PathFromUtf8(configured);
-        if (fs::is_regular_file(configuredXml, ec)) {
-            return RiivoXmlSet{overlayRoot.parent_path(), {configuredXml}};
-        }
-    }
 
     // Dolphin-style discovery: the overlay root is itself a virtual SD root
     // carrying <root>/riivolution/*.xml.
@@ -193,14 +172,6 @@ std::optional<RiivoXmlSet> RiivoFindXmls(const fs::path& overlayRoot) {
     }
 
     return std::nullopt;
-}
-
-std::vector<RiivolutionContract::OptionSelection> RiivoManifestSelections() {
-    std::vector<RiivolutionContract::OptionSelection> selections;
-    for (const auto& selection : RecompMod::RiivolutionOptionSelections()) {
-        selections.push_back({selection.section, selection.option, selection.choice});
-    }
-    return selections;
 }
 
 void RiivoCollectMappings(const RiivolutionContract::Patch& patch, const std::string& sdRootGeneric,
@@ -259,9 +230,8 @@ std::optional<RuntimeRiivolution::PatchSet> RiivoLoadPatchSet(const fs::path& ov
 
     const std::string gameId = RiivoGameId();
     const std::string sdRootGeneric = RiivoGenericText(xmlSet->sdRoot);
-    const auto manifestSelections = RiivoManifestSelections();
 
-    // Dolphin-compatible remembered choices; a recomp.yml pin overrides them.
+    // The remembered option choices, in the file Riivolution and Dolphin use.
     std::optional<RiivolutionContract::Config> config;
     const fs::path configXml =
         xmlSet->sdRoot / "riivolution" / "config" / (gameId.substr(0, 4) + ".xml");
@@ -294,7 +264,6 @@ std::optional<RuntimeRiivolution::PatchSet> RiivoLoadPatchSet(const fs::path& ov
         if (config) {
             RiivolutionContract::ApplyConfigDefaults(*disc, *config);
         }
-        RiivolutionContract::ApplySelections(*disc, manifestSelections);
 
         const auto activePatches = disc->GeneratePatches(gameId);
         const std::string xmlDirGeneric = RiivoGenericText(xmlFile.parent_path());
@@ -327,8 +296,7 @@ std::optional<RuntimeRiivolution::PatchSet> RiivoLoadPatchSet(const fs::path& ov
                   << std::endl;
         if (activePatches.empty()) {
             RT_LOG(RT_TAG_RIIVOLUTION) << "WARNING: " << PathToUtf8(xmlFile)
-                      << " has no enabled options for " << gameId
-                      << "; check the riivolution option selections (recomp.yml) or "
+                      << " has no enabled options for " << gameId << "; check "
                       << sdRootGeneric << "/riivolution/config/" << gameId.substr(0, 4) << ".xml"
                       << std::endl;
         }

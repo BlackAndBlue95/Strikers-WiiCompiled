@@ -1,8 +1,8 @@
 # Third-Party Notices
 
-WiiCompiled itself is licensed under the GNU General Public License v3.0
-(see [`LICENSE`](LICENSE)). It incorporates, links against, or redistributes the third-party
-components listed below. Each remains under its own license and copyright.
+Strikers-WiiCompiled is licensed under the GNU General Public License v3.0
+(see [`LICENSE`](LICENSE)), like the WiiCompiled project it is forked from. It incorporates, links
+against, or redistributes the third-party components listed below. Each remains under its own license and copyright.
 
 Nothing listed here is Nintendo intellectual property. This project ships no game code, assets,
 or data of any kind - see the [README](README.md).
@@ -61,6 +61,15 @@ SHA-256 hashes for the WiiConnect24 bootstrap tree:
 Dolphin was also used extensively as a behavioural reference during development of this project's
 hardware and IOS high-level implementations.
 
+### Dolphin Emulator source - GPL-2.0-or-later
+
+Copyright (c) 2018 Dolphin Emulator Project.
+`runtime/include/isa/ppc_isa_float.h` ports the Gekko/Broadway `fres`/`frsqrte` estimate tables and
+interpolation from Dolphin's `Source/Core/Common/FloatUtils.cpp` (marked
+`SPDX-License-Identifier: GPL-2.0-or-later`). The default console device ID in
+`runtime/include/wii_console_identity.h` is the one in Dolphin's `Source/Core/Core/IOS/IOSC.cpp`.
+Source: <https://github.com/dolphin-emu/dolphin>
+
 ### Dolphin Emulator Riivolution code - GPL-2.0-or-later
 
 Copyright (c) 2021 Dolphin Emulator Project.
@@ -78,14 +87,6 @@ The Riivolution XML reader uses pugixml 1.15, vendored in
 `runtime/third_party/pugixml` from commit `ee86beb30e4973f5feffe3ce63bfa4fbadf72f38`.
 Source and license: <https://github.com/zeux/pugixml>
 
-### Crypto++ 8.9.0 - Boost Software License 1.0 / public domain
-
-Copyright (c) 1995-2019 Wei Dai and contributors.
-The runtime uses Crypto++ for SHA-1 and sect233r1 ECDSA key derivation and signing. Its portable
-sources are vendored in `runtime/third_party/cryptopp`; assembly implementations are disabled.
-Source: <https://github.com/weidai11/cryptopp/tree/CRYPTOPP_8_9_0>. Full license text:
-`runtime/third_party/cryptopp/License.txt`.
-
 ### toml11 4.4.0 - MIT
 
 Copyright (c) 2017 Toru Niina.
@@ -97,29 +98,37 @@ Source: <https://github.com/ToruNiina/toml11/tree/v4.4.0>. Full license text:
 ### YamlDotNet - MIT
 
 Copyright (c) Antoine Aubry and contributors.
-Referenced by `translator/src/Translator.Core`. Source: <https://github.com/aaubry/YamlDotNet>
+Referenced by `translator/src/Translator.Cli` (15.1.2). Source: <https://github.com/aaubry/YamlDotNet>
 
 ### libco - ISC (valgrind.h: BSD-style)
 
 Copyright byuu and the higan team.
-Non-Windows builds use libco's symmetric stackful coroutines in place of Win32 Fibers for guest
-OSThread scheduling (`runtime/src/fiber_manager.cpp`). Vendored in full (all non-Windows
-CPU-architecture backends - amd64, x86, arm, aarch64, ppc, ppc64v2, plus the portable sjlj
-fallback - though this project's x86_64-only target only ever compiles amd64.c) in
+Linux builds use libco's symmetric stackful coroutines in place of Win32 Fibers for guest OSThread
+scheduling (`runtime/src/host_context.cpp`); Windows uses Fibers and macOS its own AArch64 context
+switch. Vendored in full (its amd64 and aarch64 backends are the ones Linux builds compile) in
 `runtime/third_party/libco` from commit `e18e09d634d612a01781168ad4d76be10a7e3bad`.
 Source: <https://github.com/higan-emu/libco>. Full license text:
 `runtime/third_party/libco/LICENSE`.
 
+### Mozilla CA certificate bundle - MPL-2.0
+
+`runtime/assets/certs/cacert.pem`, the root certificates (from Mozilla, via
+<https://curl.se/docs/caextract.html>) that the network layer's TLS checks servers against on
+macOS and Linux. It is copied next to the executable on those platforms.
+
+### Mario Strikers Charged decompilation - CC0-1.0
+
+`projects/mscharged/MAP.txt`, the function map the translator works from, is generated from the
+symbols of [mscharged-decomp](https://github.com/yannicksuter/mscharged-decomp).
+
 ---
 
-## Fetched at build time and redistributed in release builds
+## Fetched at build time
 
 These are pinned in `aurora-main/extern/CMakeLists.txt`, `aurora-main/CMakeLists.txt`,
 `aurora-main/cmake/AuroraDawnProvider.cmake`, and (for Mbed TLS) `runtime/CMakeLists.txt`. They are
 not stored in this repository; the build downloads them - each fetch is pinned to an exact version
-with a checked SHA-256 - and links or redistributes the resulting binaries. Their license texts are
-included in the installer's `licenses/` folder. The Windows installer bundles the pinned source
-trees themselves (fetched by `Launcher/Prepare-Dependencies.ps1`) so end-user builds run offline.
+with a checked SHA-256 - and links the resulting binaries into the executable it builds.
 
 | Component | Version | License | Upstream |
 | --- | --- | --- | --- |
@@ -139,8 +148,10 @@ trees themselves (fetched by `Launcher/Prepare-Dependencies.ps1`) so end-user bu
 | Zstandard | 1.5.7 | **BSD-3-Clause** - see below | <https://github.com/facebook/zstd> |
 | SQLite | 3.51.3 amalgamation | Public domain | <https://sqlite.org/> |
 | Tracy Profiler | pinned commit | BSD-3-Clause | <https://github.com/wolfpld/tracy> |
-| C++/WinRT | - | MIT (Microsoft) | <https://github.com/microsoft/cppwinrt> |
-| nodtool (disc image extraction) | v2.0.0-alpha.10 | MIT OR Apache-2.0 | <https://github.com/encounter/nod> |
+
+The build scripts also download **nodtool** (v2.0.0-alpha.10, MIT OR Apache-2.0,
+<https://github.com/encounter/nod>) to extract your disc image. It is run during the build, not
+linked or redistributed.
 
 ### Dual-licensed components - elections made by this project
 
@@ -153,27 +164,6 @@ trees themselves (fetched by `Launcher/Prepare-Dependencies.ps1`) so end-user bu
 
 - **Zstandard** is offered under BSD-3-Clause or GPL-2.0. **This project elects BSD-3-Clause.**
   Copyright (c) Meta Platforms, Inc. and affiliates.
-
-## Bundled in the setup executable's toolkit payload
-
-The distributed `WiiCompiled-Setup.exe` carries a build toolkit so that translation and
-compilation can run on a machine with nothing preinstalled. These tools are redistributed
-unmodified, with their license texts, in the installer's `licenses/` folder.
-
-| Component | License | Upstream |
-| --- | --- | --- |
-| llvm-mingw (Clang, LLD, libc++, libunwind, MinGW-w64 runtime) | Apache-2.0 with LLVM Exception; MinGW-w64 runtime under its own permissive terms; bundled GNU utilities under GPL-2.0-or-later or GPL-3.0-or-later | <https://github.com/mstorsjo/llvm-mingw> |
-| CMake | BSD-3-Clause | <https://cmake.org/> |
-| Ninja | Apache-2.0 | <https://ninja-build.org/> |
-| nodtool (disc image extraction) | MIT OR Apache-2.0 | <https://github.com/encounter/nod> |
-| Microsoft Visual C++ Runtime (`vcruntime140.dll`, `vcruntime140_1.dll`, `msvcp140.dll`) | Microsoft redistributable terms | Microsoft Visual Studio |
-| `dxil.dll` | Microsoft redistributable (proprietary signing library) | Microsoft |
-
-> [!IMPORTANT]
-> The GNU utilities bundled inside llvm-mingw are GPL-licensed. Their complete corresponding source
-> is available from the upstream project linked above at its pinned version, and this project will
-> supply it on request for the exact version shipped in any given release. Pins live in
-> `Launcher/Prepare-PortableTools.ps1` and `Launcher/NativeBuildFlags.ps1`.
 
 ---
 
@@ -195,11 +185,9 @@ Not redistributed in any release artifact.
 Not code, but the documentation this project depends on:
 
 - [WiiBrew](https://wiibrew.org/wiki/) - Wii hardware and IOS documentation.
-- [Custom Mario Kart Wiiki (Tockdom)](https://wiki.tockdom.com/) - Mario Kart Wii file formats and
-  modding documentation.
-- [Retro Rewind](https://wiki.tockdom.com/wiki/Retro_Rewind) by ZPL - the mod distribution this
-  project can build as a static profile. No Retro Rewind content is redistributed here; users
-  supply their own copy.
+- [mscharged-decomp](https://github.com/yannicksuter/mscharged-decomp) and the
+  [Super Mario Strikers decompilation](https://github.com/yannicksuter/smstrikers-decomp) - how the
+  game's engine works.
 
 ---
 

@@ -4,11 +4,9 @@
 #include "hle/net/network.h"
 #include "runtime_config.h"
 #include "runtime_log.h"
-#include "runtime_product.h"
 
 namespace NetworkHle {
 
-bool RetroRewindProfileActive();
 
 static std::mutex g_mutex;
 static std::map<int32_t, DeviceKind> g_devices;
@@ -60,16 +58,9 @@ std::string Lower(std::string_view text) {
     return RuntimeHle::Lower(text);
 }
 
-bool RetroRewindProfileActive() {
-    return RuntimeProduct::IsRetroRewind();
-}
-
 bool StartsWith(std::string_view text, std::string_view prefix) {
     return text.size() >= prefix.size() && text.compare(0, prefix.size(), prefix) == 0;
 }
-
-// No host rewriting here: the Retro-WFC payload already redirects Nintendo
-// hostnames at its own resolver hooks before the name reaches this HLE.
 
 std::vector<IoVector> ReadVectors(uint32_t vectorPtr, uint32_t count) {
     std::vector<IoVector> vectors;
@@ -340,18 +331,6 @@ int32_t ClassifySettledConnect(NativeSocket socket) {
     return 0;
 }
 
-static int32_t FinishNonBlockingConnect(NativeSocket socket, int timeoutMs) {
-    const int pollRet = ProbeConnectSettled(socket, timeoutMs);
-    if (pollRet <= 0) {
-        // Dolphin reports a connect that never settled as -SO_ENETUNREACH
-        // (IOS/Network/Socket.cpp:352-356), not -SO_ETIMEDOUT: ETIMEDOUT is not
-        // even reachable through its error table, so the SDK never handles it.
-        const int hostError = pollRet < 0 ? NativeLastError() : 0;
-        return pollRet == 0 ? -SO_ENETUNREACH : TranslateSocketError(hostError, false);
-    }
-    return ClassifySettledConnect(socket);
-}
-
 bool WaitForReadable(NativeSocket socket, int timeoutMs) {
     if (timeoutMs <= 0) {
         return false;
@@ -412,46 +391,6 @@ static void ConfigureUdpSocket(NativeSocket socket, int type) {
     (void)socket;
     (void)type;
 #endif
-}
-
-int32_t ReconnectWiiSocket(WiiSocket& socket, uint16_t port) {
-    if (!socket.hasPeerAddr || socket.type != SOCK_STREAM) {
-        return -SO_EINVAL;
-    }
-
-    NativeSocket native = ::socket(socket.af, socket.type, socket.protocol);
-    if (native == kInvalidSocket) {
-        return SocketResult(-1, false);
-    }
-    ConfigureUdpSocket(native, socket.type);
-
-    SetNonBlocking(native, true);
-    sockaddr_in addr = socket.peerAddr;
-    addr.sin_port = htons(port);
-    const int ret = connect(native, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-    const int nativeErr = ret < 0 ? NormalizeConnectError(NativeLastError()) : 0;
-    int32_t result = 0;
-    if (ret < 0 && IsWouldBlockError(nativeErr)) {
-        result = FinishNonBlockingConnect(native, 10000);
-    } else if (ret < 0) {
-        result = SocketErrorResult(nativeErr, false);
-    } else {
-        result = SocketResult(ret, false);
-    }
-    g_lastSocketError = result;
-    if (result != 0) {
-        CloseNativeSocket(native);
-        return result;
-    }
-
-    CloseNativeSocket(socket.native);
-    socket.native = native;
-    socket.generation = NextSocketGeneration();
-    socket.peerAddr = addr;
-    socket.peerPort = port;
-    socket.nonblocking = false;
-    SetNonBlocking(socket.native, false);
-    return 0;
 }
 
 int MapWiiAf(uint32_t af) {

@@ -46,7 +46,7 @@ extern "C" void PPCHalt_80395A24()
     RuntimeCrash::WriteCrashArtifacts("halt", "The guest executed PPCHalt.");
     SetRuntimeExitCode(EXIT_FAILURE);
     ShowRuntimeFatalPopup("the guest operating system halted the console",
-                          "Mario Kart Wii executed PPCHalt, which the console only reaches after an "
+                          "The game executed PPCHalt, which the console only reaches after an "
                           "unrecoverable error.");
     MarkFatalErrorReported();
     std::exit(EXIT_FAILURE);
@@ -93,7 +93,7 @@ extern "C" void OS__Panic_803B5C74_Cpu(CpuContext* ctx)
     std::fflush(stderr);
     std::fflush(stdout);
 
-    std::string details = "Mario Kart Wii reported an OS panic";
+    std::string details = "The game reported an OS panic";
     if (!file.empty()) {
         details += " at ";
         details += file;
@@ -186,7 +186,7 @@ extern "C" uint32_t Exit_803BE8D0(int status)
     std::fflush(stderr);
     if (status != 0) {
         const std::string details =
-            "Mario Kart Wii called exit(" + std::to_string(status) + ").";
+            "The game called exit(" + std::to_string(status) + ").";
         RuntimeCrash::WriteCrashArtifacts("exit", details);
         ShowRuntimeFatalPopup("the game exited with an error status", details);
         MarkFatalErrorReported();

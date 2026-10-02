@@ -141,15 +141,11 @@ constexpr uint32_t kViRenderHeightAddr      = 0x805D60A6;
 constexpr uint32_t kViXfbWidthAddr          = 0x805D60B2;
 constexpr uint32_t kViXfbHeightAddr         = 0x805D60BC;
 constexpr uint32_t kViRetraceCountAddr      = 0x806E2BB4; // matches VIWaitForRetrace/handler
-constexpr uint32_t kViTimingGuardAddr       = 0x80386b44;
 constexpr uint32_t kViPreRetraceCallback    = 0x806E2B88;
 constexpr uint32_t kViPostRetraceCallback   = 0x806E2B84;
 constexpr uint32_t kViNextFrameBufferAddr   = 0x806E2B74;
 constexpr uint32_t kViNextFrameBufferHwAddr = 0x805D60D0;
 constexpr uint32_t kViRetraceQueueAddr      = 0x806E2B90; // Thread queue for VIWaitForRetrace
-
-// EGG::BaseSystem::sSystem pointer - must be non-null before post-retrace callback is valid
-constexpr uint32_t kEggSSystemAddr = 0x80386F60;
 
 // Native frame rate setting (60 or 120). The game paces itself on VIWaitForRetrace and times its
 // simulation by the OS clock (fixed 50 Hz steps, rendered by blending snapshots), so a faster retrace
@@ -357,12 +353,7 @@ void AdvanceRetrace(CpuContext* ctx, Clock::time_point retraceStamp, bool servic
             InvokeIndirectCpu(preCb, ctx);
         }
         if (postCb) {
-            // Guard: only invoke callback if sSystem is initialized
-            // The callback dereferences sSystem which must be non-null
-            uint32_t sSystemPtr = 1;
-            (void)sSystemPtr; if (true) { // MSC: MKW EGG sSystem guard removed
-                InvokeIndirectCpu(postCb, ctx);
-            }
+            InvokeIndirectCpu(postCb, ctx);
         }
     }
 
@@ -663,31 +654,6 @@ extern "C" void __VIInit_HLE_803C5CDC(CpuContext* ctx)
 PPC_NATIVE_OVERRIDE_VOID(803C5CDC, __VIInit_HLE_803C5CDC, (CpuContext* ctx), (ctx));
 
 // -----------------------------------------------------------------------------
-// Helper stubs referenced by VIInit switch cases (case D variants).
-// These are hardware-specific; treat as no-ops to keep control flow intact.
-// -----------------------------------------------------------------------------
-extern "C" void VIInit_caseD_0_HLE_801b9934(CpuContext* ctx)
-{
-    (void)ctx;
-    RT_LOG(RT_TAG_VI) << "VIInit_caseD_0_801b9934 stubbed" << std::endl;
-}
-// MSC-UNMAPPED(VIInit_caseD_0) PPC_NATIVE_OVERRIDE_VOID(801B9934, VIInit_caseD_0_HLE_801b9934, (CpuContext* ctx), (ctx));
-
-extern "C" void VIInit_caseD_1_HLE_801b993c(CpuContext* ctx)
-{
-    (void)ctx;
-    RT_LOG(RT_TAG_VI) << "VIInit_caseD_1_801b993c stubbed" << std::endl;
-}
-// MSC-UNMAPPED(VIInit_caseD_1) PPC_NATIVE_OVERRIDE_VOID(801B993C, VIInit_caseD_1_HLE_801b993c, (CpuContext* ctx), (ctx));
-
-extern "C" void VIInit_caseD_2_HLE_801b9944(CpuContext* ctx)
-{
-    (void)ctx;
-    RT_LOG(RT_TAG_VI) << "VIInit_caseD_2_801b9944 stubbed" << std::endl;
-}
-// MSC-UNMAPPED(VIInit_caseD_2) PPC_NATIVE_OVERRIDE_VOID(801B9944, VIInit_caseD_2_HLE_801b9944, (CpuContext* ctx), (ctx));
-
-// -----------------------------------------------------------------------------
 // VISetPreRetraceCallback (0x803C5B4C)
 // -----------------------------------------------------------------------------
 extern "C" void VISetPreRetraceCallback_HLE_803C5B4C(CpuContext* ctx)
@@ -827,20 +793,6 @@ extern "C" void VISetNextFrameBuffer_HLE_803C74CC(CpuContext* ctx)
 }
 PPC_NATIVE_OVERRIDE_VOID(803C74CC, VISetNextFrameBuffer_HLE_803C74CC, (CpuContext* ctx), (ctx));
 
-extern "C" void VIGetNextFrameBuffer_HLE_801bab24(CpuContext* ctx)
-{
-    uint32_t fb = 0;
-    {
-        std::lock_guard<std::mutex> lock(g_viMutex);
-        EnsureInitializedLocked();
-        // Return PENDING value - what was set by VISetNextFrameBuffer
-        fb = g_vi.pendingNextFrameBuffer;
-    }
-    ViSetR3(ctx, fb);
-    VI_HLE_PollRetrace(ctx);
-}
-// MSC-UNMAPPED(VIGetNextFrameBuffer) PPC_NATIVE_OVERRIDE_VOID(801BAB24, VIGetNextFrameBuffer_HLE_801bab24, (CpuContext* ctx), (ctx));
-
 extern "C" void VISetBlack_HLE_803C7540(CpuContext* ctx)
 {
     const bool makeBlack = ctx ? (ctx->gpr[3] != 0) : false;
@@ -866,19 +818,6 @@ extern "C" void VIGetRetraceCount_HLE_803C75B8(CpuContext* ctx)
     VI_HLE_PollRetrace(ctx);
 }
 PPC_NATIVE_OVERRIDE_VOID(803C75B8, VIGetRetraceCount_HLE_803C75B8, (CpuContext* ctx), (ctx));
-
-extern "C" void VIGetNextField_HLE_801babac(CpuContext* ctx)
-{
-    bool fieldOdd = false;
-    {
-        std::lock_guard<std::mutex> lock(g_viMutex);
-        EnsureInitializedLocked();
-        fieldOdd = g_vi.fieldOdd;
-    }
-    ViSetR3(ctx, fieldOdd ? 1 : 0);
-    VI_HLE_PollRetrace(ctx);
-}
-// MSC-UNMAPPED(VIGetNextField) PPC_NATIVE_OVERRIDE_VOID(801BABAC, VIGetNextField_HLE_801babac, (CpuContext* ctx), (ctx));
 
 extern "C" void VIGetCurrentLine_HLE_803C75C0(CpuContext* ctx)
 {

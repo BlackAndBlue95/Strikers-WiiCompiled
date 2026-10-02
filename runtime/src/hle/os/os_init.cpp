@@ -18,23 +18,6 @@
 #include "runtime_log.h"
 #include "system_bridge.h"
 
-extern "C" void func_803BB6C4(CpuContext* ctx);
-static void func_8055531C(CpuContext*) {} // MSC: no StaticR.rel; dead MKW path
-
-extern "C" void OSInitAlarm_RecompModLateInit_803BB6C4(CpuContext* ctx) {
-    func_803BB6C4(ctx);
-}
-
-REGISTER_NATIVE_FUNCTION_AS(0x803BB6C4, OSInitAlarm_RecompModLateInit_803BB6C4, "OSInitAlarm_RecompModLateInit_803BB6C4");
-
-extern "C" void StaticRProlog_RecompModInit_8055531c(CpuContext* ctx) {
-    RecompMod::RunMemoryInitializers();
-    func_8055531C(ctx);
-    RecompMod::RunPostRelInitializers();
-}
-
-// MSC-UNMAPPED(RelProlog) REGISTER_NATIVE_FUNCTION_AS(0x8055531C, StaticRProlog_RecompModInit_8055531c, "StaticRProlog_RecompModInit_8055531c");
-
 namespace {
 std::string ReadGuestCStringLimited(uint32_t address, size_t limit = 4096) {
     if (address == 0) {

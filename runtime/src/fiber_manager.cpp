@@ -49,7 +49,6 @@ constexpr uint32_t kOSRunningContextAddr = 0x800000e4u;  // OSGetCurrentThread r
 constexpr uint32_t kThreadQueueArrayAddr = 0x805D51F0u;
 constexpr uint32_t kSchedulerPendingFlagAddr = 0x806E2948u;
 constexpr uint32_t kSchedulerReschedCounterAddr = 0x806E2944u;
-constexpr uint32_t kSchedulerIdleFlagAddr = 0x806E2940u;
 
 // OSThread structure offsets
 constexpr uint32_t kThreadStateOffset = 0x2C8u;
@@ -61,16 +60,6 @@ constexpr uint32_t kThreadNextOffset = 0x2E0u;
 constexpr uint32_t kThreadPrevOffset = 0x2E4u;
 constexpr uint32_t kThreadQueueOffset = 0x2DCu;
 constexpr uint32_t kThreadJoinQueueOffset = 0x2E8u;
-
-// OSContext offsets (for saving/loading fiber context)
-constexpr uint32_t kCtxGprOffset = 0x00u;
-constexpr uint32_t kCtxCrOffset = 0x80u;
-constexpr uint32_t kCtxLrOffset = 0x84u;
-constexpr uint32_t kCtxCtrOffset = 0x88u;
-constexpr uint32_t kCtxXerOffset = 0x8Cu;
-constexpr uint32_t kCtxSrr0Offset = 0x198u;
-constexpr uint32_t kCtxSrr1Offset = 0x19Cu;
-constexpr uint32_t kCtxGqrOffset = 0x1A8u;
 
 void ClearPendingMaskForEmptyGuestQueue(uint32_t queueEntry)
 {
@@ -582,40 +571,6 @@ void GuestFiberManager::FiberProc(void* param)
     
     // Create a CpuContextScope for this fiber
     CpuContextScope scope(cpu);
-    
-    int startDeferAttempts = 0;
-    while (false && entryPoint == 0x8024373c) { // MSC: MKW EGG::Thread only // EGG::Thread::start
-        uint32_t vtable = 0;
-        uint32_t startFn = 0;
-        try {
-            vtable = Memory::Read32(entryArg);
-            if (vtable >= 0x80000000u) {
-                startFn = Memory::Read32(vtable + 0x0Cu);
-            }
-        } catch (const Memory::AccessViolation&) {
-            vtable = 0;
-            startFn = 0;
-        }
-
-
-        if (vtable >= 0x80000000u && startFn >= 0x80000000u) {
-            break;
-        }
-
-        if (startDeferAttempts++ > 50) {
-            RT_LOG(RT_TAG_OS) << "EGG::Thread::start target still invalid (vtable=0x" << std::hex << vtable
-                      << ", fn=0x" << startFn << ") after retries; continuing anyway." << std::dec << std::endl;
-            break;
-        }
-        HostContext::Switch(s_schedulerFiber);
-    }
-
-    // The deferral loop above yields to the scheduler and therefore can resume
-    // with registers from a different guest fiber in the shared CpuContext.
-    cpu->gpr[3] = entryArg;
-    cpu->pc = entryPoint;
-    cpu->srr0 = entryPoint;
-
     
     // Call the translated thread entry function
     const auto* info = TranslatedFunctionRegistry::FindByAddressPtr(entryPoint);

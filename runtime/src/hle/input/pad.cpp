@@ -24,8 +24,6 @@
 
 namespace {
 
-std::atomic<bool> g_rumbleEnabled{true};
-
 bool NativeButtonHeld(SDL_Gamepad* gamepad, uint32_t nativeButton) {
     if (gamepad == nullptr || nativeButton == PAD_NATIVE_BUTTON_INVALID ||
         nativeButton >= SDL_GAMEPAD_BUTTON_COUNT) {
@@ -96,11 +94,6 @@ void WritePadStatus(uint32_t base, const PADStatus& status) {
 }
 
 } // namespace
-
-extern "C" void PAD_HLE_SetRumbleEnabled(bool enabled)
-{
-    g_rumbleEnabled.store(enabled, std::memory_order_relaxed);
-}
 
 // MSC: Mario Strikers Charged only reads Wii Remote + Nunchuk (WPAD/KPAD). With no real
 // Bluetooth remote on a channel, emulate one from that port's bound GameCube-pad input
@@ -579,7 +572,7 @@ void DrawHighlight() {
     // with dynamic aspect, else a centred 4:3 (or forced 16:9) fit.
     ImVec2 origin(0, 0), size = display;
     if (!g_dynamicAspectRatioEnabled) {
-        const float aspect = MkwForceAspect169Requested() ? 16.0f / 9.0f : 4.0f / 3.0f;
+        const float aspect = DynamicAspectForce169Requested() ? 16.0f / 9.0f : 4.0f / 3.0f;
         if (display.x / display.y > aspect) { size.x = display.y * aspect; origin.x = (display.x - size.x) * 0.5f; }
         else { size.y = display.x / aspect; origin.y = (display.y - size.y) * 0.5f; }
     }
@@ -764,12 +757,6 @@ bool Read(uint32_t chan, WiiRemoteInput::KpadSample& sample) {
 }
 } // namespace MscEmulatedRemote
 
-extern "C" uint32_t PAD__Init_HLE()
-{
-    return PADInit() ? 1u : 0u;
-}
-// MSC-UNMAPPED(PAD::Init) PPC_NATIVE_OVERRIDE(801AF2F0, PAD__Init_HLE, uint32_t, (), ());
-
 // PADRead: gathers every GameCube pad source for the frame and writes the statuses to guest memory.
 extern "C" uint32_t PAD__Read_HLE(uint32_t statusPtr)
 {
@@ -807,18 +794,3 @@ extern "C" uint32_t PAD__Reset_HLE(uint32_t mask)
     return PADReset(mask) ? 1u : 0u;
 }
 PPC_NATIVE_OVERRIDE(803BF178, PAD__Reset_HLE, uint32_t, (uint32_t mask), (mask));
-
-extern "C" uint32_t PAD__Recalibrate_HLE(uint32_t mask)
-{
-    return PADRecalibrate(mask) ? 1u : 0u;
-}
-// MSC-UNMAPPED(PAD::Recalibrate) PPC_NATIVE_OVERRIDE(801AF1E4, PAD__Recalibrate_HLE, uint32_t, (uint32_t mask), (mask));
-
-extern "C" void PAD__ControlMotor_HLE(int32_t chan, uint32_t command)
-{
-    if (command == PAD_MOTOR_RUMBLE && !g_rumbleEnabled.load(std::memory_order_relaxed)) {
-        command = PAD_MOTOR_STOP;
-    }
-    PADControlMotor(chan, command);
-}
-// MSC-UNMAPPED(PAD::ControlMotor) PPC_NATIVE_OVERRIDE_VOID(801AF908, PAD__ControlMotor_HLE, (int32_t chan, uint32_t command), (chan, command));

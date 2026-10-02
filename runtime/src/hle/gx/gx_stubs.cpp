@@ -24,9 +24,6 @@ extern "C" void GX__SetDrawSync_8016ed08(uint32_t token) {
     } } catch (...) {}
 }
 
-extern "C" void GX__SetDrawSync_8016e9fc(uint32_t token) { GX__SetDrawSync_8016ed08(token); }
-// MSC-UNMAPPED(GX::SetDrawSync) PPC_NATIVE_OVERRIDE_VOID(8016e9fc, GX__SetDrawSync_8016e9fc, (uint32_t token), (token));
-
 extern "C" void GX__FinishInterruptHandler_803A3A04() {
     try {
         uint32_t gd = Memory::Read32(kGXDataPtrAddr);

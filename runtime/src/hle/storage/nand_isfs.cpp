@@ -14,7 +14,7 @@ extern "C" void OSSleepThread_HLE_803BC9C0(CpuContext* ctx);
 // ============================================================================
 
 struct ShaHandle {
-    CryptoPP::SHA1 hash;
+    Sha1 hash;
     uint64_t byteCount = 0;
 
     void Restart() {
@@ -61,9 +61,7 @@ static constexpr int32_t ISFS_DEV_FD = 1;
 static constexpr int32_t ES_DEV_FD = 3;
 static constexpr int32_t DOLPHIN_DEV_FD = 4;
 static constexpr uint32_t ES_IOCTL_GETDEVICEID = 0x07;
-static constexpr uint32_t ES_IOCTL_GETDEVICECERT = 0x1E;
 static constexpr uint32_t ES_IOCTL_GETTITLEID = 0x20;
-static constexpr uint32_t ES_IOCTL_SIGN = 0x30;
 static constexpr uint32_t DOLPHIN_IOCTL_GET_ELAPSED_TIME = 0x01;
 static constexpr uint32_t DOLPHIN_IOCTL_GET_VERSION = 0x02;
 static constexpr uint32_t DOLPHIN_IOCTL_GET_SPEED_LIMIT = 0x03;
@@ -108,8 +106,8 @@ static IosVector ReadIosVector(uint32_t vectorPtr, uint32_t index) {
     return ReadIoVector(vectorPtr, index);
 }
 
-static uint64_t CurrentMkwTitleId() {
-    uint32_t low = CurrentMkwTitleIdLo();
+static uint64_t CurrentTitleId() {
+    uint32_t low = CurrentTitleIdLo();
     return (static_cast<uint64_t>(kNandTitleIdHi) << 32) | low;
 }
 
@@ -286,9 +284,7 @@ static int32_t HandleDolphinIoctlv(uint32_t cmd, uint32_t numIn, uint32_t numOut
 }
 
 static bool WriteShaOutputs(const ShaHandle& handle, const IosVector& context, const IosVector& hash) {
-    CryptoPP::SHA1 snapshot = handle.hash;
-    std::array<uint8_t, CryptoPP::SHA1::DIGESTSIZE> digest{};
-    snapshot.Final(digest.data());
+    const Sha1::Digest digest = handle.hash.Snapshot();
     if (!WriteGuestBytes(hash.address, hash.size, digest.data(), digest.size())) {
         return false;
     }
@@ -392,9 +388,6 @@ extern "C" int32_t NAND_IOS_Open_HLE(uint32_t pathPtr, uint32_t mode) {
     // It's a NAND file path
     const std::filesystem::path hostPath = TranslateNandPath(path);
 
-    if (const auto result = NandCheckSystemSaveRead("IOS_Open", hostPath, mode, true))
-        return *result;
-    
     // Seed FaceLib resources before the existence check so every open mode can
     // still find them on a fresh managed NAND.
     if (!PathExists(hostPath) && IsFaceLibResourcePath(path)) {
@@ -862,7 +855,7 @@ int32_t ISFS_OpenLib_Initialize(CpuContext* ctx) {
     char titleId[32];
     std::snprintf(titleId, sizeof(titleId), "%08x", kNandTitleIdHi);
     char gameId[32];
-    std::snprintf(gameId, sizeof(gameId), "%08x", CurrentMkwTitleIdLo());
+    std::snprintf(gameId, sizeof(gameId), "%08x", CurrentTitleIdLo());
     CreateDirectoryPath(GetNandBasePath() / "title" / titleId / gameId / "data");
 
     if (!ctx) {
@@ -1067,20 +1060,7 @@ extern "C" int32_t NAND_IOS_Ioctlv_HLE(
                 if (out.size < 4 || out.address == 0 || !Memory::Contains(out.address, 4)) {
                     return ISFS_EINVAL;
                 }
-                const WiiEsCrypto::Identity& identity = WiiEsCrypto::CurrentIdentity();
-                Memory::Write32(out.address, identity.deviceId);
-                return ISFS_OK;
-            }
-
-            case ES_IOCTL_GETDEVICECERT: {
-                if (numIn != 0 || numOut != 1) {
-                    return ISFS_EINVAL;
-                }
-                const IosVector out = ReadIosVector(vectorPtr, 0);
-                const auto cert = WiiEsCrypto::GetDeviceCertificate();
-                if (!WriteGuestBytes(out.address, out.size, cert.data(), cert.size())) {
-                    return ISFS_EINVAL;
-                }
+                Memory::Write32(out.address, WiiConsoleIdentity::DeviceId());
                 return ISFS_OK;
             }
 
@@ -1092,30 +1072,9 @@ extern "C" int32_t NAND_IOS_Ioctlv_HLE(
                 if (out.size < 8 || out.address == 0 || !Memory::Contains(out.address, 8)) {
                     return ISFS_EINVAL;
                 }
-                const uint64_t titleId = CurrentMkwTitleId();
+                const uint64_t titleId = CurrentTitleId();
                 Memory::Write32(out.address, static_cast<uint32_t>(titleId >> 32));
                 Memory::Write32(out.address + 4u, static_cast<uint32_t>(titleId));
-                return ISFS_OK;
-            }
-
-            case ES_IOCTL_SIGN: {
-                if (numIn != 1 || numOut != 2) {
-                    return ISFS_EINVAL;
-                }
-                const IosVector in = ReadIosVector(vectorPtr, 0);
-                const IosVector sigOut = ReadIosVector(vectorPtr, 1);
-                const IosVector certOut = ReadIosVector(vectorPtr, 2);
-                if (in.address == 0 || !Memory::Contains(in.address, in.size)) {
-                    return ISFS_EINVAL;
-                }
-                const uint8_t* input = Memory::GetPointer(in.address, in.size);
-                WiiEsCrypto::EcSignature signature{};
-                WiiEsCrypto::EccCert cert{};
-                WiiEsCrypto::Sign(CurrentMkwTitleId(), input, in.size, signature, cert);
-                if (!WriteGuestBytes(sigOut.address, sigOut.size, signature.data(), signature.size()) ||
-                    !WriteGuestBytes(certOut.address, certOut.size, cert.data(), cert.size())) {
-                    return ISFS_EINVAL;
-                }
                 return ISFS_OK;
             }
 

@@ -23,7 +23,6 @@
 #include "recomp_mod_loader.h"
 #include "runtime_config.h"
 #include "runtime_log.h"
-#include "runtime_product.h"
 #include "timebase_contract.h"
 
 // Global flag to suppress SEH reporting during static constructor execution
@@ -493,9 +492,9 @@ void SystemBridge::SeedLowMemDefaults(const Memory::Config& config) {
     constexpr uint32_t kBusClockHz =
         static_cast<uint32_t>(TimeBaseContract::kBusClockHz);
     constexpr uint32_t kCpuClockHz = kBusClockHz * 3u;
-    // Mario Kart Wii boots under IOS36. These are the IOS kernel values that
-    // Dolphin exposes in low memory for IOS36 (VersionInfo.cpp). SDK helpers
-    // read them through the 0xC0000000 MEM1 alias.
+    // The IOS kernel values Dolphin exposes in low memory for IOS36 (VersionInfo.cpp), kept from
+    // the Mario Kart Wii base. Strikers' TMD asks for IOS21, but the game runs with these. SDK
+    // helpers read them through the 0xC0000000 MEM1 alias.
     constexpr uint32_t kIos36Version = 0x00240E18u;
     constexpr uint32_t kIos36Date = 0x00030110u;
 
@@ -509,17 +508,12 @@ void SystemBridge::SeedLowMemDefaults(const Memory::Config& config) {
     constexpr uint32_t kIPCArenaSize = 0x20000u;
     constexpr uint32_t kIosReservedSize = 0x20000u;
 
-    // The boot code exposes the current disc ID in low memory before DVDInit.
-    // Retro Rewind reads the region byte directly from here while building its
-    // Retro-WFC payload URL, and OSGetAppGamename reads the app code mirrors
-    // at 0x80003180/0x80003194 while building NAS auth fields.
+    // The boot code exposes the current disc ID in low memory before DVDInit, and OSGetAppGamename
+    // reads the app code mirrors at 0x80003180/0x80003194 while building NAS auth fields.
     entries.push_back({0x80000000u, 0x52345145u, "Disc game code"}); // R4QE
     entries.push_back({0x80000004u, 0x30310000u, "Disc maker/id"});  // MSC: matches R4QE01 boot.bin
     entries.push_back({0x80003180u, 0x52345145u, "OS app game code"}); // R4QE
-    entries.push_back({0x80003194u, 0x52345145u, "OS app gamename"});  // RMCP
-    if (RuntimeProduct::IsRetroRewind()) {
-        entries.push_back({0x800017D8u, 0x00000001u, "Retro Rewind recomp runtime marker", true});
-    }
+    entries.push_back({0x80003194u, 0x52345145u, "OS app gamename"});  // R4QE
 
     for (const auto& reservation : RecompMod::MemoryReservations()) {
         if (reservation.start >= kMem1ArenaLoDefault &&

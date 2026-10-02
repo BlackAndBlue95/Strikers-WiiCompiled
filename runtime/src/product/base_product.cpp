@@ -3,10 +3,7 @@
 namespace RuntimeProduct {
 
 const Descriptor& Active() noexcept {
-    static constexpr Descriptor descriptor{
-        Kind::BaseGame,
-        "Strikers-WiiCompiled",
-    };
+    static constexpr Descriptor descriptor{"Strikers-WiiCompiled"};
     return descriptor;
 }
 

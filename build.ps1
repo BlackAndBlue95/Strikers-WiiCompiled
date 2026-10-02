@@ -4,6 +4,7 @@
 #   build.cmd "C:\path\to\game.wbfs"            # disc image: ISO, RVZ, WBFS, WIA, CISO, GCZ, ...
 #   build.cmd "C:\path\to\extracted\game"       # or a folder extracted with Dolphin (sys\ + files\)
 #   build.cmd -SkipTranslate                    # recompile the runtime only
+#   build.cmd -Jobs 8                           # cap parallel compile jobs (default: all cores)
 #
 # The game files are installed into the app's data folder (next to Config.toml and saves), so the
 # original image/folder isn't needed afterwards. Build output (Assets\, generated\, build-windows\)
@@ -21,8 +22,8 @@ $TranslatorDll = 'translator/src/Translator.Cli/bin/Release/net8.0/Translator.Cl
 $BuildDir = Join-Path $Repo 'build-windows'
 $AppDir = Join-Path $env:LOCALAPPDATA 'MSCRecomp'
 $ExeName = 'Strikers-WiiCompiled.exe'
-# Like WiiCompiled's installer, the game files are installed next to the config and saves, so the
-# original disc image or folder isn't needed once the build is done.
+# The game files are installed next to the config and saves, so the original disc image or folder
+# isn't needed once the build is done.
 $GameDir = Join-Path $AppDir 'Game'
 # nodtool (https://github.com/encounter/nod) reads Wii disc images; pinned by version and hash.
 $NodVersion = 'v2.0.0-alpha.10'
@@ -30,10 +31,6 @@ $NodBuilds = @{
     'AMD64' = @('nodtool-windows-x86_64.exe', '1e150e33b88157527f96caea89ad12267aed8b117180c9ebaa89ebe89c1d948d')
     'ARM64' = @('nodtool-windows-arm64.exe', 'a2cf9a1ab153fb1252e9676a60d9dd6f68d8f192387bbfbf571e7ba19b8047aa')
 }
-# LLVM-MinGW ships no C++/WinRT headers (music_attenuation.cpp needs them), so they're generated
-# with cppwinrt.exe from the same NuGet package Launcher/Prepare-Dependencies.ps1 pins.
-$CppWinRtVersion = '3.0.260818.1'
-$CppWinRtSha = 'a8993608ae9263a8288e1a1d9ee2684a5632f4acc59e1e89ddd86b3b889a7367'
 Set-Location $Repo
 
 function Fail([string] $Message) { Write-Host "`nerror: $Message" -ForegroundColor Red; exit 1 }
@@ -99,32 +96,6 @@ function Get-NodTool {
     if ((Get-Sha $part) -ne $sha) { Remove-Item $part -Force; Fail 'nodtool download failed its checksum' }
     Move-Item $part $tool -Force
     return $tool
-}
-# Generates the C++/WinRT projection headers from this machine's Windows metadata, once.
-function Get-CppWinRtHeaders {
-    $headers = Join-Path $BuildDir 'cppwinrt'
-    if (Test-Path (Join-Path $headers 'winrt/base.h') -PathType Leaf) { return $headers }
-    Step 'Generating C++/WinRT headers'
-    $toolRoot = Join-Path $BuildDir 'tools/cppwinrt'
-    $compiler = Join-Path $toolRoot 'bin/cppwinrt.exe'
-    if (-not (Test-Path $compiler -PathType Leaf)) {
-        New-Item -ItemType Directory -Force (Join-Path $BuildDir 'tools') | Out-Null
-        Write-Host "    downloading cppwinrt $CppWinRtVersion"
-        # Expand-Archive in Windows PowerShell only accepts a .zip extension (a .nupkg is a zip).
-        $part = Join-Path $BuildDir 'tools/cppwinrt.zip'
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -UseBasicParsing -Uri "https://www.nuget.org/api/v2/package/Microsoft.Windows.CppWinRT/$CppWinRtVersion" -OutFile $part
-        if ((Get-Sha $part) -ne $CppWinRtSha) { Remove-Item $part -Force; Fail 'cppwinrt download failed its checksum' }
-        if (Test-Path $toolRoot) { Remove-Item $toolRoot -Recurse -Force }
-        Expand-Archive $part $toolRoot
-        Remove-Item $part -Force
-    }
-    if (Test-Path $headers) { Remove-Item $headers -Recurse -Force }
-    New-Item -ItemType Directory -Force $headers | Out-Null
-    Logged 'cppwinrt.log' $compiler @('-input', 'local', '-output', $headers)
-    if (-not (Test-Path (Join-Path $headers 'winrt/base.h') -PathType Leaf)) { Fail "cppwinrt produced no winrt\base.h (see $(Join-Path $BuildDir 'cppwinrt.log'))" }
-    return $headers
 }
 function Expand-DiscImage([string] $Image) {
     Step 'Extracting your disc image (a few minutes)'
@@ -215,15 +186,13 @@ if (-not $SkipTranslate) {
         '--native-source-dir', 'runtime/src', '--out', 'generated/build_shards')
 }
 
-$cppWinRt = Get-CppWinRtHeaders
-
 Step 'Configuring the native build'
-# SDL is built from source (as WiiCompiled's own Windows build does): the official prebuilt MinGW
+# SDL is built from source: the official prebuilt MinGW
 # SDL3 has no libusb, so it can't see the Wii U GameCube adapter (WUP-028, or a third-party adapter
 # in Wii U mode), which isn't a HID device.
 Logged 'configure.log' $cmake @('-S', 'runtime', '-B', $BuildDir, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
     "-DCMAKE_C_COMPILER=$($clang -replace '\\', '/')", "-DCMAKE_CXX_COMPILER=$($clangxx -replace '\\', '/')",
-    "-DCMAKE_MAKE_PROGRAM=$($ninja -replace '\\', '/')", "-DMKW_CPPWINRT_INCLUDE_DIR=$($cppWinRt -replace '\\', '/')",
+    "-DCMAKE_MAKE_PROGRAM=$($ninja -replace '\\', '/')",
     '-DAURORA_SDL3_PROVIDER=vendor')
 
 Step 'Compiling (the first build takes a long time)'

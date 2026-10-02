@@ -71,17 +71,6 @@ int32_t ComputeThreadEffectivePriority(uint32_t threadPtr)
     return priority;
 }
 
-bool IsThpVideoDecoderEntry(uint32_t entryFunc)
-{
-    switch (entryFunc) {
-    case 0xFFFFFFF0u: // MSC: was MKW THP decoder entry
-    case 0xFFFFFFF4u: // MSC: was MKW THP decoder entry
-        return true;
-    default:
-        return false;
-    }
-}
-
 void InsertThreadIntoQueueByPriority(uint32_t queuePtr, uint32_t threadPtr, int32_t priority)
 {
     ::Memory::Write32(threadPtr + kThreadQueueOffset, queuePtr);
@@ -314,17 +303,6 @@ extern "C" void OSCreateThread_HLE_803BBF2C(CpuContext* ctx)
             InvokeIndirectCpu(0x803B57FCu, cpu); // OSInitContext
         }
 
-        if (IsThpVideoDecoderEntry(entryFunc)) {
-            // Decoder threads restore their own context via OSLoadContext, so the saved
-            // context needs these GQR2-GQR5 values or paired-single THP decode breaks
-            // under the all-zero OSInitContext defaults.
-            ::Memory::Write32(threadPtr + 0x1ACu, 0x00040004u);
-            ::Memory::Write32(threadPtr + 0x1B0u, 0x00050005u);
-            ::Memory::Write32(threadPtr + 0x1B4u, 0x00060006u);
-            ::Memory::Write32(threadPtr + 0x1B8u, 0x00070007u);
-
-        }
-
         ::Memory::Write32(threadPtr + 0x84u, 0x803BC198u); // LR = OSExitThread
         ::Memory::Write32(threadPtr + 0x0Cu, entryArg);    // r3 = argument
 
@@ -527,37 +505,7 @@ extern "C" void OSJoinThread_HLE_803BC454(CpuContext* ctx)
 }
 PPC_NATIVE_OVERRIDE_VOID(803BC454, OSJoinThread_HLE_803BC454, (CpuContext* ctx), (ctx));
 
-extern "C" void OSDetachThread_HLE_801aa4ec(CpuContext* ctx)
-{
-    CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
-    const uint32_t threadPtr = cpu->gpr[3];
-    if (threadPtr == 0) {
-        return;
-    }
-
-    const int32_t irqState = OS__DisableInterrupts_803B8F34();
-
-    try {
-        const uint16_t attributes = ::Memory::Read16(threadPtr + kThreadAttrOffset);
-        ::Memory::Write16(threadPtr + kThreadAttrOffset, attributes | 1u);
-
-        const uint16_t state = ::Memory::Read16(threadPtr + kThreadStateOffset);
-        if (state == kThreadStateMoribund) {
-            RemoveThreadFromList(threadPtr);
-            ::Memory::Write16(threadPtr + kThreadStateOffset, 0);
-            MarkFiberThreadTerminated(threadPtr, 0);
-        }
-
-        WakeThreadJoiners(cpu, threadPtr);
-    } catch (const ::Memory::AccessViolation& e) {
-        LogMemoryError(RT_TAG_OS, "OSDetachThread", e);
-    }
-
-    OS__RestoreInterrupts_803B8F5C(irqState);
-}
-// MSC-UNMAPPED(OS::DetachThread) PPC_NATIVE_OVERRIDE_VOID(801AA4EC, OSDetachThread_HLE_801aa4ec, (CpuContext* ctx), (ctx));
-
-extern "C" void OSSuspendThread_HLE_801aa6a8(CpuContext* ctx)
+extern "C" void OSSuspendThread_HLE(CpuContext* ctx)
 {
     CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
     const uint32_t threadPtr = cpu->gpr[3];
@@ -611,7 +559,6 @@ extern "C" void OSSuspendThread_HLE_801aa6a8(CpuContext* ctx)
 
     OS__RestoreInterrupts_803B8F5C(irqState);
 }
-PPC_NATIVE_OVERRIDE_VOID(801AA6A8, OSSuspendThread_HLE_801aa6a8, (CpuContext* ctx), (ctx));
 
 // OSResumeThread (0x803BC594)
 // Resumes a suspended thread, making it eligible for scheduling.

@@ -460,8 +460,6 @@ extern "C" int32_t NANDSafeOpen_HLE(uint32_t pathPtr, uint32_t fileInfoPtr, uint
     if (mode == 1) {
         // Read-only safe open reads the original in place; the library builds no scratch
         // copy for this case.
-        if (const auto result = NandCheckSystemSaveRead("NANDSafeOpen", hostPath, mode))
-            return *result;
         FILE* file = NandFopen(hostPath, "rb");
         if (!file && IsFaceLibResourcePath(path) && SeedFaceLibResource(hostPath)) {
             file = NandFopen(hostPath, "rb");
@@ -529,9 +527,6 @@ extern "C" int32_t NANDSafeOpen_HLE(uint32_t pathPtr, uint32_t fileInfoPtr, uint
     Memory::Write8(fileInfoPtr + 0x8a, NAND_OPEN_FLAG_SAFE_OPEN);
     return NAND_RESULT_OK;
 }
-// MSC-UNMAPPED(NAND::SafeOpen) PPC_NATIVE_OVERRIDE(8019CB74, NANDSafeOpen_HLE, int32_t,
-// MSC-UNMAPPED(NAND::SafeOpen)     (uint32_t pathPtr, uint32_t fileInfoPtr, uint32_t mode, uint32_t tempBufferPtr, uint32_t tempBufferSize),
-// MSC-UNMAPPED(NAND::SafeOpen)     (pathPtr, fileInfoPtr, mode, tempBufferPtr, tempBufferSize));
 
 extern "C" int32_t NANDSafeClose_HLE(uint32_t fileInfoPtr) {
     if (!fileInfoPtr) {
@@ -569,4 +564,3 @@ extern "C" int32_t NANDSafeClose_HLE(uint32_t fileInfoPtr) {
                                                           : NAND_OPEN_FLAG_SAFE_CLOSED_ASYNC);
     return NAND_RESULT_OK;
 }
-// MSC-UNMAPPED(NAND::SafeClose) PPC_NATIVE_OVERRIDE(8019CF28, NANDSafeClose_HLE, int32_t, (uint32_t fileInfoPtr), (fileInfoPtr));

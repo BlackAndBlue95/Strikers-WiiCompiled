@@ -54,7 +54,6 @@ constexpr int kMaxSslSessions = 4;
 struct SslSession {
     bool active = false;
     bool handshaked = false;
-    bool plaintextWfc = false;
     uint32_t socketFd = UINT32_MAX;
     NativeSocket native = kInvalidSocket;
     std::string hostname;
@@ -84,33 +83,6 @@ static std::array<SslSession, kMaxSslSessions> g_sslSessions;
 
 // Logging wrapper around the platform handshake implementation; see below.
 static int32_t SslHandshake(SslSession& ssl);
-
-static bool IsRetroNasSslHost(std::string_view hostname) {
-    if (!RetroRewindProfileActive()) {
-        return false;
-    }
-    const std::string lowered = Lower(hostname);
-    return StartsWith(lowered, "nas.") || StartsWith(lowered, "naswii.");
-}
-
-static bool IsRetroPlaintextSslHost(std::string_view hostname) {
-    if (IsRetroNasSslHost(hostname)) {
-        return true;
-    }
-    if (!RetroRewindProfileActive()) {
-        return false;
-    }
-
-    const std::string lowered = Lower(hostname);
-    return StartsWith(lowered, "sake.gs.") ||
-           lowered.find(".sake.gs.") != std::string::npos ||
-           StartsWith(lowered, "gamestats.gs.") ||
-           lowered.find(".gamestats.gs.") != std::string::npos ||
-           StartsWith(lowered, "gamestats2.gs.") ||
-           lowered.find(".gamestats2.gs.") != std::string::npos ||
-           StartsWith(lowered, "race.gs.") ||
-           lowered.find(".race.gs.") != std::string::npos;
-}
 
 static std::optional<size_t> ParseHttpContentLength(std::string_view headers) {
     std::optional<size_t> parsedLength;
@@ -146,8 +118,8 @@ static std::optional<size_t> ParseHttpContentLength(std::string_view headers) {
     return parsedLength;
 }
 
-// The Retro-WFC server rejects a NAS "POST /ac" auth body split across TCP
-// segments, so buffer guest chunks until Content-Length is satisfied, then
+// Some WFC replacement servers reject a NAS "POST /ac" auth body split across
+// TCP segments, so buffer guest chunks until Content-Length is satisfied, then
 // flush as one write. Flush at 16 KiB if it never terminates, and immediately
 // if Content-Length can't be parsed.
 static NasSslWriteAction AccumulateNasRequest(std::vector<uint8_t>& buffer, const uint8_t* data,
@@ -190,9 +162,8 @@ static bool StartsNasAuthRequest(const uint8_t* data, uint32_t size) {
     return size >= 9 && std::memcmp(data, "POST /ac ", 9) == 0;
 }
 
-// SSL route: the session carries the hostname the guest asked for, so the NAS
-// host is identified by name. Deliberately not IsRetroNasSslHost - the SSL write
-// path re-assembles NAS auth regardless of which profile is active.
+// The session carries the hostname the guest asked for, so the NAS host is
+// identified by name.
 static NasSslWriteAction PrepareNasSslWrite(SslSession& ssl, const uint8_t* data, uint32_t size,
                                             std::vector<uint8_t>& patched) {
     if (!data || size == 0) {
@@ -204,19 +175,6 @@ static NasSslWriteAction PrepareNasSslWrite(SslSession& ssl, const uint8_t* data
         return NasSslWriteAction::PassThrough;
     }
     return AccumulateNasRequest(ssl.nasWriteBuffer, data, size, patched);
-}
-
-// Plain-TCP route: a rerouted 443->80 NAS connection has no hostname on the
-// socket, so the peer port and the stream type are what identify it.
-NasSslWriteAction PreparePlainNasTcpWrite(WiiSocket& socket, const uint8_t* data, uint32_t size,
-                                                 std::vector<uint8_t>& patched) {
-    if (!data || size == 0 || socket.type != SOCK_STREAM || socket.peerPort != 80) {
-        return NasSslWriteAction::PassThrough;
-    }
-    if (!StartsNasAuthRequest(data, size) && socket.nasWriteBuffer.empty()) {
-        return NasSslWriteAction::PassThrough;
-    }
-    return AccumulateNasRequest(socket.nasWriteBuffer, data, size, patched);
 }
 
 static bool WriteSslReturn(const std::vector<IoVector>& in, int32_t value) {
@@ -311,11 +269,6 @@ static int32_t EnsureSslCredentials(SslSession& ssl) {
 }
 
 static int32_t SslHandshakeImpl(SslSession& ssl) {
-    if (ssl.plaintextWfc) {
-        ssl.handshaked = true;
-        return SSL_OK;
-    }
-
     // Schannel can authenticate a certificate chain without authenticating a
     // server identity when no target name is supplied. Refuse that ambiguous
     // mode rather than accepting a certificate for an unrelated endpoint.
@@ -434,10 +387,6 @@ static int32_t SslWrite(SslSession& ssl, const uint8_t* data, uint32_t size) {
         return handshakeRet;
     }
 
-    if (ssl.plaintextWfc) {
-        return SendAll(ssl.native, data, size) ? static_cast<int32_t>(size) : SSL_ERR_SYSCALL;
-    }
-
     uint32_t total = 0;
     while (total < size) {
         const uint32_t chunk = std::min<uint32_t>(size - total, ssl.sizes.cbMaximumMessage);
@@ -483,17 +432,6 @@ static int32_t SslRead(SslSession& ssl, uint8_t* out, uint32_t size) {
     const int32_t handshakeRet = SslHandshake(ssl);
     if (handshakeRet != SSL_OK) {
         return handshakeRet;
-    }
-
-    if (ssl.plaintextWfc) {
-        const int ret = recv(ssl.native, reinterpret_cast<char*>(out), static_cast<int>(size), 0);
-        if (ret == 0) {
-            return SSL_ERR_ZERO;
-        }
-        if (ret < 0) {
-            return SSL_ERR_RAGAIN;
-        }
-        return ret;
     }
 
     while (ssl.decrypted.empty()) {
@@ -720,10 +658,6 @@ static void ClearSslSession(SslSession& ssl) {
 }
 
 static int32_t SslHandshakeImpl(SslSession& ssl) {
-    if (ssl.plaintextWfc) {
-        ssl.handshaked = true;
-        return SSL_OK;
-    }
     if (ssl.handshaked) {
         return SSL_OK;
     }
@@ -770,18 +704,6 @@ static int32_t SslWrite(SslSession& ssl, const uint8_t* data, uint32_t size) {
         return handshakeRet;
     }
 
-    if (ssl.plaintextWfc) {
-        uint32_t total = 0;
-        while (total < size) {
-            const ssize_t sent = SendSslSocket(ssl.native, data + total, size - total);
-            if (sent <= 0) {
-                return SSL_ERR_SYSCALL;
-            }
-            total += static_cast<uint32_t>(sent);
-        }
-        return static_cast<int32_t>(total);
-    }
-
     // mbed TLS is allowed to write fewer bytes than requested in one call (e.g. when size exceeds
     // one TLS record) - the caller must resend the remainder starting from where it left off, so
     // loop here until every byte is actually written rather than returning the first partial count.
@@ -812,17 +734,6 @@ static int32_t SslRead(SslSession& ssl, uint8_t* out, uint32_t size) {
     const int32_t handshakeRet = SslHandshake(ssl);
     if (handshakeRet != SSL_OK) {
         return handshakeRet;
-    }
-
-    if (ssl.plaintextWfc) {
-        const ssize_t ret = recv(ssl.native, out, size, 0);
-        if (ret == 0) {
-            return SSL_ERR_ZERO;
-        }
-        if (ret < 0) {
-            return SSL_ERR_RAGAIN;
-        }
-        return static_cast<int32_t>(ret);
     }
 
     const int ret = mbedtls_ssl_read(&ssl.sslContext, out, size);
@@ -905,20 +816,8 @@ int32_t HandleSslIoctlv(uint32_t cmd, const std::vector<IoVector>& in, const std
         SslSession& ssl = g_sslSessions[sslId];
         ssl.socketFd = socketFd;
         ssl.native = socket->native;
-        ssl.plaintextWfc = false;
         socket->nonblocking = false;
         SetNonBlocking(socket->native, false);
-        if (IsRetroPlaintextSslHost(ssl.hostname) && socket->peerPort == 443) {
-            const int32_t reroute = ReconnectWiiSocket(*socket, 80);
-            if (reroute != 0) {
-                WriteSslReturn(in, SSL_ERR_SYSCALL);
-                NetFail("SSL_CONNECT host=%s 443->80 plaintext reroute FAILED wii=%d",
-                        ssl.hostname.c_str(), reroute);
-                return 0;
-            }
-            ssl.native = socket->native;
-            ssl.plaintextWfc = true;
-        }
 #ifdef _WIN32
         const int timeoutMs = 15000;
         setsockopt(socket->native, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));

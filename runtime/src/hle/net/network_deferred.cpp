@@ -241,8 +241,7 @@ static DeferredDnsCompletion ResolveDeferredDns(DeferredDnsWork work) {
         if (nativeResults) {
             freeaddrinfo(nativeResults);
         }
-        // The name the guest asked for is what proves whether the Retro-WFC
-        // payload's own resolver hooks rewrote the Nintendo hostname or not.
+        // Report the name the guest asked for.
         NetFail("dns %s '%s'%s%s FAILED gai=%d result=%d",
                 DeferredDnsKindName(completion.work.kind), completion.work.node.c_str(),
                 completion.work.service.empty() ? "" : " service=",

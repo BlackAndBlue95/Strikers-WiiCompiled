@@ -10,7 +10,6 @@ void InitializeRuntimeSettings() noexcept;
 void HandleEvents(const AuroraEvent* events) noexcept;
 void Draw() noexcept;
 bool StartupScreenVisible() noexcept;
-void NotifyStrapInputAccepted() noexcept;
 void AdvancePresentedFrame() noexcept;
 // Put host controllers back to a neutral state before the process ends.
 void ReleaseControllers() noexcept;

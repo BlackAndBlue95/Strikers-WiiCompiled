@@ -169,20 +169,6 @@ extern "C" void DCZeroRange_HLE_803B4E54(CpuContext* ctx)
     }
 }
 
-extern "C" void LCLoadBlocks_HLE_801a1894(CpuContext* ctx)
-{
-    const uint32_t dstAddr = static_cast<uint32_t>(ctx->gpr[3]);
-    const uint32_t srcAddr = static_cast<uint32_t>(ctx->gpr[4]);
-    const uint32_t blocks = DecodeLcBlockCount(static_cast<uint32_t>(ctx->gpr[5]));
-    const uint32_t len = blocks * kCacheOpLineSize;
-    if (CopyGuestRange(dstAddr, srcAddr, len, "LCLoadBlocks")) {
-        // RAM->LC loads are DMA reads on console, but the destination range is
-        // still a guest RAM alias as far as the runtime is concerned; notify it
-        // the same way LCStoreBlocks below does.
-        GxNotifyGuestRamDmaWrite(dstAddr, len);
-    }
-}
-
 extern "C" void LCStoreBlocks_HLE_803B5004(CpuContext* ctx)
 {
     const uint32_t dstAddr = static_cast<uint32_t>(ctx->gpr[3]);
@@ -209,12 +195,6 @@ extern "C" uint32_t LCStoreData_HLE_803B5028(CpuContext* ctx)
     return pagesQueued;
 }
 
-extern "C" uint32_t LCQueueLength_HLE_801a197c(CpuContext*)
-{
-    // We execute LC transfers synchronously, so the DMA queue is always drained.
-    return 0;
-}
-
 extern "C" void LCQueueWait_HLE_803B50C8(CpuContext*)
 {
     // Synchronous HLE copy completes immediately.
@@ -228,9 +208,7 @@ PPC_NATIVE_OVERRIDE_VOID(803B4EC4, Cache_Maintenance_Stub, (), ()); // ICEnable
 PPC_NATIVE_OVERRIDE_VOID(803B4ED8, Cache_Maintenance_Stub, (), ()); // __LCEnable
 PPC_NATIVE_OVERRIDE_VOID(803B4FA4, Cache_Maintenance_Stub, (), ()); // LCEnable
 PPC_NATIVE_OVERRIDE_VOID(803B4FDC, Cache_Maintenance_Stub, (), ()); // LCDisable
-// MSC-UNMAPPED(LCLoadBlocks) PPC_NATIVE_OVERRIDE_VOID(801a1894, LCLoadBlocks_HLE_801a1894, (CpuContext* ctx), (ctx)); // LCLoadBlocks
 PPC_NATIVE_OVERRIDE_VOID(803B5004, LCStoreBlocks_HLE_803B5004, (CpuContext* ctx), (ctx)); // LCStoreBlocks
 PPC_NATIVE_OVERRIDE(803B5028, LCStoreData_HLE_803B5028, uint32_t, (CpuContext* ctx), (ctx)); // LCStoreData
-// MSC-UNMAPPED(LCQueueLength) PPC_NATIVE_OVERRIDE(801a197c, LCQueueLength_HLE_801a197c, uint32_t, (CpuContext* ctx), (ctx)); // LCQueueLength
 PPC_NATIVE_OVERRIDE_VOID(803B50C8, LCQueueWait_HLE_803B50C8, (CpuContext* ctx), (ctx)); // LCQueueWait
 PPC_NATIVE_OVERRIDE_VOID(803B5224, Cache_Maintenance_Stub, (), ()); // OS____CacheInit

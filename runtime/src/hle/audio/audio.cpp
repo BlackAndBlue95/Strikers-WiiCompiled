@@ -4,7 +4,6 @@
 #include "ppc_runtime.h"
 #include "audio_backend.h"
 #include "ax_dsp.h"
-#include "music_attenuation.h"
 #include "runtime_log.h"
 
 #include <algorithm>
@@ -150,12 +149,6 @@ extern "C" void OSStopAudioSystem_803B4C90()
 
 PPC_NATIVE_OVERRIDE_VOID(803B4C90, OSStopAudioSystem_803B4C90, (), ());
 
-
-
-// Do NOT stub Audio__Manager__Init_80717150 / Audio__Manager__InitSelf_8071724c: they must
-// run translated to init AudioHandleHolder::sInstance, or createSceneSoundManager NULL-vtable crashes.
-
-
 extern "C" void AIInit_8038E278(uint32_t callback_stack_switch)
 {
     const uint32_t rate = kDefaultSampleRate;
@@ -296,13 +289,6 @@ extern "C" uint32_t AIGetDMAStartAddr_8038E244()
 }
 PPC_NATIVE_OVERRIDE(8038E244, AIGetDMAStartAddr_8038E244, uint32_t, (), ());
 
-extern "C" uint32_t AIGetDMALength_80124084()
-{
-    std::lock_guard<std::mutex> lock(g_ai.mutex);
-    return g_ai.length;
-}
-// MSC-UNMAPPED(AIGetDMALength) PPC_NATIVE_OVERRIDE(80124084, AIGetDMALength_80124084, uint32_t, (), ());
-
 extern "C" uint32_t AIGetDSPSampleRate_8038E264()
 {
     std::lock_guard<std::mutex> lock(g_ai.mutex);
@@ -316,14 +302,6 @@ extern "C" void DSPSendMailToDSP_80395C70(uint32_t mail)
     AxDspHle::SendMailToDSP(mail);
 }
 PPC_NATIVE_OVERRIDE_VOID(80395C70, DSPSendMailToDSP_80395C70, (uint32_t mail), (mail));
-
-extern "C" void SoundPlayerSetVolume_800a35e0(uint32_t soundPlayer, float volume)
-{
-    MusicAttenuation::SetSoundPlayerVolume(soundPlayer, volume);
-}
-
-// MSC-UNMAPPED(nw4r::snd::SoundPlayer::SetVolume) PPC_NATIVE_OVERRIDE_VOID(800A35E0, SoundPlayerSetVolume_800a35e0,
-// MSC-UNMAPPED(nw4r::snd::SoundPlayer::SetVolume)               (uint32_t soundPlayer, float volume), (soundPlayer, volume));
 
 extern "C" uint32_t DSPCheckMailToDSP_80395C3C()
 {
@@ -516,7 +494,6 @@ int64_t ConsumeAudioPollDeltaMicros()
 
 void Audio_HLE_Poll(CpuContext* ctx)
 {
-    MusicAttenuation::TickGuest();
     Audio_HLE_Tick(ctx, static_cast<uint32_t>(ConsumeAudioPollDeltaMicros()));
 }
 

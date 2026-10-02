@@ -1,5 +1,5 @@
-// NAND/ISFS HLE: redirects Wii NAND paths (e.g. /title/00010004/524d4350/data/rksys.dat) to
-// <nand_root>\title\00010004\524d4350\data\rksys.dat on the host.
+// NAND/ISFS HLE: maps Wii NAND paths (e.g. /title/00010000/52345145/data/...) to the same path
+// under the NAND root on the host.
 
 #include "nand_internal.h"
 
@@ -77,14 +77,14 @@ void CloseFd(int32_t fd) {
 // Path Translation
 // ============================================================================
 
-uint32_t CurrentMkwTitleIdLo() {
+uint32_t CurrentTitleIdLo() {
     return RuntimeHle::CurrentGameCode(kNandTitleIdLo);
 }
 
 std::string CurrentNandDataDir() {
     char path[64];
     std::snprintf(path, sizeof(path), "/title/%08x/%08x/data",
-                  kNandTitleIdHi, CurrentMkwTitleIdLo());
+                  kNandTitleIdHi, CurrentTitleIdLo());
     return path;
 }
 
@@ -198,9 +198,8 @@ static RiivolutionSaveRedirect g_riivolutionSaveRedirect;
 
 static const RiivolutionSaveRedirect& GetRiivolutionSaveRedirect() {
     // The active pack's <savegame> patch, resolved against the virtual SD root
-    // exactly like Dolphin resolves it for Riivolution launches. This keeps
-    // the recomp's save in the same folder a Dolphin/WheelWizard launch of the
-    // pack uses (e.g. .../Riivolution/WheelWizard/riivolution/save/RetroWFC/RMCP).
+    // exactly like Dolphin resolves it for Riivolution launches, so the port and
+    // a Dolphin launch of the pack share one save folder.
     std::call_once(g_riivolutionSaveRedirectOnce, []() {
         const auto& redirect = RuntimeRiivolution::GetSaveRedirect();
         if (!redirect) {
@@ -409,26 +408,6 @@ bool SeedFaceLibResource(const std::filesystem::path& hostPath) {
 
 bool IsFaceLibResourcePath(const char* path) {
     return std::strcmp(path, "/shared2/menu/FaceLib/RFL_Res.dat") == 0;
-}
-
-std::optional<int32_t> NandCheckSystemSaveRead(const char* who,
-    const std::filesystem::path& hostPath, int mode, bool ios) {
-    const auto action = RuntimeNandSave::CheckRead(hostPath, mode);
-    if (action == RuntimeNandSave::ReadAction::Proceed) return std::nullopt;
-    if (action == RuntimeNandSave::ReadAction::Missing) {
-        LogNandWarning(who, "treating empty or zero-filled system save '%s' as missing",
-                       HostPathText(hostPath).c_str());
-        return ios ? ISFS_ENOENT : NAND_RESULT_NOEXISTS;
-    }
-    if (action == RuntimeNandSave::ReadAction::RecoveryNeeded) {
-        LogNandError(who, "system save '%s' is missing or blank but its .nandsafe.tmp contains data; "
-                         "back up both files before attempting recovery",
-                     HostPathText(hostPath).c_str());
-    } else {
-        LogNandError(who, "could not inspect system save '%s' or its write shadow; leaving data untouched",
-                     HostPathText(hostPath).c_str());
-    }
-    return ios ? ISFS_EIO : NAND_RESULT_UNKNOWN;
 }
 
 // Create directories recursively

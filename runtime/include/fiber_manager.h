@@ -104,11 +104,6 @@ private:
 #else
     static void FiberProc(void* param);
 #endif
-    // Switch from whichever fiber is currently active straight to the scheduler fiber, without
-    // the SwitchToThread bookkeeping (CPU context save/restore, s_currentGuestThread). Used for
-    // in-fiber yields that aren't a real guest thread switch: waiting out the EGG::Thread::start
-    // deferral loop, and returning control on natural thread exit.
-    static void SwitchToScheduler();
 
     // Internal state
     static std::mutex s_mutex;

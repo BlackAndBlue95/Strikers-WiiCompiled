@@ -4,8 +4,6 @@
 #include "controller_button_names.h"
 #include "controller_mapping_wizard.h"
 #include "input_bindings.h"
-#include "game_graphics_options.h"
-#include "music_attenuation.h"
 #include "mods/mod_plugins.h"
 #include "mods/mod_registry.h"
 #include "runtime_config.h"
@@ -44,8 +42,6 @@
 #endif
 
 #include <dolphin/pad.h>
-
-extern "C" void PAD_HLE_SetRumbleEnabled(bool enabled);
 #include <dolphin/vi.h>
 #include <aurora/aurora.h>
 #include <aurora/gfx.h>
@@ -81,29 +77,12 @@ const char* GraphicsApiDisplayName() {
 
 bool g_topBarVisible = false;
 bool g_exitPromptOpen = false;
-bool g_rumbleEnabled = RuntimeConfigFile::RumbleEnabled(true);
 int g_controllerPort = 0;
 float g_resolutionScale = RuntimeConfigFile::ResolutionMultiplier(1.0f);
 int g_audioVolumePercent = static_cast<int>(std::lround(RuntimeConfigFile::AudioVolume(1.0f) * 100.0f));
-int g_musicVolumePercent = static_cast<int>(std::lround(RuntimeConfigFile::MusicVolume(1.0f) * 100.0f));
-int g_soundEffectsVolumePercent =
-    static_cast<int>(std::lround(RuntimeConfigFile::SoundEffectsVolume(1.0f) * 100.0f));
-int g_uiVolumePercent = static_cast<int>(std::lround(RuntimeConfigFile::UiVolume(1.0f) * 100.0f));
-int g_voicesVolumePercent = static_cast<int>(std::lround(RuntimeConfigFile::VoicesVolume(1.0f) * 100.0f));
 bool g_audioMuted = RuntimeConfigFile::AudioMuted(false);
 int32_t g_muteHotkey = RuntimeConfigFile::MuteHotkey(SDL_SCANCODE_BACKSLASH);
 bool g_audioMixWorker = RuntimeConfigFile::AudioMixWorkerEnabled(true);
-bool g_attenuateMusicWhenMediaPlays = RuntimeConfigFile::AttenuateMusicWhenMediaPlays(false);
-int g_frameInterpolationMode = [] {
-    switch (RuntimeConfigFile::FrameInterpolationFps(0)) {
-    case 120:
-        return 1;
-    case 180:
-        return 2;
-    default:
-        return 0;
-    }
-}();
 int g_displayMode = [] {
     const std::string mode = RuntimeConfigFile::DisplayMode("windowed");
     if (mode == "borderless") {
@@ -119,7 +98,6 @@ bool g_disableCopyFilter = RuntimeConfigFile::DisableCopyFilter(true);
 bool g_scaledEfbCopy = RuntimeConfigFile::ScaledEfbCopy(true);
 bool g_showFps = RuntimeConfigFile::ShowFps(true);
 bool g_forceAspect169 = RuntimeConfigFile::ForceAspect169Enabled();
-uint32_t g_disabledPostProcessingPaths = RuntimeConfigFile::DisabledPostProcessingPaths(0);
 std::array<int32_t, PAD_MAX_CONTROLLERS> g_configuredControllerIndices = [] {
     std::array<int32_t, PAD_MAX_CONTROLLERS> indices{};
     indices.fill(std::numeric_limits<int32_t>::min());
@@ -182,26 +160,10 @@ constexpr std::array<ResolutionItem, 8> kResolutions = {{
     {"3x", 3.0f}, {"4x", 4.0f}, {"6x", 6.0f}, {"8x", 8.0f},
 }};
 
-constexpr std::array<uint32_t, 3> kFrameInterpolationTargetFps{0, 120, 180};
-
-bool IsHighResolutionScale(float scale) {
-    return std::fabs(scale - 6.0f) < 0.001f || std::fabs(scale - 8.0f) < 0.001f;
-}
-
-bool IsHighFrameRateMode() {
-    return kFrameInterpolationTargetFps[static_cast<size_t>(g_frameInterpolationMode)] > 60;
-}
-
 void SetResolutionScale(float scale) {
     g_resolutionScale = scale;
     VISetFrameBufferScale(scale);
     RuntimeConfigFile::SetResolutionMultiplier(scale);
-}
-
-void LimitResolutionForFrameRate() {
-    if (IsHighFrameRateMode() && IsHighResolutionScale(g_resolutionScale)) {
-        SetResolutionScale(4.0f);
-    }
 }
 
 using ControllerNames::FindNativeButton;
@@ -313,7 +275,7 @@ void DrawWiiRemoteAccelerometer(uint32_t port) {
     float kpad[3] = {};
     if (WiiRemoteInput::ReadAccelDebug(port, sdlG, kpad)) {
         ImGui::Text("KPAD acc: x %+.2f  y %+.2f  z %+.2f g", kpad[0], kpad[1], kpad[2]);
-        ImGui::TextDisabled("Flat, buttons up: (0, -1, 0). Sideways as a wheel: (1, 0, 0); z follows the turn.");
+        ImGui::TextDisabled("Flat, buttons up: (0, -1, 0).");
     } else {
         ImGui::TextDisabled("No accelerometer data yet.");
     }
@@ -327,7 +289,8 @@ void DrawWiiRemoteAccelerometer(uint32_t port) {
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Put the remote down on a flat surface with the buttons facing up and do not touch it\n"
-                          "for about two seconds. Corrects the steering offset of a remote held sideways.");
+                          "for about two seconds. Corrects the tilt bias SDL leaves when it can't read the remote's\n"
+                          "own calibration.");
     }
     ImGui::SameLine();
     ImGui::BeginDisabled(!RuntimeConfigFile::HasWiiAccelOffset() || WiiRemoteInput::IsAccelCalibrating());
@@ -791,25 +754,6 @@ void DrawExpressionSettings() {
     }
 }
 
-void DrawRumbleSettings() {
-    ImGui::SeparatorText("Vibration");
-    if (ImGui::Checkbox("Controller vibration", &g_rumbleEnabled)) {
-        PAD_HLE_SetRumbleEnabled(g_rumbleEnabled);
-        RuntimeConfigFile::SetRumbleEnabled(g_rumbleEnabled);
-        if (!g_rumbleEnabled) {
-            // Stop whatever is already running: the game will not send another
-            // motor command until its own state machine decides to.
-            constexpr std::array<uint32_t, PAD_MAX_CONTROLLERS> stopAll{
-                PAD_MOTOR_STOP_HARD, PAD_MOTOR_STOP_HARD, PAD_MOTOR_STOP_HARD, PAD_MOTOR_STOP_HARD,
-            };
-            PADControlAllMotors(stopAll.data());
-        }
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Applies to every port.");
-    }
-}
-
 void DrawControllerSettings() {
     for (int port = 0; port < PAD_MAX_CONTROLLERS; ++port) {
         const std::string label = "Port " + std::to_string(port + 1);
@@ -865,7 +809,6 @@ void DrawControllerSettings() {
         ImGui::SeparatorText("Button mapping");
         ImGui::TextDisabled("GameCube controller: its buttons are the game's own, so no mapping is needed.");
         DrawExpressionSettings();
-        DrawRumbleSettings();
         return;
     }
 
@@ -1024,7 +967,6 @@ void DrawControllerSettings() {
         ImGui::PopID();
     }
     DrawExpressionSettings();
-    DrawRumbleSettings();
 }
 
 void DrawAudioSettings() {
@@ -1033,26 +975,6 @@ void DrawAudioSettings() {
         const float volume = static_cast<float>(g_audioVolumePercent) / 100.0f;
         AudioBackend::Instance().SetMasterVolume(volume);
         RuntimeConfigFile::SetAudioVolume(volume);
-    }
-    if (ImGui::SliderInt("Music", &g_musicVolumePercent, 0, 100, "%d%%")) {
-        const float volume = static_cast<float>(g_musicVolumePercent) / 100.0f;
-        MusicAttenuation::SetMusicVolume(volume);
-        RuntimeConfigFile::SetMusicVolume(volume);
-    }
-    if (ImGui::SliderInt("Sound Effects", &g_soundEffectsVolumePercent, 0, 100, "%d%%")) {
-        const float volume = static_cast<float>(g_soundEffectsVolumePercent) / 100.0f;
-        MusicAttenuation::SetSoundEffectsVolume(volume);
-        RuntimeConfigFile::SetSoundEffectsVolume(volume);
-    }
-    if (ImGui::SliderInt("UI", &g_uiVolumePercent, 0, 100, "%d%%")) {
-        const float volume = static_cast<float>(g_uiVolumePercent) / 100.0f;
-        MusicAttenuation::SetUiVolume(volume);
-        RuntimeConfigFile::SetUiVolume(volume);
-    }
-    if (ImGui::SliderInt("Voices", &g_voicesVolumePercent, 0, 100, "%d%%")) {
-        const float volume = static_cast<float>(g_voicesVolumePercent) / 100.0f;
-        MusicAttenuation::SetVoicesVolume(volume);
-        RuntimeConfigFile::SetVoicesVolume(volume);
     }
     const float labelColumn = ImGui::GetCursorPosX() + ImGui::CalcItemWidth();
     if (ImGui::Checkbox("Mute", &g_audioMuted)) {
@@ -1073,23 +995,6 @@ void DrawAudioSettings() {
         ImGui::SetTooltip(
             "Runs the AX/DSP voice mix off the game thread. Turn this off if you "
             "suspect an audio problem; the mix then runs inline as it used to.");
-    }
-    ImGui::Separator();
-    if (ImGui::Checkbox("Mute game music while external media is playing",
-                        &g_attenuateMusicWhenMediaPlays)) {
-        MusicAttenuation::SetEnabled(g_attenuateMusicWhenMediaPlays);
-        RuntimeConfigFile::SetAttenuateMusicWhenMediaPlays(g_attenuateMusicWhenMediaPlays);
-    }
-    if (g_attenuateMusicWhenMediaPlays) {
-        if (MusicAttenuation::IsExternalMediaPlaying()) {
-            ImGui::TextDisabled("External media is playing; game music is muted.");
-        } else if (!MusicAttenuation::IsMediaControlInitializationComplete()) {
-            ImGui::TextDisabled("Waiting for media controls...");
-        } else if (!MusicAttenuation::IsMediaControlAvailable()) {
-            ImGui::TextDisabled("Media controls are unavailable.");
-        } else {
-            ImGui::TextDisabled("No external media is currently playing.");
-        }
     }
 }
 
@@ -1254,32 +1159,10 @@ void DrawModSettings() {
 void DrawGraphicsSettings() {
     g_displayMode = static_cast<int>(aurora_get_display_mode());
     if (ImGui::Checkbox("Force 16:9", &g_forceAspect169)) {
-        SetMkwForceAspect169(g_forceAspect169);
+        SetDynamicAspectForce169(g_forceAspect169);
         RuntimeConfigFile::SetForceAspect169(g_forceAspect169);
     }
     ImGui::TextDisabled("Keep a 16:9 image with black bars when the window has another shape.");
-    ImGui::Separator();
-    struct EffectFlag {
-        const char* label;
-        uint32_t flag;
-    };
-    static constexpr std::array<EffectFlag, 1> kEffectFlags = {{
-        {"Disable bloom", 0x10u},
-    }};
-
-    for (const auto& effect : kEffectFlags) {
-        bool disabled = (g_disabledPostProcessingPaths & effect.flag) != 0;
-        if (ImGui::Checkbox(effect.label, &disabled)) {
-            if (disabled) {
-                g_disabledPostProcessingPaths |= effect.flag;
-            } else {
-                g_disabledPostProcessingPaths &= ~effect.flag;
-            }
-            RuntimeGameGraphicsOptions::SetDisabledPostProcessingPaths(g_disabledPostProcessingPaths);
-            RuntimeConfigFile::SetDisabledPostProcessingPaths(g_disabledPostProcessingPaths);
-        }
-    }
-    ImGui::TextDisabled("Applied when the next scene renderer is created.");
     ImGui::Separator();
     static constexpr const char* kDisplayModes[] = {
         "Windowed",
@@ -1298,11 +1181,10 @@ void DrawGraphicsSettings() {
     }
     if (g_displayMode == AURORA_DISPLAY_MODE_EXCLUSIVE) {
         ImGui::TextDisabled(
-            "Requests the closest native-resolution display mode to the output frame "
-            "rate (60 Hz, or the frame interpolation target).");
+            "Requests the closest native-resolution display mode to the frame rate.");
     }
     // Native frame rate: the game renders every frame itself (its simulation is time-based), so this is
-    // not interpolation. Mario Kart's race interpolation stays off for Strikers.
+    // not interpolation.
     {
         int frameRateMode = RuntimeConfigFile::FrameRate(60) >= 120 ? 1 : 0;
         constexpr std::array<const char*, 2> kFrameRates{"60 FPS", "120 FPS"};
@@ -1370,17 +1252,7 @@ void DrawFpsOverlay() {
         if (presentTiming.sampleCount == 0) {
             ImGui::TextUnformatted("FPS: --");
         } else {
-            // Present timing includes the additional frames produced by
-            // interpolation, so this remains the actual displayed FPS.
             ImGui::Text("FPS: %.1f", presentTiming.framesPerSecond);
-            // Replay-unsafe frames hold the presented cadence with duplicated
-            // slots, so the counter alone reads 180 while the motion on screen
-            // is 60 Hz. Surface the divergence instead of hiding it.
-            if (presentTiming.effectiveFramesPerSecond <
-                presentTiming.framesPerSecond * 0.95) {
-                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f), "Motion: %.1f",
-                                   presentTiming.effectiveFramesPerSecond);
-            }
         }
     }
     ImGui::End();
@@ -1517,11 +1389,7 @@ void DrawTopBar() {
     if (ImGui::BeginMenu(resolutionMenuLabel.c_str())) {
         for (const auto& resolution : kResolutions) {
             const bool selected = std::fabs(resolution.scale - g_resolutionScale) < 0.001f;
-            const bool disabled = IsHighFrameRateMode() && IsHighResolutionScale(resolution.scale);
-            ImGui::BeginDisabled(disabled);
-            const bool clicked = ImGui::MenuItem(resolution.label, nullptr, selected);
-            ImGui::EndDisabled();
-            if (clicked) {
+            if (ImGui::MenuItem(resolution.label, nullptr, selected)) {
                 SetResolutionScale(resolution.scale);
             }
         }
@@ -1634,21 +1502,11 @@ void ApplyInputBlockState() {
 } // namespace
 
 void InitializeRuntimeSettings() noexcept {
-    PAD_HLE_SetRumbleEnabled(g_rumbleEnabled);
     InputBindings::Reload();
     controller_mapping_wizard::LoadPersistedMappings();
     ApplyConfiguredMappings();
     AudioBackend::Instance().SetMasterVolume(static_cast<float>(g_audioVolumePercent) / 100.0f);
     AudioBackend::Instance().SetMuted(g_audioMuted);
-    MusicAttenuation::SetMusicVolume(static_cast<float>(g_musicVolumePercent) / 100.0f);
-    MusicAttenuation::SetSoundEffectsVolume(static_cast<float>(g_soundEffectsVolumePercent) / 100.0f);
-    MusicAttenuation::SetUiVolume(static_cast<float>(g_uiVolumePercent) / 100.0f);
-    MusicAttenuation::SetVoicesVolume(static_cast<float>(g_voicesVolumePercent) / 100.0f);
-    MusicAttenuation::SetEnabled(g_attenuateMusicWhenMediaPlays);
-    RuntimeGameGraphicsOptions::SetDisabledPostProcessingPaths(g_disabledPostProcessingPaths);
-    const uint32_t targetFps = kFrameInterpolationTargetFps[static_cast<size_t>(g_frameInterpolationMode)];
-    LimitResolutionForFrameRate();
-    aurora_set_frame_interpolation_fps(targetFps);
     aurora_set_display_mode(static_cast<AuroraDisplayMode>(g_displayMode));
     g_displayMode = static_cast<int>(aurora_get_display_mode());
     aurora_set_disable_copy_filter(g_disableCopyFilter);

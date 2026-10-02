@@ -2,7 +2,6 @@
 #include "memory.h"
 #include "ppc_runtime.h"
 #include "system_bridge.h"
-#include "game_graphics_options.h"
 #include "runtime_log.h"
 
 #include <array>
@@ -20,17 +19,9 @@
 
 inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx);
 
-// Some game-facing runtime options alter arguments at well-defined ABI
-// boundaries. Keep this independent of the dispatch mechanism: generated
-// static calls deliberately bypass InvokeDirectCpu for performance.
-// (used for the path mask filtering in ScnRenderer::createPath: depth of
-// field is always removed, bloom when the user disabled it)
-inline void ApplyRuntimeCallOptions(uint32_t target, CpuContext* ctx) {
-    if (false && target == 0x8023BD38u) { // MSC: MKW ScnRenderer only
-        // ScnRenderer::createPath receives the post-processing path mask in r4.
-        ctx->gpr[4] = RuntimeGameGraphicsOptions::FilterScnRendererPathMask(ctx->gpr[4]);
-    }
-}
+// The translator emits a call to this at every guest call boundary, so a runtime option could
+// rewrite a callee's arguments there. Nothing uses it now; it compiles away.
+inline void ApplyRuntimeCallOptions(uint32_t /*target*/, CpuContext* /*ctx*/) {}
 
 // Persistent per-thread CPU context used across translated function calls.
 CpuContext& GetPersistentCpuContext();
@@ -272,7 +263,7 @@ struct KnownTranslatedCpuCall {
 };
 
 // Translator-emitted trait specializations, one macro shared by every generated shard.
-// `addr` is the 8-digit hex entry point, `winner` the resolved symbol (mods/Retro Rewind can
+// `addr` is the 8-digit hex entry point, `winner` the resolved symbol (mods can
 // publish their own name). A specialization only exists for a single statically bound winner,
 // so overridable/dynamically-dispatchable are hardcoded here rather than passed in.
 #define MKW_TRANSLATED_TRAIT(addr, winner, nonvolatile_fpr_write_mask)                    \
@@ -544,7 +535,6 @@ template <uint32_t Target>
 inline void InvokeDirectCpu(CpuContext* ctx) {
     static_assert(Target != 0, "InvokeDirectCpu cannot target address 0");
     CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
-    ApplyRuntimeCallOptions(Target, cpu);
     if constexpr (KnownNativeCpuCall<Target>::kAvailable) {
         const auto invokeKnownNative = [&]() {
             PpcNonvolatileGprGuard gprGuard(cpu);
@@ -641,7 +631,6 @@ inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx) {
     if (target == 0) {
         ReportMissingCpuTarget(target, cpu);
     }
-    ApplyRuntimeCallOptions(target, cpu);
     if (TryDispatchRawCpuTarget(TranslatedFunctionRegistry::FindRawByAddressPtr(target), cpu)) {
         return;
     }

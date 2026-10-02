@@ -453,25 +453,12 @@ int32_t HandleIpTopIoctlv(uint32_t cmd, const std::vector<IoVector>& in, const s
             destLen = sizeof(dest);
         }
         const auto* data = Memory::GetPointer(in[0].address, in[0].size);
-        std::vector<uint8_t> patched;
-        const NasSslWriteAction nasAction = !destPtr
-            ? PreparePlainNasTcpWrite(*s, data, in[0].size, patched)
-            : NasSslWriteAction::PassThrough;
-        if (nasAction == NasSslWriteAction::Buffered) {
-            return static_cast<int32_t>(in[0].size);
-        }
-
-        const bool patchedWrite = nasAction == NasSslWriteAction::Ready;
-        const uint8_t* sendData = patchedWrite ? patched.data() : data;
-        const uint32_t sendSize = patchedWrite ? static_cast<uint32_t>(patched.size()) : in[0].size;
-        const int ret = sendto(s->native, reinterpret_cast<const char*>(sendData), static_cast<int>(sendSize),
+        const uint32_t sendSize = in[0].size;
+        const int ret = sendto(s->native, reinterpret_cast<const char*>(data), static_cast<int>(sendSize),
                                static_cast<int>(flags), destPtr, destLen);
         const int hostError = ret < 0 ? NativeLastError() : 0;
         // Diagnostics may change the native error; use the send result captured above.
-        int32_t result = ret >= 0 ? SocketResult(ret) : SocketErrorResult(hostError);
-        if (patchedWrite && ret == static_cast<int>(sendSize)) {
-            result = static_cast<int32_t>(in[0].size);
-        }
+        const int32_t result = ret >= 0 ? SocketResult(ret) : SocketErrorResult(hostError);
         // A blocked send is routine; anything else aborts the connection, and
         // the SDK retries it, so only a change of error is reported.
         if (ret < 0 && result != -SO_EAGAIN && result != s->lastLoggedSendError) {

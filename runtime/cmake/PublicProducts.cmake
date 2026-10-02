@@ -1,8 +1,5 @@
-﻿# Public WiiCompiled product graph.
-#
-# The translator owns the translated build graph. Mario Kart's profile-neutral
-# functions are compiled once into mkw_base_shared; only callers whose direct
-# ABI differs between profiles receive small base/RR variants.
+# The product: the native runtime plus the translated game code, whose shards the translator lists
+# in generated/build_shards/shards.cmake.
 
 set(DATA_INIT_FILE "${MKW_RUNTIME_SOURCE_DIR}/../generated/data_sections_init.cpp")
 set(DATA_INIT_BLOB_ASM "${MKW_RUNTIME_SOURCE_DIR}/../generated/data_sections_init_blobs.S")
@@ -55,8 +52,8 @@ endfunction()
 # Translated shard TUs are the memory-hungry compiles; everything else in the build is
 # comparatively small. A dedicated Ninja job pool caps how many of them run at once so the
 # global parallelism can use every core for the cheap TUs without the memory ceiling being a
-# guess. The pool depth is per-machine (derived from installed RAM by LocalBuild.ps1) and is
-# deliberately not part of the canonical flag set: it changes scheduling, never output bytes.
+# guess. The pool depth is per-machine (MKW_TRANSLATED_COMPILE_JOBS) and is deliberately not part
+# of the canonical flag set: it changes scheduling, never output bytes.
 if(MKW_TRANSLATED_COMPILE_JOBS GREATER 0)
     set_property(GLOBAL APPEND PROPERTY JOB_POOLS "mkw_translated=${MKW_TRANSLATED_COMPILE_JOBS}")
 endif()
@@ -92,20 +89,13 @@ target_compile_definitions(mkw_runtime_common PRIVATE
     _DISABLE_STRING_ANNOTATION _DISABLE_VECTOR_ANNOTATION)
 target_link_libraries(mkw_runtime_common PRIVATE
     aurora::gx aurora::pad aurora::si aurora::vi aurora::mtx)
-target_link_libraries(mkw_runtime_common PRIVATE mkw_platform mkw::pugixml mkw::toml11 mkw::cryptopp mkw::mbedtls)
+target_link_libraries(mkw_runtime_common PRIVATE mkw_platform mkw::pugixml mkw::toml11 mkw::mbedtls)
 if(MKW_PLATFORM_WINDOWS)
     target_link_libraries(mkw_runtime_common PRIVATE shell32 windowsapp)
 elseif(MKW_PLATFORM_LINUX)
-    # ${CMAKE_DL_LIBS} for music_attenuation.cpp's dlopen of libdbus-1 (MPRIS
-    # media monitoring). Empty string on glibc >= 2.34 where dl* is in libc.
+    # ${CMAKE_DL_LIBS} for the mod plugin loader's dlopen (mods/mod_plugins.cpp). Empty string on
+    # glibc >= 2.34 where dl* is in libc.
     target_link_libraries(mkw_runtime_common PRIVATE mkw::libco ${CMAKE_DL_LIBS})
-endif()
-if(MKW_CPPWINRT_INCLUDE_DIR)
-    if(NOT EXISTS "${MKW_CPPWINRT_INCLUDE_DIR}/winrt/base.h")
-        message(FATAL_ERROR
-            "MKW_CPPWINRT_INCLUDE_DIR does not contain winrt/base.h: ${MKW_CPPWINRT_INCLUDE_DIR}")
-    endif()
-    target_include_directories(mkw_runtime_common PRIVATE "${MKW_CPPWINRT_INCLUDE_DIR}")
 endif()
 
 # Keep runtime unity units small and semantically related. The old generated-TU
@@ -167,32 +157,6 @@ add_library(mkw_base_shared STATIC ${MKW_BASE_COMMON_SHARDS})
 mkw_configure_translated_target(mkw_base_shared)
 target_precompile_headers(mkw_base_shared PRIVATE "${MKW_RUNTIME_SOURCE_DIR}/include/mkw_pch.h")
 
-if(MKW_BASE_PORTABLE_SENSITIVE_SHARDS)
-    add_library(mkw_base_sensitive OBJECT ${MKW_BASE_PORTABLE_SENSITIVE_SHARDS})
-    mkw_configure_translated_target(mkw_base_sensitive)
-    target_precompile_headers(mkw_base_sensitive REUSE_FROM mkw_base_shared)
-endif()
-
-if(MKW_HAVE_RETRO_REWIND)
-    if(MKW_RETRO_PORTABLE_SENSITIVE_SHARDS)
-        add_library(mkw_retro_sensitive OBJECT ${MKW_RETRO_PORTABLE_SENSITIVE_SHARDS})
-        mkw_configure_translated_target(mkw_retro_sensitive)
-        target_precompile_headers(mkw_retro_sensitive REUSE_FROM mkw_base_shared)
-    endif()
-
-    set(MKW_RETRO_TRANSLATED_SOURCES ${MKW_RETRO_MOD_SHARDS} ${MKW_RETRO_EXTRA_SOURCES})
-    set(MKW_RETRO_BLOB_OBJECTS)
-    foreach(source IN LISTS MKW_RETRO_EXTRA_SOURCES)
-        if(source MATCHES "\\.S$")
-            enable_language(ASM)
-            set_source_files_properties("${source}" PROPERTIES LANGUAGE ASM SKIP_PRECOMPILE_HEADERS ON)
-        endif()
-    endforeach()
-    add_library(mkw_retro_rewind_functions OBJECT ${MKW_RETRO_TRANSLATED_SOURCES})
-    mkw_configure_translated_target(mkw_retro_rewind_functions)
-    target_precompile_headers(mkw_retro_rewind_functions REUSE_FROM mkw_base_shared)
-endif()
-
 function(mkw_configure_product target)
     target_sources(${target} PRIVATE $<TARGET_OBJECTS:mkw_runtime_common>)
     # Startup CPU check. Must stay a separate object library so it keeps the
@@ -215,7 +179,7 @@ function(mkw_configure_product target)
     # include the same fat translated headers; bound them by the same pool.
     mkw_bound_translated_compiles(${target})
     target_link_libraries(${target} PRIVATE
-        mkw_platform mkw_base_shared mkw::pugixml mkw::toml11 mkw::cryptopp mkw::mbedtls)
+        mkw_platform mkw_base_shared mkw::pugixml mkw::toml11 mkw::mbedtls)
 
     target_link_libraries(${target} PRIVATE
         aurora::gx aurora::pad aurora::si aurora::vi aurora::mtx)
@@ -243,7 +207,7 @@ function(mkw_configure_product target)
 
         set_target_properties(${target} PROPERTIES WIN32_EXECUTABLE TRUE)
     elseif(MKW_PLATFORM_LINUX)
-        # mkw_runtime_common is an OBJECT library: WiiCompiled/RetroRewind only pull in its .o
+        # mkw_runtime_common is an OBJECT library: the product only pulls in its .o
         # files via $<TARGET_OBJECTS:>, which does not propagate mkw_runtime_common's own
         # target_link_libraries (object libraries don't carry usage requirements to a consumer
         # that isn't itself linked against as a target). fiber_manager.cpp's co_* calls live in
@@ -291,18 +255,6 @@ function(mkw_configure_product target)
     add_custom_command(TARGET ${target} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${MKW_DSP_COEFFICIENT_ROM}" "$<TARGET_FILE_DIR:${target}>/dsp_coef.bin")
 
-    # Aurora imports this portable recipe database into each user's writable
-    # pipeline cache. Keep the upstream filename so its default resourcesPath
-    # lookup works without application-specific configuration.
-    set(MKW_INITIAL_PIPELINE_CACHE
-        "${MKW_RUNTIME_SOURCE_DIR}/assets/pipeline/initial_pipeline_cache.db")
-    if(NOT EXISTS "${MKW_INITIAL_PIPELINE_CACHE}")
-        message(FATAL_ERROR "Missing transferable Aurora pipeline cache: ${MKW_INITIAL_PIPELINE_CACHE}")
-    endif()
-    add_custom_command(TARGET ${target} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${MKW_INITIAL_PIPELINE_CACHE}"
-        "$<TARGET_FILE_DIR:${target}>/initial_pipeline_cache.db")
-
     # Non-Windows TLS (runtime/src/hle/net/network_ssl.cpp's mbed TLS path) needs a trusted root
     # CA bundle to verify server certificates against - Windows gets this for free from the OS via
     # Schannel, mbed TLS does not ship one itself. Not SHA256-pinned like the DSP ROM above: unlike
@@ -324,26 +276,7 @@ mkw_configure_product(WiiCompiled)
 set_target_properties(WiiCompiled PROPERTIES OUTPUT_NAME "Strikers-WiiCompiled")
 target_precompile_headers(WiiCompiled PRIVATE
     "${MKW_RUNTIME_SOURCE_DIR}/include/mkw_pch.h")
-if(TARGET mkw_base_sensitive)
-    target_sources(WiiCompiled PRIVATE $<TARGET_OBJECTS:mkw_base_sensitive>)
-endif()
-
-if(MKW_HAVE_RETRO_REWIND)
-    add_executable(RetroRewind "${MKW_RETRO_REWIND_PRODUCT_SOURCE}" ${MKW_RETRO_REGISTRATION_SOURCES})
-    mkw_configure_product(RetroRewind)
-    target_precompile_headers(RetroRewind REUSE_FROM WiiCompiled)
-    if(TARGET mkw_retro_sensitive)
-        target_sources(RetroRewind PRIVATE $<TARGET_OBJECTS:mkw_retro_sensitive>)
-    endif()
-    target_sources(RetroRewind PRIVATE $<TARGET_OBJECTS:mkw_retro_rewind_functions>)
-    if(MKW_RETRO_BLOB_OBJECTS)
-        target_sources(RetroRewind PRIVATE ${MKW_RETRO_BLOB_OBJECTS})
-    endif()
-    add_custom_target(mkw_release DEPENDS WiiCompiled RetroRewind)
-else()
-    add_custom_target(mkw_release DEPENDS WiiCompiled)
-    message(STATUS "RetroRewind target disabled (run translate-mod and emit-build-shards)")
-endif()
+add_custom_target(mkw_release DEPENDS WiiCompiled)
 
 # Windows and Linux x86_64 share the x86-64-v3 floor that the CPU baseline
 # object above checks. AArch64 builds are compiled locally for the host that
@@ -357,9 +290,7 @@ else()
     set(MKW_BASELINE_ARCH_FLAG "")
 endif()
 
-set(MKW_ALL_BUILD_TARGETS
-    mkw_runtime_common mkw_base_shared mkw_base_sensitive mkw_retro_sensitive
-    mkw_retro_rewind_functions WiiCompiled RetroRewind)
+set(MKW_ALL_BUILD_TARGETS mkw_runtime_common mkw_base_shared WiiCompiled)
 foreach(target IN LISTS MKW_ALL_BUILD_TARGETS)
     if(TARGET ${target} AND MKW_BASELINE_ARCH_FLAG)
         target_compile_options(${target} PRIVATE ${MKW_BASELINE_ARCH_FLAG})

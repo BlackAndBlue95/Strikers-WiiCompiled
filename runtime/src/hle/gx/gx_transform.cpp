@@ -37,15 +37,6 @@ namespace {
 // Viewport
 // ============================================================================
 
-// Viewport and scissor go to aurora in guest EFB coordinates, mapped to the active render target
-// exactly once inside gx::map_logical_viewport/map_logical_scissor. A prior VI origin/scale
-// transform double-transformed menu viewports and broke 640x480 overscan, so it was removed.
-extern "C" void GX__SetViewportJitter_80173378(float l, float t, float w, float h, float nz, float fz, uint32_t f) {
-    g_viewportState[0]=l; g_viewportState[1]=t; g_viewportState[2]=w; g_viewportState[3]=h; g_viewportState[4]=nz; g_viewportState[5]=fz;
-    GXSetViewportJitter(l, t, w, h, nz, fz, f);
-}
-// MSC-UNMAPPED(GX::SetViewportJitter) PPC_NATIVE_OVERRIDE_VOID(80173378, GX__SetViewportJitter_80173378, (float l, float t, float w, float h, float nz, float fz, uint32_t f), (l, t, w, h, nz, fz, f));
-
 // Dynamic aspect: full-screen perspective projections are widened to the window's shape (see
 // dynamic_aspect.cpp). Smaller viewports are render-to-texture passes (shadows, previews) and keep
 // the game's projection, unless it is the scene camera's. The game reads back its own matrix via
@@ -187,37 +178,11 @@ extern "C" void GX__LoadPosMtxImm_803A761C(uint32_t ma, uint32_t id) {
 }
 PPC_NATIVE_OVERRIDE_VOID(803A761C, GX__LoadPosMtxImm_803A761C, (uint32_t ma, uint32_t id), (ma, id));
 
-extern "C" void GX__LoadPosMtxIndx_8017315c(uint32_t mi, uint32_t id) {
-    const auto& arr=g_hleGxState.vtxArray[GX_POS_MTX_ARRAY];
-    if(arr.base==0||arr.stride==0) return;
-    const uint32_t* raw=(const uint32_t*)GuestToHostPtr(arr.base+mi*arr.stride, 48);
-    if(raw){ float m[12]; SwapBeF32ArrayToHost(raw,m,12); GXLoadPosMtxImm((float(*)[4])m,id); }
-}
-// MSC-UNMAPPED(GX::LoadPosMtxIndx) PPC_NATIVE_OVERRIDE_VOID(8017315c, GX__LoadPosMtxIndx_8017315c, (uint32_t mi, uint32_t id), (mi, id));
-
 extern "C" void GX__LoadNrmMtxImm_803A766C(uint32_t ma, uint32_t id) {
     const uint32_t* raw=(const uint32_t*)GuestToHostPtr(ma, 48); float m[12];
     SwapBeF32ArrayToHost(raw, m, 12); GXLoadNrmMtxImm((float(*)[4])m, id);
 }
 PPC_NATIVE_OVERRIDE_VOID(803A766C, GX__LoadNrmMtxImm_803A766C, (uint32_t ma, uint32_t id), (ma, id));
-
-extern "C" void GX__LoadNrmMtxIndx3x3_801731e0(uint32_t mi, uint32_t id) {
-    const auto& arr=g_hleGxState.vtxArray[GX_NRM_MTX_ARRAY];
-    if(arr.base==0||arr.stride==0) return;
-    const uint32_t* raw=(const uint32_t*)GuestToHostPtr(arr.base+mi*arr.stride, 36);
-    if(raw){
-        float src[9]{};
-        float m[12]{};
-        SwapBeF32ArrayToHost(raw, src, 9);
-        for (uint32_t row = 0; row < 3; ++row) {
-            for (uint32_t col = 0; col < 3; ++col) {
-                m[row * 4 + col] = src[row * 3 + col];
-            }
-        }
-        GXLoadNrmMtxImm((float(*)[4])m, id);
-    }
-}
-// MSC-UNMAPPED(GX::LoadNrmMtxIndx3x3) PPC_NATIVE_OVERRIDE_VOID(801731e0, GX__LoadNrmMtxIndx3x3_801731e0, (uint32_t mi, uint32_t id), (mi, id));
 
 extern "C" void GX__LoadTexMtxImm_803A76E4(uint32_t ma, uint32_t id, uint32_t t) {
     size_t c=(t==(uint32_t)GX_MTX3x4)?12:8;

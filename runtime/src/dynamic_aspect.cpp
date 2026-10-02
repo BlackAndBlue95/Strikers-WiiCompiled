@@ -12,7 +12,6 @@
 // projections are then corrected for the window (Hor+ wider than 16:9, Vert+ narrower, e.g. a 16:10
 // Mac display), so the 3D fills any window without bars or distortion; 2D layouts stay on the game's
 // 16:9 canvas. "Force 16:9" keeps a fixed 16:9 image with bars instead, and widescreen off is 4:3.
-// (The upstream Mario Kart Wii version patched EGG::Screen records at MKW addresses; MSC has none.)
 
 namespace {
 
@@ -34,9 +33,7 @@ void ApplyPolicy() {
 
 } // namespace
 
-void AssertMkwOffscreenScreenBypass() {}
-
-void UpdateMkwDynamicAspectSurface(uint32_t surfaceWidth, uint32_t surfaceHeight) {
+void UpdateDynamicAspectSurface(uint32_t surfaceWidth, uint32_t surfaceHeight) {
     g_surfaceWidth.store(surfaceWidth, std::memory_order_relaxed);
     g_surfaceHeight.store(surfaceHeight, std::memory_order_relaxed);
     // Policy changes drain GX, so they are applied here at the frame boundary.
@@ -45,17 +42,17 @@ void UpdateMkwDynamicAspectSurface(uint32_t surfaceWidth, uint32_t surfaceHeight
     }
 }
 
-void SetMkwForceAspect169(bool enabled) {
+void SetDynamicAspectForce169(bool enabled) {
     g_forceAspect169.store(enabled, std::memory_order_release);
     g_dynamicAspectRatioEnabled = g_widescreen && !enabled;
     g_policyDirty.store(true, std::memory_order_release);
 }
 
-bool MkwForceAspect169Requested() {
+bool DynamicAspectForce169Requested() {
     return g_forceAspect169.load(std::memory_order_acquire);
 }
 
-void ConfigureMkwDynamicAspect(bool widescreen, bool forceAspect169, uint32_t surfaceWidth, uint32_t surfaceHeight) {
+void ConfigureDynamicAspect(bool widescreen, bool forceAspect169, uint32_t surfaceWidth, uint32_t surfaceHeight) {
     g_widescreen = widescreen || forceAspect169;
     g_forceAspect169.store(forceAspect169, std::memory_order_relaxed);
     g_dynamicAspectRatioEnabled = g_widescreen && !forceAspect169;
@@ -71,8 +68,8 @@ bool AdjustPerspectiveForSurface(float m[16]) {
     }
     const uint32_t width = g_surfaceWidth.load(std::memory_order_relaxed);
     const uint32_t height = g_surfaceHeight.load(std::memory_order_relaxed);
-    const float horizontal = MkwDynamicAspect::HorizontalExpansion(width, height);
-    const float vertical = MkwDynamicAspect::VerticalExpansion(width, height);
+    const float horizontal = DynamicAspect::HorizontalExpansion(width, height);
+    const float vertical = DynamicAspect::VerticalExpansion(width, height);
     if (horizontal == 1.0f && vertical == 1.0f) {
         return false;
     }

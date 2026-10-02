@@ -43,14 +43,14 @@ struct Step {
 // right GC controls through pad.cpp's "standard" defaults (Z lives on
 // rightshoulder, L/R on the trigger axes).
 constexpr std::array<Step, 16> kSteps = {{
-    {"a", "Press the button for A (accelerate / select)", StepKind::Button},
-    {"b", "Press the button for B (brake / back)", StepKind::Button},
-    {"x", "Press the button for X", StepKind::Button},
-    {"y", "Press the button for Y", StepKind::Button},
+    {"a", "Press the button for A (pass / switch player)", StepKind::Button},
+    {"b", "Press the button for B (shoot / slide tackle)", StepKind::Button},
+    {"x", "Press the button for X (use item)", StepKind::Button},
+    {"y", "Press the button for Y (deke / big hit)", StepKind::Button},
     {"start", "Press the button for pause (Start)", StepKind::Button},
-    {"rightshoulder", "Press the button for rear view (Z)", StepKind::Button},
-    {"lefttrigger", "Press or pull the control for using items (L)", StepKind::Trigger},
-    {"righttrigger", "Press or pull the control for hop / drift (R)", StepKind::Trigger},
+    {"rightshoulder", "Press the button for cycling items (Z)", StepKind::Button},
+    {"lefttrigger", "Press or pull the control for lob passes (L)", StepKind::Trigger},
+    {"righttrigger", "Press or pull the control for special moves (R)", StepKind::Trigger},
     {"dpup", "Press D-pad Up", StepKind::Button},
     {"dpdown", "Press D-pad Down", StepKind::Button},
     {"dpleft", "Press D-pad Left", StepKind::Button},

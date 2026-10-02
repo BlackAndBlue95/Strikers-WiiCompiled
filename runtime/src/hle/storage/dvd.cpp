@@ -15,7 +15,6 @@ extern "C" void GxNotifyGuestRamDmaWrite(uint32_t addr, uint32_t size);
 #include "recomp_mod_loader.h"
 #include "runtime_config.h"
 #include "runtime_log.h"
-#include "runtime_product.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -147,15 +146,15 @@ static bool IsDvdDataRoot(const fs::path& path) {
         std::fprintf(stderr, ": %s", HostPathText(path).c_str());
     }
     std::fprintf(stderr,
-                 "\n[dvd] Set [paths] dvd_root in Config.toml "
-                 "to your extracted Mario Kart Wii DATA directory.\n");
+                 "\n[dvd] Set [paths] dvd_root in Config.toml to the folder with your "
+                 "extracted game files (sys/ and files/).\n");
     std::string details = source ? source : "The configured DVD root could not be opened.";
     if (!path.empty()) {
         details += "\n\nPath: ";
         details += HostPathText(path);
     }
-    details += "\n\nSet [paths] dvd_root in Config.toml to the extracted "
-               "Mario Kart Wii DATA directory.";
+    details += "\n\nSet [paths] dvd_root in Config.toml to the folder with your extracted "
+               "game files (sys/ and files/), or run the build script again to extract them.";
     FailDvd("dvd_root", "DVD data is unavailable", details);
 }
 
@@ -960,8 +959,7 @@ extern "C" void DVDInit_80396CC0()
         Memory::Write32(ctx + 0x10, i);
     }
 
-    // 3. Set Low Memory Globals (The "Magic" Identification)
-    // This tells the game "Yes, I am Mario Kart Wii"
+    // 3. Set Low Memory Globals: the disc header the game checks for its own ID
     uint32_t diskHeader = 0x80000000;
     Memory::Write32(diskHeader + 0x00, CurrentDiscGameCode());
     Memory::Write16(diskHeader + 0x04, 0x3031);     // '01' (Maker)
@@ -975,23 +973,18 @@ extern "C" void DVDInit_80396CC0()
     // Map "<dvd_root>/sys" -> "/sys/" (e.g. main.dol, bi2.bin)
     ScanDirectory(rootPath / "sys", "/sys/");
 
-    const auto& overlays = RuntimeRiivolution::Overlays();
-    if (overlays.empty() && RuntimeProduct::IsRetroRewind()) {
-        RT_LOG(RT_TAG_DVD) << "WARNING: no Retro Rewind overlay root was found. "
-                     "File replacements (menu archives, karts, drivers, courses) will not apply "
-                     "and the game will look and play like the unmodded disc. Set "
-                     "[paths] retro_rewind_root in Config.toml "
-                     "with the RetroRewind6 folder."
-                  << std::endl;
-    }
-    // RegisterFileEntry lets the last registration win, so apply the roots in
-    // reverse discovery order: the explicitly configured root outranks the mod
-    // manifest.
+    // RegisterFileEntry lets the last registration win. Mod packages go first, then the
+    // Riivolution packs (in reverse discovery order, so the first root listed wins).
     const size_t vanillaEntryCount = g_fileEntries.size();
-    // Mod packages first, so an explicitly configured overlay root still outranks them.
     ScanModPackages(vanillaEntryCount);
-    // Then the catalogs they add to (front-end texture bundles, ...): rebuilt from the file as it
-    // stands now (the disc's, or a package's replacement) and registered in its place.
+    const size_t modEntryCount = g_fileEntries.size() - vanillaEntryCount;
+    const auto& overlays = RuntimeRiivolution::Overlays();
+    for (auto overlay = overlays.rbegin(); overlay != overlays.rend(); ++overlay) {
+        ScanOverlayRoot(*overlay);
+    }
+    const size_t overlayEntryCount = g_fileEntries.size() - vanillaEntryCount - modEntryCount;
+    // Then the catalogs mods add to (front-end texture bundles, ...): rebuilt from the file as it
+    // stands now (the disc's, or a replacement) and registered in its place.
     Mods::Catalogs::Merge(
         [](const std::string& dvdPath) -> std::optional<fs::path> {
             const auto it = g_pathToEntry.find(NormalizePath(DvdFstContract::CanonicalizePath(dvdPath)));
@@ -1009,13 +1002,9 @@ extern "C" void DVDInit_80396CC0()
             entry.size += size;
             return at;
         });
-    const size_t modEntryCount = g_fileEntries.size() - vanillaEntryCount;
-    for (auto overlay = overlays.rbegin(); overlay != overlays.rend(); ++overlay) {
-        ScanOverlayRoot(*overlay);
-    }
     RT_LOG(RT_TAG_DVD) << "disc index: " << vanillaEntryCount << " disc file(s), " << modEntryCount
-              << " mod file(s), " << (g_fileEntries.size() - vanillaEntryCount - modEntryCount)
-              << " overlay registration(s) from " << overlays.size() << " root(s)" << std::endl;
+              << " mod file(s), " << overlayEntryCount << " Riivolution registration(s) from "
+              << overlays.size() << " root(s)" << std::endl;
 
     // Load FST mapping so real files keep their physical disc extents.
     LoadFstIndex();
@@ -1099,7 +1088,6 @@ extern "C" int32_t DVDReadPrio_8015E834(uint32_t fileInfoPtr, uint32_t bufferPtr
 
     return static_cast<int32_t>(uLength);
 }
-// MSC-UNMAPPED(DVDReadPrio) PPC_NATIVE_OVERRIDE(8015E834, DVDReadPrio_8015E834, int32_t, (uint32_t f, uint32_t b, int32_t l, int32_t o, int32_t p), (f, b, l, o, p));
 
 // 0x80396B20 -> DVDReadAsyncPrio (internal)
 // HLE: perform synchronous read and invoke callback immediately.
@@ -1295,9 +1283,6 @@ PPC_NATIVE_OVERRIDE(8039C1A8, DVDLowUnencryptedRead_8039C1A8, int32_t, (uint32_t
 // ============================================================================
 // Other Necessary Stubs
 // ============================================================================
-
-extern "C" int32_t DVDCheckDevice_801643FC() { return 1; } // Ready
-// MSC-UNMAPPED(__DVDCheckDevice) PPC_NATIVE_OVERRIDE(801643FC, DVDCheckDevice_801643FC, int32_t, (), ());
 
 extern "C" int32_t DVDLowClearCoverInterrupt_8039D0FC(uint32_t cb) { return 1; }
 PPC_NATIVE_OVERRIDE(8039D0FC, DVDLowClearCoverInterrupt_8039D0FC, int32_t, (uint32_t cb), (cb));

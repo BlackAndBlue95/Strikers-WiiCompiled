@@ -151,7 +151,7 @@ extern "C" int32_t OS__RestoreInterrupts_803B8F5C(int32_t level);
 extern "C" void OS__ClearContext_803B57D8(uint32_t contextAddr);
 extern "C" void OS__SetCurrentContext_803B55B0(uint32_t contextAddr);
 extern "C" [[noreturn]] void OS__LoadContext_803B5698(CpuContext* ctx);
-extern "C" void OSSuspendThread_HLE_801aa6a8(CpuContext* ctx);
+extern "C" void OSSuspendThread_HLE(CpuContext* ctx);
 extern "C" void OSResumeThread_HLE_803BC594(CpuContext* ctx);
 extern "C" void OSWakeupThread_HLE_803BCAAC(CpuContext* ctx);
 extern "C" void OSSleepThread_HLE_803BC9C0(CpuContext* ctx);

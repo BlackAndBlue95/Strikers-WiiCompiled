@@ -10,15 +10,11 @@ void NandQueueIosCallback(uint32_t callbackPtr, int32_t result, uint32_t callbac
 
 namespace {
 
-constexpr uint32_t kDefaultWorkMemSize = 0x20000;
 constexpr uint8_t kDefaultDpdSensitivity = 3;
 constexpr int32_t kStatusOk = 0;
 
 struct WpadStubState {
     bool initSubRan = false;
-    bool simpleSyncActive = false;
-    uint32_t syncDeviceCallback = 0;
-    uint32_t workMemSize = kDefaultWorkMemSize;
     uint8_t dpdSensitivity = kDefaultDpdSensitivity;
     WpadContract::State contract{};
 };
@@ -245,37 +241,3 @@ extern "C" int32_t WPADControlLed_HLE(uint32_t chan, uint32_t ledMask, uint32_t 
 }
 PPC_NATIVE_OVERRIDE(803CD6B0, WPADControlLed_HLE, int32_t,
          (uint32_t chan, uint32_t ledMask, uint32_t callback), (chan, ledMask, callback));
-
-extern "C" int32_t WPADStartSimpleSync_HLE()
-{
-    if (g_state.simpleSyncActive) {
-        return 0;
-    }
-    g_state.simpleSyncActive = true;
-    return 1;
-}
-// MSC-UNMAPPED(WPAD::StartSyncSimple) PPC_NATIVE_OVERRIDE(801BF634, WPADStartSimpleSync_HLE, int32_t, (), ()); // WUDStartSyncSimple
-// MSC-UNMAPPED(WPAD::StartFastSyncSimple) PPC_NATIVE_OVERRIDE(801BF638, WPADStartSimpleSync_HLE, int32_t, (), ()); // WPADStartSimpleSync (HBM)
-
-// due to multiplayer controller screen hle this to avoid startsyncdevice to return fail every frame
-// causing you to get softlocked in the game
-extern "C" int32_t WPADStopSimpleSync_HLE()
-{
-    if (g_state.simpleSyncActive) {
-        g_state.simpleSyncActive = false;
-        const uint32_t callback = g_state.syncDeviceCallback;
-        if (callback != 0 && TranslatedFunctionRegistry::FindByAddressPtr(callback)) {
-            NandQueueIosCallback(callback, 1, 0); // callback(WUD_SYNC_DONE, devicesSynced=0)
-        }
-    }
-    return 1;
-}
-// MSC-UNMAPPED(WPAD::StopSyncSimple) PPC_NATIVE_OVERRIDE(801BF63C, WPADStopSimpleSync_HLE, int32_t, (), ());
-
-extern "C" uint32_t WPADSetSyncDeviceCallback_HLE(uint32_t callback)
-{
-    const uint32_t previous = g_state.syncDeviceCallback;
-    g_state.syncDeviceCallback = callback;
-    return previous;
-}
-// MSC-UNMAPPED(WPAD::SetSyncSimpleCallback) PPC_NATIVE_OVERRIDE(801BF640, WPADSetSyncDeviceCallback_HLE, uint32_t, (uint32_t callback), (callback));

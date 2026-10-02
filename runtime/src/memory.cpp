@@ -432,8 +432,7 @@ GuestFlat::Backing ClassifyBacking(uint32_t baseAddress) {
     }
 
     // NDEV-sized MEM2: physical (0x10000000), cached (0x90000000),
-    // uncached (0xD0000000). Mario Kart Wii detects this configuration and
-    // creates its original EGGRootDebug expansion heap.
+    // uncached (0xD0000000).
     if ((baseAddress >= Memory::kMem2PhysicalBase &&
          baseAddress < Memory::kMem2PhysicalEnd) ||
         (baseAddress >= Memory::kMem2CachedBase &&
@@ -535,8 +534,8 @@ Memory::Config Memory::Config::WiiDefaults() {
     });
 
     // Kamek module overlay: 2 MiB above MEM1, which the game believes ends at 0x81800000, so this
-    // costs no arena space (unlike the old in-arena reservation that shrank the race scene heaps).
-    // Base must stay within +/-32 MiB of every DOL/StaticR hook site for Kamek Rel24 branches to encode.
+    // costs no arena space. Base must stay within +/-32 MiB of every hook site for Kamek Rel24
+    // branches to encode.
     config.regions.push_back(RegionConfig{
         .name = "MEM1_KAMEK_OVERLAY",
         .baseAddress = 0x81800000,

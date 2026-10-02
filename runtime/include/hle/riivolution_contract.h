@@ -7,8 +7,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // Deviations from Dolphin, all deliberate:
-//  - <memory> patches are parsed but never applied here: guest code patching
-//    belongs to the translator's Code.pul/lowmem pipeline, not the runtime.
+//  - <memory> patches are parsed but never applied: the game's code is
+//    translated ahead of time, so patching its bytes at run time changes nothing.
 //  - Riivolution "macros" are not supported
 
 #pragma once
@@ -222,8 +222,7 @@ struct Savegame {
     bool clone = true;
 };
 
-// Parsed for completeness; the runtime never applies these (guest code and
-// lowmem patching is the translator pipeline's job).
+// Parsed for completeness; never applied (see the note at the top).
 struct MemoryPatch {
     uint32_t offset = 0;
     std::string value;
@@ -263,13 +262,6 @@ struct ConfigOption {
 struct Config {
     int version = 0;
     std::vector<ConfigOption> options;
-};
-
-// An option choice pinned by the distribution manifest (recomp.yml).
-struct OptionSelection {
-    std::string section; // empty = match any section
-    std::string option;  // matches Option::id first, then Option::name
-    uint32_t choice = 0;
 };
 
 // ============================================================================
@@ -580,25 +572,6 @@ inline void ApplyConfigDefaults(Disc& disc, const Config& config) {
                     : option.id == configOption.id;
                 if (matches) {
                     option.selectedChoice = configOption.defaultChoice;
-                }
-            }
-        }
-    }
-}
-
-// Applies distribution-pinned selections. Runs after ApplyConfigDefaults so a
-// pin always wins over the user's remembered choice.
-inline void ApplySelections(Disc& disc, const std::vector<OptionSelection>& selections) {
-    for (const OptionSelection& selection : selections) {
-        for (Section& section : disc.sections) {
-            if (!selection.section.empty() && section.name != selection.section) {
-                continue;
-            }
-            for (Option& option : section.options) {
-                const bool matches = (!option.id.empty() && option.id == selection.option) ||
-                                     option.name == selection.option;
-                if (matches && selection.choice <= option.choices.size()) {
-                    option.selectedChoice = selection.choice;
                 }
             }
         }

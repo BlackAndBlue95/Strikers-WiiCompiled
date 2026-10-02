@@ -26,13 +26,6 @@ constexpr uint32_t kHold = 0x00, kTrig = 0x04, kRelease = 0x08, kAcc = 0x0C, kAc
 constexpr uint32_t kClHold = 0x60, kClTrig = 0x64, kClRelease = 0x68, kClLStick = 0x6C, kClRStick = 0x74,
                    kClLTrigger = 0x7C, kClRTrigger = 0x80;
 
-// KPADUnifiedWpadStatus: WPADStatus / WPADFSStatus / WPADCLStatus union, then fmt.
-constexpr uint32_t kUnifiedSize = 0x38;
-constexpr uint32_t kUButton = 0x00, kUAccX = 0x02, kUAccY = 0x04, kUAccZ = 0x06, kUObj = 0x08, kUDev = 0x28,
-                   kUErr = 0x29, kUFsStickX = 0x2A, kUFsStickY = 0x2B, kUFsAccX = 0x2C, kUFsAccY = 0x2E,
-                   kUFsAccZ = 0x30, kUClButton = 0x2A, kUClLStickX = 0x2C, kUClLStickY = 0x2E, kUClRStickX = 0x30,
-                   kUClRStickY = 0x32, kUClTriggerL = 0x34, kUClTriggerR = 0x35, kUFmt = 0x36;
-
 // WPAD device types (WPAD_DEV_*) and the data formats KPAD runs each of them
 // in (WPAD_FMT_*_ACC_DPD): the values KPADStatus.dev_type / data_format and
 // KPADUnifiedWpadStatus.dev / fmt carry on the console.
@@ -165,57 +158,6 @@ uint16_t WpadAcc(float g, float perG) {
     return static_cast<uint16_t>(static_cast<int16_t>(std::clamp(std::lround(g * perG), -512L, 511L)));
 }
 
-// Fills one KPADUnifiedWpadStatus at `addr` from the sample: the WPADStatus core
-// (remote buttons, raw accelerometer, no IR objects), then the Nunchuk or Classic
-// Controller tail, then the data format.
-void WriteUnifiedStatus(uint32_t addr, const WiiRemoteInput::KpadSample* sample) {
-    for (uint32_t offset = 0; offset < kUnifiedSize; offset += 4) {
-        Memory::Write32(addr + offset, 0);
-    }
-    if (sample == nullptr) {
-        Memory::Write8(addr + kUDev, kDevCore);
-        Memory::Write8(addr + kUErr, static_cast<uint8_t>(kWpadErrNoController));
-        Memory::Write8(addr + kUFmt, kFmtCoreAccDpd);
-        return;
-    }
-    Memory::Write16(addr + kUButton, static_cast<uint16_t>(sample->hold & 0xFFFF));
-    // KPAD's acc is (-wiiX, -wiiZ, wiiY); WPADStatus keeps the remote's own axes.
-    Memory::Write16(addr + kUAccX, WpadAcc(-sample->acc[0], kRemoteAccPerG));
-    Memory::Write16(addr + kUAccY, WpadAcc(sample->acc[2], kRemoteAccPerG));
-    Memory::Write16(addr + kUAccZ, WpadAcc(-sample->acc[1], kRemoteAccPerG));
-    // No IR: every DPDObject invalid (x/y at the sensor's out-of-range value).
-    for (uint32_t i = 0; i < 4; ++i) {
-        Memory::Write16(addr + kUObj + i * 8, 0x3FF);
-        Memory::Write16(addr + kUObj + i * 8 + 2, 0x3FF);
-    }
-    Memory::Write8(addr + kUErr, static_cast<uint8_t>(kWpadErrNone));
-    if (sample->hasClassic) {
-        Memory::Write8(addr + kUDev, kDevClassic);
-        Memory::Write16(addr + kUClButton, static_cast<uint16_t>(sample->clHold & 0xFFFF));
-        Memory::Write16(addr + kUClLStickX, static_cast<uint16_t>(sample->clLStickRaw[0]));
-        Memory::Write16(addr + kUClLStickY, static_cast<uint16_t>(sample->clLStickRaw[1]));
-        Memory::Write16(addr + kUClRStickX, static_cast<uint16_t>(sample->clRStickRaw[0]));
-        Memory::Write16(addr + kUClRStickY, static_cast<uint16_t>(sample->clRStickRaw[1]));
-        Memory::Write8(addr + kUClTriggerL, sample->clTriggerL);
-        Memory::Write8(addr + kUClTriggerR, sample->clTriggerR);
-        Memory::Write8(addr + kUFmt, kFmtClassicAccDpd);
-    } else if (sample->hasNunchuk) {
-        Memory::Write8(addr + kUDev, kDevFreestyle);
-        // WPADFSStatus: 8-bit stick (centre 128) and the Nunchuk accelerometer.
-        Memory::Write8(addr + kUFsStickX,
-                       static_cast<uint8_t>(std::clamp(128.0f + sample->stick[0] * 100.0f, 0.0f, 255.0f)));
-        Memory::Write8(addr + kUFsStickY,
-                       static_cast<uint8_t>(std::clamp(128.0f + sample->stick[1] * 100.0f, 0.0f, 255.0f)));
-        Memory::Write16(addr + kUFsAccX, WpadAcc(-sample->nunchukAcc[0], kNunchukAccPerG));
-        Memory::Write16(addr + kUFsAccY, WpadAcc(sample->nunchukAcc[2], kNunchukAccPerG));
-        Memory::Write16(addr + kUFsAccZ, WpadAcc(-sample->nunchukAcc[1], kNunchukAccPerG));
-        Memory::Write8(addr + kUFmt, kFmtFreestyleAccDpd);
-    } else {
-        Memory::Write8(addr + kUDev, kDevCore);
-        Memory::Write8(addr + kUFmt, kFmtCoreAccDpd);
-    }
-}
-
 // Neutral sticks and no buttons while an overlay owns input; the remote stays connected.
 bool ReadSample(uint32_t chan, WiiRemoteInput::KpadSample& sample) {
     if (!WiiRemoteInput::ReadKpadSample(chan, sample)) {
@@ -254,32 +196,6 @@ extern "C" int32_t KPAD__Read_HLE(uint32_t chan, uint32_t statusPtr, uint32_t co
 }
 PPC_NATIVE_OVERRIDE(803AC34C, KPAD__Read_HLE, int32_t, (uint32_t chan, uint32_t statusPtr, uint32_t count),
          (chan, statusPtr, count));
-
-// KPADGetUnifiedWpadStatus: the raw WPAD status behind KPADStatus. The game
-// reads the Classic Controller's buttons, sticks and triggers from here. The
-// SDK fills `count` entries with the channel's recent samples (the game asks for
-// as many as it asked KPADRead for and looks at entry 0); with one sample per
-// frame here, every entry gets the current one.
-extern "C" int32_t KPAD__GetUnifiedWpadStatus_HLE(uint32_t chan, uint32_t statusPtr, uint32_t count)
-{
-    constexpr uint32_t kMaxEntries = 16; // KPAD_MAX_READ_BUFS
-    if (chan >= g_channels.size() || statusPtr == 0 || count == 0) {
-        return 0;
-    }
-    WiiRemoteInput::KpadSample sample;
-    const bool have = ReadSample(chan, sample);
-    try {
-        const uint32_t entries = std::min(count, kMaxEntries);
-        for (uint32_t i = 0; i < entries; ++i) {
-            WriteUnifiedStatus(statusPtr + i * kUnifiedSize, have ? &sample : nullptr);
-        }
-    } catch (const Memory::AccessViolation&) {
-        return 0;
-    }
-    return have ? 1 : 0;
-}
-// MSC-UNMAPPED(KPAD::GetUnifiedWpadStatus) PPC_NATIVE_OVERRIDE(8019812C, KPAD__GetUnifiedWpadStatus_HLE, int32_t,
-// MSC-UNMAPPED(KPAD::GetUnifiedWpadStatus)          (uint32_t chan, uint32_t statusPtr, uint32_t count), (chan, statusPtr, count));
 
 // MSC: WPADRead. Strikers Charged reads the raw WPAD status first and only calls KPADRead
 // when it reports WPAD_ERR_OK; MKW never calls it. Writes WPADStatus (+ the WPADFSStatus
