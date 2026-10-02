@@ -48,13 +48,23 @@ extern "C" void GX__SetViewportJitter_80173378(float l, float t, float w, float 
 
 // Dynamic aspect: full-screen perspective projections are widened to the window's shape (see
 // dynamic_aspect.cpp). Smaller viewports are render-to-texture passes (shadows, previews) and keep
-// the game's projection. The game reads back its own matrix via GXGetProjectionv either way.
+// the game's projection, unless it is the scene camera's. The game reads back its own matrix via
+// GXGetProjectionv either way.
 namespace {
 float g_lastPerspective[16];
 bool g_lastWasPerspective = false;
 bool g_lastPerspectiveAdjusted = false;
+float g_sceneProjection[16];
+bool g_haveSceneProjection = false;
 
 bool ViewportIsFullScreen() { return g_viewportState[2] >= 600.0f && g_viewportState[3] >= 400.0f; }
+
+// The scene camera's projection is widened, and so is any pass that reuses it in a smaller viewport
+// (the heat haze draws its distortion at half size): it must line up with the scene it distorts.
+bool WidensProjection(const float raw[16]) {
+    if (ViewportIsFullScreen()) return true;
+    return g_haveSceneProjection && std::memcmp(raw, g_sceneProjection, sizeof(g_sceneProjection)) == 0;
+}
 
 void SubmitProjection(const float raw[16], GXProjectionType type) {
     g_lastWasPerspective = type == GX_PERSPECTIVE;
@@ -63,7 +73,11 @@ void SubmitProjection(const float raw[16], GXProjectionType type) {
         std::memcpy(g_lastPerspective, raw, sizeof(g_lastPerspective));
         float adjusted[16];
         std::memcpy(adjusted, raw, sizeof(adjusted));
-        if (ViewportIsFullScreen() && AdjustPerspectiveForSurface(adjusted)) {
+        if (WidensProjection(raw) && AdjustPerspectiveForSurface(adjusted)) {
+            if (ViewportIsFullScreen()) {
+                std::memcpy(g_sceneProjection, raw, sizeof(g_sceneProjection));
+                g_haveSceneProjection = true;
+            }
             g_lastPerspectiveAdjusted = true;
             GXSetProjection(adjusted, type);
             return;
@@ -77,7 +91,7 @@ extern "C" void GX__SetViewport_803A7828(float l, float t, float w, float h, flo
     g_viewportState[0]=l; g_viewportState[1]=t; g_viewportState[2]=w; g_viewportState[3]=h; g_viewportState[4]=nz; g_viewportState[5]=fz;
     GXSetViewport(l, t, w, h, nz, fz);
     // A projection set before its viewport: re-issue it once the viewport says which pass it is.
-    if (g_lastWasPerspective && g_lastPerspectiveAdjusted != ViewportIsFullScreen()) {
+    if (g_lastWasPerspective && g_lastPerspectiveAdjusted != WidensProjection(g_lastPerspective)) {
         SubmitProjection(g_lastPerspective, GX_PERSPECTIVE);
     }
 }
