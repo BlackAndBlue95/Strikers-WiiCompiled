@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <stdexcept>
 #include <limits>
 
@@ -42,13 +43,31 @@ std::bitset<2048> g_warnedSprWrite{};
 std::array<uint32_t, 2048> g_sprShadow{};
 uint32_t g_reservationAddr = 0;
 bool g_hasReservation = false;
+// A Wii boots with the time base set from its clock: ticks since 2000-01-01, local time. The dates the
+// game saves (Hall of Fame cups, challenge records) come from it, so it starts from the host's local
+// clock. Captured once, next to the start instant, so every reader shares one base.
+uint64_t LocalWiiEpochTicks() {
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+#if defined(_WIN32)
+    if (localtime_s(&local, &now) != 0) return 0;
+    const std::time_t asUtc = _mkgmtime(&local);
+#else
+    if (localtime_r(&now, &local) == nullptr) return 0;
+    const std::time_t asUtc = timegm(&local);
+#endif
+    return asUtc == static_cast<std::time_t>(-1)
+        ? 0
+        : TimeBaseContract::WiiTicksForLocalUnixSeconds(static_cast<int64_t>(asUtc));
+}
+const uint64_t g_timeBaseEpoch = LocalWiiEpochTicks();
 const auto g_timeBaseStart = std::chrono::steady_clock::now();
 
 uint64_t GetTimeBase() {
     const auto elapsed = std::chrono::steady_clock::now() - g_timeBaseStart;
     const auto nanoseconds =
         std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count();
-    return TimeBaseContract::NanosecondsToTicks(static_cast<uint64_t>(nanoseconds));
+    return g_timeBaseEpoch + TimeBaseContract::NanosecondsToTicks(static_cast<uint64_t>(nanoseconds));
 }
 
 constexpr uint32_t kFpscrFx = 1u << 31;

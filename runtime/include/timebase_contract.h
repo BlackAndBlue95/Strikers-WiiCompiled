@@ -28,6 +28,23 @@ constexpr uint64_t NanosecondsToTicks(uint64_t nanoseconds) noexcept
                kTickRatioDenominator;
 }
 
+// The Wii's clock counts from 2000-01-01 in local time (it keeps no time zone), and boot sets the time
+// base from it. Given the local wall-clock time as seconds since 1970 (read as if it were UTC), the
+// time base value it implies; 0 for anything before 2000.
+inline constexpr int64_t kWiiEpochUnixSeconds = 946'684'800; // 2000-01-01T00:00:00
+
+constexpr uint64_t WiiTicksForLocalUnixSeconds(int64_t localUnixSeconds) noexcept
+{
+    return localUnixSeconds <= kWiiEpochUnixSeconds
+        ? 0
+        : static_cast<uint64_t>(localUnixSeconds - kWiiEpochUnixSeconds) * kTicksPerSecond;
+}
+
+static_assert(WiiTicksForLocalUnixSeconds(kWiiEpochUnixSeconds - 1) == 0);
+static_assert(WiiTicksForLocalUnixSeconds(kWiiEpochUnixSeconds + 86'400) == 86'400 * kTicksPerSecond);
+// 2026-10-02T00:00:00: 9771 days after the Wii epoch.
+static_assert(WiiTicksForLocalUnixSeconds(1'790'899'200) == 9'771ull * 86'400 * kTicksPerSecond);
+
 // Convert guest ticks to a host duration without applying scheduling policy.
 // Oversized durations retain the existing zero-duration failure behavior.
 constexpr std::chrono::nanoseconds TicksToDuration(uint64_t ticks) noexcept
