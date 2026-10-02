@@ -10,6 +10,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include "abi_bridge.h"
 #include "hle_stubs.h"
@@ -1489,15 +1490,16 @@ void PartnerLeaders() {
 }
 
 // Fast menus: menu transitions are skipped, outside matches. 2D: one-shot FE slides (panels sliding
-// in and out, button states) jump to their end (TLSlide::Update override below); long one-shot
-// slides are content (credits), and looping ones idle animation, so those keep their pace. 3D: while
+// in and out, button states, a board's screen flickering on) jump to their end (TLSlide::Update
+// override below); long one-shot slides are content (credits), and looping ones idle animation, so
+// those keep their pace, as do the boot screens (notices, the studio logo). 3D: while
 // the front-end presentation runs a transition script (FrontEndPresentation::IsActive: anything but
 // "Idle", e.g. the zoom from the main menu), the game's time dilation runs the time-dilated tasks
 // (camera animations and moves, FE scenes, effects) kDilation times faster, so they finish within a
 // frame or two, and each scripted wait ends as it starts; audio keeps real time.
 namespace FastMenus {
 constexpr float kDilation = 30.0f;
-constexpr float kLongestTransition = 2.5f;              // seconds; longer one-shot slides are content
+constexpr float kLongestTransition = 3.0f;              // seconds; longer one-shot slides are content
 constexpr float kLongestPresentation = 6.0f;            // seconds; a screen's main slide (text fading in)
 constexpr uint32_t kTaskManager = 0x806E1DA0u;          // nlTaskManager::m_pInstance (mTimeDilation at +0x00)
 constexpr uint32_t kAudioTask = 0x8056F870u;            // audioUpdateTask
@@ -1509,9 +1511,37 @@ constexpr uint32_t kPresentationWait = 0xA8;            // FrontEndPresentation:
 uint32_t g_presentation = 0;
 bool g_dilating = false;
 
-bool InMenus() { return RuntimeConfigFile::ModFastMenus() && Memory::Read32(kGamePtr) == 0; }
+// Slides set again this frame (SetActiveSlide resets a slide with Update(0)) take this frame's step
+// as they would: partner select sets its pointers and its unhovered slots every frame, holding them
+// on their first frame, and jumping those to their end showed the wrong state for a frame each time
+// they were set. A one-shot slide set once jumps to its end on its next step.
+uint32_t g_frame = 0;                                   // game frames (Update, from the pad update)
+std::unordered_map<uint32_t, uint32_t> g_slideResets;  // slide -> the frame it was last set in
+
+void NoteSlideReset(uint32_t slide) { g_slideResets[slide] = g_frame; }
+
+bool ResetThisFrame(uint32_t slide) {
+    const auto it = g_slideResets.find(slide);
+    return it != g_slideResets.end() && it->second == g_frame;
+}
+
+// The boot screens (BootLoadingScene): the notices are meant to be read, and the studio logo's
+// jingle bank is unloaded as its slide ends, which under the playing jingle crashes the sound
+// update (see SkipIntro).
+bool BootScreens() {
+    constexpr uint32_t kBootLoadingSceneVtable = 0x805207D8u;
+    const uint32_t top = TopScene();
+    return top != 0 && Memory::Read32(top) == kBootLoadingSceneVtable;
+}
+
+bool InMenus() {
+    const bool menus = RuntimeConfigFile::ModFastMenus() && Memory::Read32(kGamePtr) == 0;
+    if (!menus && !g_slideResets.empty()) g_slideResets.clear();  // a match frees and reuses FE slides
+    return menus;
+}
 
 void Update() {
+    ++g_frame;
     bool transition = false;
     if (InMenus()) {
         const uint32_t mgr = Memory::Read32(kSceneManager);
@@ -1837,7 +1867,8 @@ PPC_NATIVE_OVERRIDE_VOID(801DCB28, MSC_CaptainComponentRandomizeSidekicks_801DCB
 // updated with dt: components' active slides, then UpdateAsset), plus fast menus
 // (FrameMods::FastMenus): a one-shot slide no longer than a transition goes straight to its end.
 // Only on a real step: SetActiveSlide resets a slide with Update(0), and a scene that holds a slide
-// on its first frame (the sidekick screen while its portraits load) must keep it there.
+// on its first frame (the sidekick screen while its portraits load) must keep it there; nor in the
+// frame the slide was set (FastMenus::ResetThisFrame), so one set every frame plays as it would.
 extern "C" void MSC_TLSlideUpdate_802FFCD4(CpuContext* ctx)
 {
     using namespace FrameMods::FastMenus;
@@ -1854,7 +1885,10 @@ extern "C" void MSC_TLSlideUpdate_802FFCD4(CpuContext* ctx)
     float time = Memory::ReadFloat32(slide + kTime) + static_cast<float>(dt);
     const float end = start + duration;
     // Play modes: 0 stops at the end, 1 loops, 2 runs on past the end.
-    if ((mode == 0 || mode == 2) && duration <= kLongestTransition && dt > 0.0 && InMenus()) time = end;
+    if (dt == 0.0 && !Memory::Read8(slide + kPaused) && InMenus()) NoteSlideReset(slide);
+    if ((mode == 0 || mode == 2) && duration <= kLongestTransition && dt > 0.0 && InMenus() && !ResetThisFrame(slide) &&
+        !BootScreens())
+        time = end;
     if (time > end) {
         if (mode == 1) time -= end;      // TLPM_LOOPING
         else if (mode == 0) time = end;  // TLPM_STOP_AT_END
@@ -1897,7 +1931,6 @@ extern "C" void MSC_FEPresentationUpdate_802FBC4C(CpuContext* ctx)
 {
     using namespace FrameMods::FastMenus;
     constexpr uint32_t kTLSlideUpdate = 0x802FFCD4u;
-    constexpr uint32_t kBootLoadingSceneVtable = 0x805207D8u;
     constexpr uint32_t kCurrentSlide = 0x04, kFadeDuration = 0x08;               // FEPresentation
     constexpr uint32_t kStart = 0x10, kDuration = 0x14, kTime = 0x18, kPlayMode = 0x1C;  // TLSlide
     const uint32_t presentation = ctx->gpr[3];
@@ -1908,11 +1941,7 @@ extern "C" void MSC_FEPresentationUpdate_802FBC4C(CpuContext* ctx)
     const float duration = Memory::ReadFloat32(slide + kDuration);
     const float end = Memory::ReadFloat32(slide + kStart) + duration;
     float fade = Memory::ReadFloat32(presentation + kFadeDuration) + static_cast<float>(dt);
-    // Not the boot screens: the studio logo's jingle bank is unloaded as its slide ends, and unloaded
-    // under the playing jingle it crashes the sound update (see SkipIntro).
-    const uint32_t top = FrameMods::TopScene();
-    const bool bootScreens = top != 0 && Memory::Read32(top) == kBootLoadingSceneVtable;
-    if ((mode == 0 || mode == 2) && duration <= kLongestPresentation && dt > 0.0 && !bootScreens && InMenus())
+    if ((mode == 0 || mode == 2) && duration <= kLongestPresentation && dt > 0.0 && InMenus() && !BootScreens())
         fade = end;
     if (fade > end) {
         if (mode == 1) fade -= end;      // TLPM_LOOPING
@@ -1927,6 +1956,23 @@ extern "C" void MSC_FEPresentationUpdate_802FBC4C(CpuContext* ctx)
     ctx->lr = savedLr;
 }
 PPC_NATIVE_OVERRIDE_VOID(802FBC4C, MSC_FEPresentationUpdate_802FBC4C, (CpuContext* ctx), (ctx));
+
+// void FEPopupMenu::SetPositions(). As the original (lays out the message and options, sizes the
+// black box to them and starts it growing, hides the text until Update shows it), plus: the text is
+// shown again afterwards. Update shows it once (mUnidentified99D) when the popup's slide is 1 s in,
+// and the first SetPositions can't measure the text yet (it's laid out on the slide's first update),
+// so it runs again the next frame. A slide already past 1 s on that first frame (fast menus start
+// it at its end) had the text shown before that second SetPositions hid it for good: the help
+// popups came up empty.
+extern "C" void func_801C9D38(CpuContext* ctx);
+static void PopupTextAfterLayout(CpuContext* ctx)
+{
+    constexpr uint32_t kMenuDisplayed = 0x99C, kTextShown = 0x99D;  // FEPopupMenu
+    const uint32_t popup = ctx->gpr[3];
+    func_801C9D38(ctx);
+    if (popup != 0 && Memory::Read8(popup + kMenuDisplayed)) Memory::Write8(popup + kTextShown, 0);
+}
+PPC_NATIVE_WRAP(801C9D38, PopupTextAfterLayout);
 
 // void ChooseCaptainsSceneV2::RefreshCaptainImages(). As the original (each grid button's portrait
 // for its current state: greyed for a team's chosen captain or one taken in an online draft, static
