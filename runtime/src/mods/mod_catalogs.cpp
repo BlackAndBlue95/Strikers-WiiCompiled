@@ -612,10 +612,26 @@ int MergeCutscenes(const HostPathOf& hostPathOf, const RegisterFile& registerFil
     return rebuilt;
 }
 
-// Per-character files the game opens by name (crowd lists): a mod character without its own gets
-// its base's, registered under its name.
+// Per-character files the game opens by name (crowd lists): a captain without an away-kit list gets
+// its home list, and a mod character without its own gets its base's, registered under its name.
 int AliasPerCharacterFiles(const HostPathOf& hostPathOf, const RegisterFile& registerFile) {
     int rebuilt = 0;
+    const auto alias = [&](const std::string& mine, const std::string& theirs) {
+        if (hostPathOf("/" + mine)) return;
+        const auto host = hostPathOf("/" + theirs);
+        std::error_code ec;
+        if (!host) return;
+        const auto size = std::filesystem::file_size(*host, ec);
+        if (!ec) registerFile("/" + mine, *host, static_cast<uint32_t>(size));
+    };
+    // The match's crowd comes from the home captain's list, its Alt list when the team wears its away
+    // kit. Mario, Luigi, Peach, Wario and Waluigi have none (their teams never switched kit), and a
+    // missing list crashes the load: Blue Peach, kit choice and mod characters can put them in one,
+    // so they get their home list.
+    for (int captain = 0; captain < 12; ++captain) {
+        const std::string name = BaseCharacterName(captain);
+        alias("ini/CrowdCharacterLists/" + name + "Alt.ini", "ini/CrowdCharacterLists/" + name + ".ini");
+    }
     // Per-character files the game opens by the character's name: a mod character without its own
     // gets its base's.
     static const char* const kPerCharacterFiles[] = {"ini/CrowdCharacterLists/%s.ini", "ini/CrowdCharacterLists/%sAlt.ini"};
@@ -627,12 +643,7 @@ int AliasPerCharacterFiles(const HostPathOf& hostPathOf, const RegisterFile& reg
                 char mine[160], theirs[160];
                 std::snprintf(mine, sizeof(mine), pattern, c.name.c_str());
                 std::snprintf(theirs, sizeof(theirs), pattern, base);
-                if (hostPathOf(std::string("/") + mine)) continue;
-                const auto host = hostPathOf(std::string("/") + theirs);
-                std::error_code ec;
-                if (!host) continue;
-                const auto size = std::filesystem::file_size(*host, ec);
-                if (!ec) registerFile(std::string("/") + mine, *host, static_cast<uint32_t>(size));
+                alias(mine, theirs);
             }
         }
     }
