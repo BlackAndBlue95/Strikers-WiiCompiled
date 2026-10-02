@@ -222,7 +222,7 @@ Package ReadPackage(const std::filesystem::path& root) {
     if (package.name.empty()) package.name = package.id;
     if (package.framework > kFrameworkVersion)
         package.errors.push_back("needs framework " + std::to_string(package.framework) + "; this build reads " +
-                                 std::to_string(kFrameworkVersion) + " (update Strikers-WiiCompiled)");
+                                 std::to_string(kFrameworkVersion) + " (update Strikers Recharged)");
     else if (package.framework < 1 && package.errors.empty())
         package.errors.push_back("mod.framework must be 1 or more");
     return package;

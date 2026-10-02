@@ -323,7 +323,7 @@ inline void EnsureConfigFile() {
     if (!output) {
         return;
     }
-    output << "# Strikers-WiiCompiled user configuration. The F10 bar in the game writes most of\n"
+    output << "# Strikers Recharged user configuration. The F10 bar in the game writes most of\n"
               "# these; anything it doesn't show can be set here.\n\n"
               "[video]\n"
               "widescreen = true\n"

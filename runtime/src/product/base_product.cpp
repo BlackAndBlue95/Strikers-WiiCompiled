@@ -3,7 +3,7 @@
 namespace RuntimeProduct {
 
 const Descriptor& Active() noexcept {
-    static constexpr Descriptor descriptor{"Strikers-WiiCompiled"};
+    static constexpr Descriptor descriptor{"Strikers Recharged"};
     return descriptor;
 }
 

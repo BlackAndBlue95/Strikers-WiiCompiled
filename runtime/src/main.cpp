@@ -781,7 +781,7 @@ void ShowRuntimeFatalPopup(std::string_view category, std::string_view details) 
         }
         message.append("\n\nSee the Logs folder in the MSCRecomp data folder for the full diagnostic.");
 #if defined(_WIN32)
-        ::MessageBoxA(nullptr, message.c_str(), "Strikers-WiiCompiled - Fatal Error",
+        ::MessageBoxA(nullptr, message.c_str(), "Strikers Recharged - Fatal Error",
                       MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TASKMODAL);
 #else
         // The shipped product is Windows-first. Keep non-Windows builds safe
