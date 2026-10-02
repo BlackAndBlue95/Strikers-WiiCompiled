@@ -1,77 +1,137 @@
 # Strikers-WiiCompiled
 
-Strikers-WiiCompiled is a native PC port of **Mario Strikers Charged**, achieved through static recompilation. Forked from the Mario Kart Wii project WiiCompiled, this version retargets the translator and runtime specifically for Mario Strikers Charged (USA, Rev 1, `R4QE01`). It operates entirely without emulators, interpreters, JIT compilers, or PowerPC emulation at runtime.
+<p align="center">
+  <img alt="Windows 10 / 11, x64" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20%C2%B7%20x64-0078D4">
+  <img alt="Linux, x64 / ARM64" src="https://img.shields.io/badge/Linux-x64%20%2F%20ARM64-FCC624?logo=linux&amp;logoColor=white">
+  <img alt="macOS 14+, Apple Silicon" src="https://img.shields.io/badge/macOS-14%2B%20%C2%B7%20Apple%20Silicon-0A84FF?logo=apple&amp;logoColor=white">
+  <img alt="PowerPC static recompilation" src="https://img.shields.io/badge/PowerPC-static%20recompilation-FF9F0A">
+  <a href="LICENSE"><img alt="License: GPLv3" src="https://img.shields.io/badge/license-GPLv3-2EA44F?logo=gnu&amp;logoColor=white"></a>
+</p>
+
+A native PC port of **Mario Strikers Charged**, made with static recompilation. It's a fork of
+[WiiCompiled](https://github.com/patchzyy/wiicompiled), the Mario Kart Wii project, with the
+translator and runtime retargeted at Mario Strikers Charged (USA, Rev 1, `R4QE01`). There's no
+emulator, interpreter or JIT, and no PowerPC code runs at all.
 
 > [!IMPORTANT]
-> This repository contains zero Nintendo code, game data, or assets. You must provide your own legally dumped copy of the game. The translation runs locally on your machine, and the output is never uploaded or committed.
+> This repository contains no Nintendo code, game data or assets. You need your own legally dumped
+> copy of the game. The translation runs on your machine, and its output is never uploaded or
+> committed.
 
 > [!WARNING]
-> This is an early, work-in-progress port. It is primarily developed and tested on macOS (Apple Silicon). Windows and Linux builds use the upstream WiiCompiled toolchain but remain untested, so expect rough edges. There are no prebuilt releases available.
+> This is an early, work-in-progress port, developed and tested on macOS (Apple Silicon). Windows
+> and Linux builds use the same toolchain but are untested with this port, so expect rough edges.
+> There are no prebuilt releases.
 
-The [wiki](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki) has the details: [building](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Building), [controls](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Controls), [Wii Remotes](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Wii-Remotes), [graphics options](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Graphics) and [every tweak](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Tweaks).
+The [wiki](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki) has the details:
+[building](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Building),
+[controls](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Controls),
+[Wii Remotes](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Wii-Remotes),
+[graphics options](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Graphics) and
+[every tweak](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Tweaks).
 
 ## Status
 
-Core gameplay elements—including booting, menus, the Hub, tutorials, VS matches, music, voice lines, and saving—are fully functional. The game runs at full speed on Apple Silicon hardware.
+Booting, menus, the Hub, tutorials, VS matches, music, voices and saving all work, and the game
+runs at full speed on Apple Silicon.
 
-* **120 FPS:** You can enable 120 FPS via **F10 > Graphics > Frame rate** or in `Config.toml`. This isn't interpolation; the engine actually renders twice as many frames based on a fixed clock. It requires a high refresh rate display and consumes more power, so the default remains 60 FPS.
-* **Known Issues:** You may encounter occasional rendering differences compared to original hardware. Online play and WiiConnect24 features are entirely unsupported. Only the USA Rev 1 disc (`R4QE01`) is mapped; other regions and revisions will not work.
+- **120 FPS:** **F10 > Graphics > Frame rate**, or `frame_rate = 120` in `Config.toml`. It isn't
+  interpolation: matches run on a fixed clock and twice as many frames are really rendered. It
+  needs a high refresh rate display and uses more power, so 60 is the default.
+- **Known issues:** occasional rendering differences from the original hardware. Online play and
+  WiiConnect24 aren't supported. Only the USA Rev 1 disc (`R4QE01`) is mapped; other regions and
+  revisions won't work.
 
-### Real Wii Remotes (Experimental)
+### Real Wii Remotes (experimental)
 
-Real Wii Remotes (with or without Nunchuks) connect directly over Bluetooth HID, utilizing the IR camera and accelerometers exactly as Dolphin does.
+Real Wii Remotes, with or without a Nunchuk, connect directly over Bluetooth HID, with the IR
+camera and accelerometers driven the way Dolphin does it.
 
-* **Pairing:** Sync via the 1+2 buttons (or SYNC) while the game searches, or connect through your operating system's Bluetooth settings.
-* **Sensor Bar:** An IR source is required for pointing. If it is mounted above your screen, check **F10 > Wii Remotes (Bluetooth) > Sensor bar is above the screen** for accurate aiming.
-* **DolphinBar:** Mayflash DolphinBars must be set to **mode 4** (Wii Remote mode) to function correctly.
-* **Limitations:** Native HID access on macOS may fail entirely, and Wii U Pro Controllers are not supported by this backend.
+- **Pairing:** press 1+2 (or SYNC) while the game is searching, or pair the remote in your
+  system's Bluetooth settings.
+- **Sensor bar:** pointing needs an IR source. If yours sits above the screen, tick
+  **F10 > Wii Remotes (Bluetooth) > Sensor bar is above the screen**.
+- **DolphinBar:** use it in **mode 4**, its Wii Remote mode.
+- **Limitations:** plain HID access may not work on macOS, and the Wii U Pro Controller isn't
+  supported.
 
-Full guide, including connecting on Windows: [Wii Remotes](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Wii-Remotes).
+Full guide, including connecting on Windows:
+[Wii Remotes](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Wii-Remotes).
 
 ## Controls
 
-This port translates the game's Wii-centric gesture controls back to standard gamepads by reviving the underlying *Super Mario Strikers* GameCube control scheme. Face buttons strictly follow the physical **Nintendo layout** (e.g., the bottom button is always 'B').
+The game was built for the Wii Remote and Nunchuk. This port plays it on a regular controller with
+*Super Mario Strikers*' GameCube controls, which the engine still has underneath, plus Charged's
+extras. Face buttons follow **Nintendo's layout by position**: the bottom button is always B.
 
-* **A (Right):** Pass. With **L**, perform a lob pass. Without the ball, switch players.
-* **B (Bottom):** Shoot or hold to charge. Captains execute a Mega Strike. Without the ball, perform a slide tackle.
-* **Y (Left):** Deke. Without the ball, perform a big hit.
-* **X (Top):** Use item.
-* **Triggers/Bumpers:** **R** triggers character special moves. **L** modifies lobs. **Z** (Right Bumper) cycles items.
-* **Right Stick / D-Pad:** The right stick dekes in a specific direction, while the D-Pad mirrors original Charged D-pad moves.
+- **A (right):** pass; with **L**, a lob pass. Without the ball, switch player.
+- **B (bottom):** shoot, hold to charge (captains: Mega Strike). Without the ball, slide tackle.
+- **Y (left):** deke. Without the ball, big hit.
+- **X (top):** use item.
+- **R:** the character's special move. **L:** lob modifier. **Z** (right bumper): cycle items.
+- **Right stick:** deke in that direction. **D-pad:** Charged's D-pad moves.
 
-You can remap inputs per controller via the **F10** menu, which saves directly to `Config.toml`. Original GameCube controllers work natively via the official Wii U/Switch USB adapter, requiring Zadig WinUSB drivers on Windows.
+Buttons can be rebound per controller in **F10**, saved to `Config.toml`. GameCube controllers work
+through the official Wii U / Switch GameCube adapter (on Windows, switch it to the WinUSB driver
+once with [Zadig](https://zadig.akeo.ie/)).
+[Full controls](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Controls).
 
-## Mods & Tweaks
+## Mods and tweaks
 
-Enhance the game by placing mod packages containing a `mod.toml` manifest into the `Mods` directory. Mods can introduce new characters with custom assets, modify shared files, or add native plugins. Toggle them via **F10 > Mods**.
+Mods are packages with a `mod.toml` manifest that go in the `Mods` folder: new characters with
+their own models, animations, voices, cutscenes and menu art, additions to the game's shared files,
+and native plugins. Switch them on or off in **F10 > Mods**; [docs/modding](docs/modding/README.md)
+explains how to make one.
 
-Quality-of-life adjustments are available under **F10 > Tweaks**:
+**F10 > Tweaks** has quality-of-life switches:
 
-* **Menu Navigation & Speed:** Navigate menus with the D-pad/sticks instead of a pointer, enable "Fast menus" to skip UI transitions, and "Skip intro" to boot straight to the main menu.
-* **No Mega Strikes with Controllers:** *On by default.* Because defending a Mega Strike requires a physical IR pointer, they are disabled for both you and the CPU when using a controller to keep matches playable.
-* **Community Fixes:** Toggle options to fix the "NK bug," select home/away kits on the captain screen, enforce "Win by 2" rules, force Blue Peach against red teams, or build all-captain/all-sidekick teams.
+- **Menus:** navigate with the D-pad and sticks instead of a pointer, skip transitions with
+  **Fast menus**, and boot straight to the main menu with **Skip intro**.
+- **No Mega Strikes with controllers** (on by default): defending a Mega Strike takes a Wii Remote
+  pointer, so with a controller they're off for both sides to keep matches playable.
+- **Community fixes and extras:** the NK bug fix, home/away kit choice on captain select, win by 2,
+  Blue Peach against red teams, captain-only teams.
+
+[Every tweak](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Tweaks).
 
 ## Requirements
 
-* **Game:** A personal dump of Mario Strikers Charged (USA) (Rev 1), `R4QE01`. The build checks the SHA-256 hash and strictly rejects any other version.
-* **Hardware:** 64-bit Windows 10/11, Linux, or macOS 14+ (Apple Silicon) with a modern GPU supporting Direct3D 12, Vulkan, or Metal. You need approximately 10 GB of free space.
-* **Dependencies:** .NET 8 SDK, CMake 3.25+, Ninja, and Clang. Windows builds explicitly require LLVM-MinGW Clang. Per-platform setup: [Building](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Building).
+- **Game:** your own dump of Mario Strikers Charged (USA) (Rev 1), `R4QE01`. The build checks
+  `main.dol`'s SHA-256 and rejects any other version.
+- **Machine:** 64-bit Windows 10/11, Linux, or macOS 14+ on Apple Silicon, with a GPU that supports
+  Direct3D 12, Vulkan or Metal, and about 10 GB of free disk space.
+- **Tools:** the .NET 8 SDK, CMake 3.25+, Ninja and Clang (LLVM-MinGW Clang on Windows).
+  Per-platform setup: [Building](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Building).
 
 ## Building
 
-Clone the repository and run the build script (`./build.sh` on Mac/Linux, `build.cmd` on Windows). Provide your game file when prompted.
+Clone the repository, run `./build.sh` (`build.cmd` on Windows) and pick your disc image when
+asked. The script extracts it, translates the game code and compiles the runtime. You don't need
+the disc image afterwards: the game files, config, saves and caches live in an `MSCRecomp` folder
+([where](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Building#building-the-port)).
 
-The script automatically extracts the image, translates the game code, compiles the native runtime, and links your graphics dependencies. Afterward, the original ISO is no longer needed to play. Saved data, configurations, and caches are stored safely in a dedicated `MSCRecomp` folder based on your OS.
+## How the port works
 
-## How the Port Works
+WiiCompiled's translator is game-agnostic: it turns the game's PowerPC code into C++ ahead of time.
+Its runtime, which stands in for the Wii's hardware and system software, was written against Mario
+Kart Wii's addresses; this fork re-keyed it to Strikers Charged using the symbols from
+[mscharged-decomp](https://github.com/yannicksuter/mscharged-decomp), and the Strikers-specific
+parts (the emulated Wii Remote and pointer, renderer details, the tweaks and the mod framework)
+live in the runtime too.
+[More](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/How-the-Port-Works).
 
-While the WiiCompiled translator is game-agnostic, this fork remaps the Mario Kart Wii runtime hooks specifically to Strikers Charged. It utilizes symbol maps and a `datamap.py` script to match guest addresses. Game-specific quirks, like texture details and pointer emulation, are integrated natively into the runtime.
+## FAQ
 
-## FAQ & Credits
+- **Is this an emulator?** No. Everything is compiled to native code before you play.
+- **Can I use the PAL or Japanese version?** Not yet: each version needs its own address map.
 
-* **Is this an emulator?** No. Everything is compiled to native code before you play.
-* **Can I use other regions?** PAL and Japanese releases are currently unsupported as each version requires a custom address map.
-* **Credits:** Built upon [WiiCompiled](https://github.com/patchzyy/wiicompiled), [mscharged-decomp](https://github.com/yannicksuter/mscharged-decomp), [aurora](https://github.com/encounter/aurora), [nod](https://github.com/encounter/nod), and [Dolphin Emulator](https://github.com/dolphin-emu/dolphin). Bundled third-party components and their licenses are listed in [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
+## Credits
+
+Built on [WiiCompiled](https://github.com/patchzyy/wiicompiled),
+[mscharged-decomp](https://github.com/yannicksuter/mscharged-decomp),
+[aurora](https://github.com/encounter/aurora), [nod](https://github.com/encounter/nod) and
+[Dolphin](https://github.com/dolphin-emu/dolphin). Bundled third-party components and their
+licenses are listed in [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
 
 ## AI usage
 
@@ -79,8 +139,14 @@ AI coding tools were used heavily in developing this port.
 
 ## License
 
-Strikers-WiiCompiled, like WiiCompiled, is free software: you can redistribute it and/or modify it under the terms of the [GNU General Public License, version 3](LICENSE) as published by the Free Software Foundation.
+Strikers-WiiCompiled, like WiiCompiled, is free software: you can redistribute it and/or modify it
+under the terms of the [GNU General Public License, version 3](LICENSE) as published by the Free
+Software Foundation.
 
-It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the
+implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public
+License for more details.
 
-Not affiliated with, endorsed by, or associated with Nintendo. Mario Strikers Charged is a trademark of Nintendo. No Nintendo intellectual property is contained in, distributed with, or obtainable through this project.
+Not affiliated with, endorsed by, or associated with Nintendo. Mario Strikers Charged is a
+trademark of Nintendo. No Nintendo intellectual property is contained in, distributed with, or
+obtainable through this project.

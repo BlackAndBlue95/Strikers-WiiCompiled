@@ -166,7 +166,6 @@ return command switch
     "emit-build-shards" => RunEmitBuildShards(tail),
     "emit-base-manifest" => RunEmitBaseManifest(tail),
     "check-base-mod-awareness" => RunCheckBaseModAwareness(tail),
-    "validate-retro-wfc-payload" => RunValidateRetroWfcPayload(tail),
     _ => ShowHelp(command)
 };
 
@@ -353,33 +352,6 @@ int RunInfo()
             : $"REL     : {project.Inputs.Rel.Path} @ 0x{project.Inputs.Rel.LoadAddress:X8}");
     }
     return 0;
-}
-
-int RunValidateRetroWfcPayload(string[] argsTail)
-{
-    var directory = OptionValue(argsTail, "--directory");
-    if (string.IsNullOrWhiteSpace(directory))
-    {
-        Console.Error.WriteLine("--directory is required.");
-        return 1;
-    }
-
-    try
-    {
-        WiiCompiled.Setup.Common.RetroWfcPayload.ValidateStagedRetroWfcPayloadDirectory(directory);
-        Console.WriteLine("[translator] Retro WFC payload signature validated.");
-        return 0;
-    }
-    catch (InvalidDataException ex)
-    {
-        Console.Error.WriteLine($"[translator] Retro WFC payload validation failed: {ex.Message}");
-        return 2;
-    }
-    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-    {
-        Console.Error.WriteLine($"[translator] Could not read Retro WFC payload: {ex.Message}");
-        return 1;
-    }
 }
 
 int RunTranslateRecursive(string[] argsTail)
@@ -3573,8 +3545,7 @@ static string[] KnownCommands() => new[]
     "translate-mod",
     "emit-base-manifest",
     "emit-build-shards",
-    "check-base-mod-awareness",
-    "validate-retro-wfc-payload"
+    "check-base-mod-awareness"
 };
 
 /// <summary>
@@ -3616,10 +3587,6 @@ static (string? Positional, CommandOption[] Options)? CommandSpec(string command
     {
         new("--translation-output-metadata", "path"),
         new("--code-pul", "path")
-    }),
-    "validate-retro-wfc-payload" => (null, new CommandOption[]
-    {
-        new("--directory", "directory", Required: true)
     }),
     "emit-base-manifest" => (null, new CommandOption[]
     {

@@ -1,4 +1,4 @@
-name: Build
+name: Translator
 
 on:
   push:
@@ -14,10 +14,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  recompilation:
-    name: Recompilation test
-    uses: ./.github/workflows/recomp-test.yml
-
   translator:
     name: Translator (build + test)
     runs-on: windows-latest

@@ -5,6 +5,7 @@
 #   ./build.sh "/path/to/game.wbfs"      # disc image: ISO, RVZ, WBFS, WIA, CISO, GCZ, ...
 #   ./build.sh "/path/to/extracted/game" # or a folder extracted with Dolphin (sys/ + files/)
 #   ./build.sh --skip-translate          # recompile the runtime only
+#   ./build.sh --jobs 8                  # cap parallel compile jobs (default: all cores)
 #
 # The game files are installed into the app's data folder (next to Config.toml and saves), so the
 # original image/folder isn't needed afterwards. Build output (Assets/, generated/, build-*/) stays
@@ -39,7 +40,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --skip-translate) SKIP_TRANSLATE=1 ;;
         --jobs) JOBS="$2"; shift ;;
-        -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
         *) GAME="$1" ;;
     esac
     shift
@@ -59,8 +60,8 @@ case "$(uname -s)" in
             SHA256() { sha256sum "$1" | cut -d' ' -f1; } ;;
     *) fail "unsupported OS; on Windows run build.cmd" ;;
 esac
-# Like WiiCompiled's installer, the game files are installed next to the config and saves, so the
-# original disc image or folder isn't needed once the build is done.
+# The game files are installed next to the config and saves, so the original disc image or folder
+# isn't needed once the build is done.
 GAME_DIR="$APP_DIR/Game"
 
 need dotnet "Install the .NET 8 SDK."

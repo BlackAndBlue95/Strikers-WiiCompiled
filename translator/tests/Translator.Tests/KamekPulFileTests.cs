@@ -78,32 +78,6 @@ public class KamekPulFileTests
         Assert.Throws<ArgumentOutOfRangeException>(() => KamekPpcEncoding.EncodeBranch(0x8053369C, 0x8053369D, link: false));
     }
 
-    [Fact]
-    public void ParsesBundledRetroRewindCodePulWhenPresent()
-    {
-        var repoRoot = ProjectPathsForTests.FindRepositoryRoot();
-        var codePul = Path.Combine(repoRoot, "PulsarPacks", "completed", "RetroRewind", "RetroRewind6", "Binaries", "Code.pul");
-        if (!File.Exists(codePul))
-        {
-            return;
-        }
-
-        var pul = KamekPulFile.Load(codePul);
-        var chunk = pul.SelectRegion("P");
-
-        Assert.True(pul.IsCombined);
-        Assert.Equal(3, pul.Chunks.Count);
-        Assert.All(pul.CombinedChunkSizes.Take(3), size => Assert.True(size >= KamekChunk.HeaderSize));
-        Assert.Equal(0u, pul.CombinedChunkSizes[3]);
-        Assert.NotEmpty(chunk.CodeBlob);
-        Assert.True(chunk.BssSize > 0);
-        Assert.True(chunk.CtorStart <= chunk.CtorEnd);
-        Assert.True(chunk.CtorEnd <= chunk.CodeSize);
-        Assert.NotEmpty(chunk.Commands);
-        Assert.Equal(chunk.Commands.Count, chunk.RelativeCommandCount + chunk.AbsoluteCommandCount);
-        Assert.Equal(chunk.Commands.Count, chunk.CommandCounts.Values.Sum());
-    }
-
     private static byte[] BuildChunk(uint bssSize, byte[] code, byte[][] commands,
         uint magic1 = KamekChunk.Magic1)
     {
@@ -151,23 +125,4 @@ public class KamekPulFileTests
 
     private static void WriteU32(byte[] data, int offset, uint value) =>
         BinaryPrimitives.WriteUInt32BigEndian(data.AsSpan(offset, 4), value);
-}
-
-internal static class ProjectPathsForTests
-{
-    public static string FindRepositoryRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "translator", "Translator.sln")) &&
-                File.Exists(Path.Combine(dir.FullName, "projects", "mkwii", "recomp.yml")))
-            {
-                return dir.FullName;
-            }
-            dir = dir.Parent;
-        }
-
-        throw new DirectoryNotFoundException("Could not find repository root.");
-    }
 }

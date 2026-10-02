@@ -9,13 +9,12 @@
     <ServerGarbageCollection>true</ServerGarbageCollection>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
     <VersionPrefix>0.5.0</VersionPrefix>
-    <Company>WiiCompiled</Company>
-    <Product>Mario Kart Wii Static Translator</Product>
+    <Company>Strikers-WiiCompiled</Company>
+    <Product>WiiCompiled Static Translator</Product>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Translator.Core\Translator.Core.csproj" />
-    <ProjectReference Include="..\..\..\Launcher\WiiCompiled.Setup.Common\WiiCompiled.Setup.Common.csproj" />
   </ItemGroup>
 
   <ItemGroup>

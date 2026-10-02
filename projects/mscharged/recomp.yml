@@ -28,7 +28,7 @@ translation:
   allow_unsupported_instructions: true
 
 runtime:
-  native_registration_root: runtime/src   # re-keyed by scripts/msc/remap_runtime.py
+  native_registration_root: runtime/src
   native_abi_directories:
     - runtime/src/hle/gx
 

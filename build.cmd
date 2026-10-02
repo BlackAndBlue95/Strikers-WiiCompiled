@@ -1,6 +1,6 @@
 @echo off
 rem Windows entry point: runs build.ps1 without needing to change PowerShell's execution policy.
-rem Usage: build.cmd "C:\path\to\extracted\game"
+rem Usage: build.cmd [disc image or extracted game folder] [-SkipTranslate] [-Jobs N]
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build.ps1" %*
 set RC=%ERRORLEVEL%
 rem Keep the window open when started by double-click (no arguments).

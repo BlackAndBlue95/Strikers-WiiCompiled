@@ -1,11 +1,11 @@
-# Contributing to WiiCompiled
+# Contributing to Strikers-WiiCompiled
 
-Thanks for wanting to help! A few ground rules
+Thanks for wanting to help! A few ground rules.
 
 ## The short version
 
 - Code is judged on quality, not where it came from
-- You must be able understand and be able to explain every line you submit.
+- You must be able to understand and explain every line you submit.
 - PR descriptions and responses must be written by you, **not** generated.
 - Accuracy is the bar for anything touching game behavior.
 
@@ -41,14 +41,18 @@ That's ok, but rules apply:
 
 ## Bug reports
 
-See the FAQ in the [README](README.md)
+Say what you did and what happened, and attach `console.log` from the `Logs` folder in the
+`MSCRecomp` data folder ([where that is](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Building#building-the-port)).
+The goal is behavior identical to the original game, so report things where the port differs from
+it.
 
 ## A note on related projects
 
-WiiCompiled, Wheel Wizard, and other projects in this ecosystem are developed
-independently and each has its **own** contribution rules and all have their own
-rules around AI usage. What applies here does not automatically apply there,
-and vice versa. Check each project's own CONTRIBUTING file.
+WiiCompiled, the Mario Kart Wii project this one is forked from, and the other
+projects it builds on are developed independently, each with its **own**
+contribution rules, including around AI usage. What applies here does not
+automatically apply there, and vice versa. Check each project's own
+CONTRIBUTING file.
 
 ## Legal
 

@@ -1,33 +1,29 @@
+# Game files and anything derived from them: everyone builds from their own copy
 /generated/
 /Assets/
-/assets/
-/PulsarPacks/
 *.dol
 *.rel
-*.szs
-*.arc
-*.brres
 *.thp
-*.bmg
-*.brsar
-*.breff
-*.u8
-*.carc
+*.rlg
+*.rlt
+*.nis
+*.sanim
+*.resbun
+*.nlxwb
 *.iso
 *.rvz
 *.wbfs
+*.wia
+*.gcz
 *.nkit
 *.ciso
 *.gcm
+*.nfs
 *.wad
-Code.pul
 
 # Build output
 /build/
 /build-*/
-/native-build/
-/native-build-macos/
-/local-products/
 /dist/
 /out/
 [Bb]in/
@@ -39,13 +35,12 @@ Code.pul
 *.pdb
 *.ilk
 *.map
+*.exe
 CMakeCache.txt
 CMakeFiles/
 cmake-build-*/
 
-
 # .NET
-/translator/TestResults/
 **/TestResults/
 *.user
 *.suo
@@ -53,22 +48,14 @@ cmake-build-*/
 project.lock.json
 .packages/
 
-# Launcher artifacts
-/Launcher/artifacts/
-/Launcher/dist/
-/Launcher/WiiCompiled-Setup.exe
-*.exe
-*.msi
-
-
 # Local tooling and editors
 /.vs/
 /.vscode/
 /.idea/
+/.claude/
 /tools/
 /TEMP/
 /tmp/
-/test_output/
 *.log
 output.txt
 
