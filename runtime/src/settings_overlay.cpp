@@ -1217,6 +1217,12 @@ void DrawModSettings() {
     }
     ImGui::TextDisabled("Skips menu transitions: panels sliding in and out, and camera moves such as\n"
                         "the zoom from the main menu. Idle animations and matches are unchanged.");
+    bool skipIntro = RuntimeConfigFile::ModSkipIntro();
+    if (ImGui::Checkbox("Skip intro", &skipIntro)) {
+        RuntimeConfigFile::SetModSkipIntro(skipIntro);
+    }
+    ImGui::TextDisabled("Boots straight to the main menu: no notice screens, intro movie or title\n"
+                        "screen (the studio logo still shows). Takes effect from the next launch.");
     bool allCaptains = RuntimeConfigFile::ModAllCaptains();
     if (ImGui::Checkbox("Captain-only teams", &allCaptains)) {
         RuntimeConfigFile::SetModAllCaptains(allCaptains);

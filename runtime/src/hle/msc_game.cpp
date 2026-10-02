@@ -2944,3 +2944,56 @@ extern "C" void MSC_DpadActionHeld_80036F88(CpuContext* ctx)
     ctx->gpr[3] = held ? 1u : 0u;
 }
 PPC_NATIVE_OVERRIDE_VOID(80036F88, MSC_DpadActionHeld_80036F88, (CpuContext* ctx), (ctx));
+
+// Skip intro (Tweaks): boot straight to the main menu. The boot screens (BootLoadingScene's notice,
+// strap and Nunchuk slides; the studio logo keeps its few seconds) end at once, the intro movie is
+// skipped as if A were pressed, and the title screen is passed as if its controller pressed A, so the
+// game's own transition to the main menu runs. Once per launch: back on the title screen later, it
+// waits for A as usual.
+namespace SkipIntro {
+bool g_passed = false;  // the title screen was passed
+bool Active() { return !g_passed && RuntimeConfigFile::ModSkipIntro(); }
+} // namespace SkipIntro
+
+// void BootLoadingScene::Update(float dt): its slides run on dt (the strap screen also times out on
+// it), so a long step ends each one at once. Not the studio logo's: its jingle's bank is unloaded as
+// the slide ends, and unloaded under the playing jingle it crashes the sound update.
+extern "C" void func_80263A54(CpuContext* ctx);
+static void SkipIntroBootLoading(CpuContext* ctx)
+{
+    constexpr uint32_t kPhase = 0x28, kLogoPhase = 3;  // BootLoadingScene
+    if (SkipIntro::Active() && ctx->gpr[3] != 0 && Memory::Read32(ctx->gpr[3] + kPhase) != kLogoPhase)
+        ctx->fpr[1].d = std::max(ctx->fpr[1].d, 30.0);
+    func_80263A54(ctx);
+}
+PPC_NATIVE_WRAP(80263A54, SkipIntroBootLoading);
+
+// bool MoviePlayerScene::CheckMoviePlayerAbort(): A pressed on any pad skips the movie playing.
+extern "C" void func_801D97B0(CpuContext* ctx);
+static void SkipIntroMovie(CpuContext* ctx)
+{
+    func_801D97B0(ctx);
+    if (SkipIntro::Active()) ctx->gpr[3] = 1;
+}
+PPC_NATIVE_WRAP(801D97B0, SkipIntroMovie);
+
+// void TitleScene::Update(float dt): once it takes input (1.5 s in), OnControllerPointerPress for the
+// controller the front end listens to, as its A does, unless the scene was already left this frame.
+extern "C" void func_801D1354(CpuContext* ctx);
+static void SkipIntroTitle(CpuContext* ctx)
+{
+    constexpr uint32_t kSceneManager = 0x806E1838u;   // GameSceneManager: depth +0x04, handlers +0x88
+    constexpr uint32_t kControllerIndex = 0x806E18B0u;  // gFEControllerIndex
+    constexpr uint32_t kPointerPress = 0x801D22C8u;   // TitleScene::OnControllerPointerPress(int, void*)
+    constexpr uint32_t kStartedDemo = 0xDC, kInitialized = 0xDE;  // TitleScene
+    const uint32_t scene = ctx->gpr[3];
+    func_801D1354(ctx);
+    if (!SkipIntro::Active() || scene == 0) return;
+    if (!Memory::Read8(scene + kInitialized) || Memory::Read8(scene + kStartedDemo)) return;
+    const uint32_t depth = Memory::Read32(kSceneManager + 0x04);
+    if (depth == 0 || depth > 32 || Memory::Read32(kSceneManager + 0x88 + (depth - 1) * 4) != scene) return;
+    SkipIntro::g_passed = true;
+    RT_LOG(RT_TAG_MODS) << "skip intro: title screen passed" << std::endl;
+    MscGuest::Call(ctx, kPointerPress, {scene, Memory::Read32(kControllerIndex), 0});
+}
+PPC_NATIVE_WRAP(801D1354, SkipIntroTitle);
