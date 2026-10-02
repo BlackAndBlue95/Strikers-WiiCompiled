@@ -116,6 +116,7 @@ int g_displayMode = [] {
 }();
 bool g_skipUnreadyPipelines = RuntimeConfigFile::SkipUnreadyPipelines(true);
 bool g_disableCopyFilter = RuntimeConfigFile::DisableCopyFilter(true);
+bool g_scaledEfbCopy = RuntimeConfigFile::ScaledEfbCopy(true);
 bool g_showFps = RuntimeConfigFile::ShowFps(true);
 bool g_forceAspect169 = RuntimeConfigFile::ForceAspect169Enabled();
 uint32_t g_disabledPostProcessingPaths = RuntimeConfigFile::DisabledPostProcessingPaths(0);
@@ -1321,6 +1322,14 @@ void DrawGraphicsSettings() {
         aurora_set_disable_copy_filter(g_disableCopyFilter);
         RuntimeConfigFile::SetDisableCopyFilter(g_disableCopyFilter);
     }
+    if (ImGui::Checkbox("Scaled EFB copies", &g_scaledEfbCopy)) {
+        aurora_set_scaled_efb_copies(g_scaledEfbCopy);
+        RuntimeConfigFile::SetScaledEfbCopy(g_scaledEfbCopy);
+    }
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f);
+    ImGui::TextDisabled("As Dolphin's Scaled EFB Copy. Off: the screen copies effects are built from stay at "
+                        "native size, so blur, bloom and depth of field look as on a Wii at any resolution.");
+    ImGui::PopTextWrapPos();
     if (ImGui::Checkbox("Skip draws while shaders compile", &g_skipUnreadyPipelines)) {
         aurora_set_skip_unready_pipelines(g_skipUnreadyPipelines);
         RuntimeConfigFile::SetSkipUnreadyPipelines(g_skipUnreadyPipelines);
@@ -1637,6 +1646,7 @@ void InitializeRuntimeSettings() noexcept {
     aurora_set_display_mode(static_cast<AuroraDisplayMode>(g_displayMode));
     g_displayMode = static_cast<int>(aurora_get_display_mode());
     aurora_set_disable_copy_filter(g_disableCopyFilter);
+    aurora_set_scaled_efb_copies(g_scaledEfbCopy);
     aurora_set_skip_unready_pipelines(g_skipUnreadyPipelines);
     g_strapInputAccepted.store(false, std::memory_order_relaxed);
     g_startupDismissFrame.store(UINT64_MAX, std::memory_order_relaxed);

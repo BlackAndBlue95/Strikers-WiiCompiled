@@ -95,6 +95,10 @@ typedef struct {
   bool allowTextureReplacements;
   bool allowTextureDumps;
   bool disableCopyFilter;
+  // EFB texture copies at native (logical) size instead of the internal resolution (Dolphin's
+  // "Scaled EFB Copy" off): effects built from downsampled copies (blur, bloom, depth of field)
+  // look as they did at native resolution, at the cost of their sharpness.
+  bool nativeEfbCopies;
   // When false, Aurora centers the first window. When true, windowPosX/Y are restored verbatim,
   // including negative coordinates on monitors left of or above the primary display.
   bool hasWindowPosition;

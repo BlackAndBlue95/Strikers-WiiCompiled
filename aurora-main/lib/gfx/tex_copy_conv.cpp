@@ -27,6 +27,7 @@ struct UVTransform {
     scale: vec2f,
     copy_filter: vec4f,
     flags: vec4f,
+    footprint: vec4f,
 };
 @group(0) @binding(2) var<uniform> uv_xf: UVTransform;
 
@@ -73,8 +74,30 @@ fn clamp_copy_uv(uv: vec2f) -> vec2f {
     return vec2f(uv.x, clamp(uv.y, uv_xf.flags.z, uv_xf.flags.w));
 }
 
+// A copy more than twice smaller than its source (a native-size copy of a scaled EFB) averages each
+// destination texel's whole footprint, as the native-resolution copy saw it. footprint.xy is that
+// footprint in source texels, footprint.z the spacing of the taps (2 with a linear sampler, whose
+// taps each cover 2x2 texels).
+fn box_sample(uv: vec2f) -> vec4f {
+    let fp = uv_xf.footprint.xy;
+    if (fp.x <= 2.0 && fp.y <= 2.0) {
+        return textureSample(src, src_samp, clamp_copy_uv(uv));
+    }
+    let texel = vec2f(1.0, 1.0) / vec2f(textureDimensions(src));
+    let taps = vec2i(clamp(ceil(fp / uv_xf.footprint.z), vec2f(1.0), vec2f(16.0)));
+    let step = fp / vec2f(taps);
+    var sum = vec4f(0.0);
+    for (var y = 0; y < taps.y; y++) {
+        for (var x = 0; x < taps.x; x++) {
+            let offset = (vec2f(f32(x), f32(y)) + vec2f(0.5)) * step - fp * 0.5;
+            sum += textureSampleLevel(src, src_samp, clamp_copy_uv(uv + offset * texel), 0.0);
+        }
+    }
+    return sum / f32(taps.x * taps.y);
+}
+
 fn sample_copy(uv: vec2f) -> vec4f {
-    let current = textureSample(src, src_samp, clamp_copy_uv(uv));
+    let current = box_sample(uv);
     if (uv_xf.copy_filter.w == 0.0) {
         return apply_opaque_alpha(current);
     }
@@ -82,10 +105,8 @@ fn sample_copy(uv: vec2f) -> vec4f {
     let tex_size = vec2f(textureDimensions(src));
     let pixel_size = vec2f(1.0, 1.0) / tex_size;
     let row_stride = max(uv_xf.flags.y, 1.0);
-    let prev = textureSample(src, src_samp,
-        clamp_copy_uv(uv - vec2f(0.0, pixel_size.y * row_stride)));
-    let next = textureSample(src, src_samp,
-        clamp_copy_uv(uv + vec2f(0.0, pixel_size.y * row_stride)));
+    let prev = box_sample(uv - vec2f(0.0, pixel_size.y * row_stride));
+    let next = box_sample(uv + vec2f(0.0, pixel_size.y * row_stride));
     let prev_rgb = floor(prev.rgb * 255.0 + vec3f(0.5));
     let current_rgb = floor(current.rgb * 255.0 + vec3f(0.5));
     let next_rgb = floor(next.rgb * 255.0 + vec3f(0.5));
@@ -107,6 +128,7 @@ struct UVTransform {
     scale: vec2f,
     copy_filter: vec4f,
     flags: vec4f,
+    footprint: vec4f,
 };
 @group(0) @binding(1) var<uniform> uv_xf: UVTransform;
 

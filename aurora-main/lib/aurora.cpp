@@ -1960,6 +1960,8 @@ void aurora_set_log_level(AuroraLogLevel level) { aurora::g_config.logLevel = le
 void aurora_set_pause_on_focus_lost(bool value) { aurora::g_config.pauseOnFocusLost = value; }
 void aurora_set_disable_copy_filter(bool disabled) { aurora::g_config.disableCopyFilter = disabled; }
 bool aurora_get_disable_copy_filter() { return aurora::g_config.disableCopyFilter; }
+void aurora_set_scaled_efb_copies(bool scaled) { aurora::g_config.nativeEfbCopies = !scaled; }
+bool aurora_get_scaled_efb_copies() { return !aurora::g_config.nativeEfbCopies; }
 void aurora_set_background_input(bool value) {
   aurora::g_config.allowJoystickBackgroundEvents = value;
   aurora::window::set_background_input(value);

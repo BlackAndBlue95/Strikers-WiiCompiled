@@ -459,7 +459,11 @@ void GXCopyTex(void* dest, GXBool clear) {
   // Keep guest dimensions for cache identity while preserving scaled GPU detail.
   const auto logicalDstWidth = std::max<u32>(g_gxState.texCopyDstWidth, 1);
   const auto logicalDstHeight = std::max<u32>(g_gxState.texCopyDstHeight, 1);
-  const auto [scaledDstWidth, scaledDstHeight] = scale_copy_dst(logicalDstWidth, logicalDstHeight);
+  // Scaled EFB copies off: the copy keeps the guest's size and the resolve averages the scaled source.
+  const bool nativeCopy = aurora::g_config.nativeEfbCopies && !g_gxState.texCopySrcRenderSpace;
+  const auto [scaledDstWidth, scaledDstHeight] =
+      nativeCopy ? aurora::Vec2<uint32_t>{logicalDstWidth, logicalDstHeight}
+                 : scale_copy_dst(logicalDstWidth, logicalDstHeight);
   const auto texCopyFmt = g_gxState.texCopyFmt;
   const bool sourceHasAlpha = aurora::gx::render_target_has_alpha(g_gxState.pixelFmt);
   const bool forceOpaqueAlpha = !sourceHasAlpha && !aurora::gx::is_depth_format(texCopyFmt);

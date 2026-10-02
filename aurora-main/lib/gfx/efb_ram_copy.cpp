@@ -108,7 +108,7 @@ void ensure_native_texture(PendingCopy& pending, TextureHandle* cache = nullptr)
   }
   // The shared blit shader clamps Y to flags.z/w; preserve the full source.
   const std::array nativeBlitUniform{
-      0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 64.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f,
+      0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 64.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f, 2.0f, 0.0f,
   };
   pending.nativeBlitUniform = push_uniform(nativeBlitUniform);
   pending.nativeUniformEpoch = staging_epoch();
@@ -241,7 +241,7 @@ bool prepare_downloads(void* dest) {
     if (pending.texture->size.width != pending.width || pending.texture->size.height != pending.height) ++copies;
   }
   // Reserve all copies, even already-prepared ones: a split retires their ranges.
-  ensure_staging_space({0, copies * staging_uniform_bytes(48), 0, 0});
+  ensure_staging_space({0, copies * staging_uniform_bytes(64), 0, 0});
   bool found = false;
   for (auto& pending : g_pending) {
     if (dest != nullptr && pending.dest != dest) continue;

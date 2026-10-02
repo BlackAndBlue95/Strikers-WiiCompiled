@@ -82,6 +82,11 @@ uint32_t aurora_get_queued_pipeline_count();
 void aurora_set_disable_copy_filter(bool disabled);
 bool aurora_get_disable_copy_filter();
 
+// Whether EFB texture copies are made at the internal resolution (the default) or at native size,
+// as Dolphin's "Scaled EFB Copy". Display copies always use the internal resolution.
+void aurora_set_scaled_efb_copies(bool scaled);
+bool aurora_get_scaled_efb_copies();
+
 // Guest-RAM write tracking. `generation` changes whenever guest RAM covering a host range was
 // written (or returns AURORA_GUEST_WRITE_UNTRACKED); `notify` reports writes aurora made itself.
 #define AURORA_GUEST_WRITE_UNTRACKED UINT64_MAX

@@ -289,7 +289,7 @@ void set_staging_capacity_limits_for_testing(const StagingSizes& limits) {
 bool staging_has_space(const StagingSizes& demand) {
   // Async readback preparation runs in the worker's noexcept seal prologue.
   // Reserve all 32 slots plus the uniform binding's 3840-byte trailing window.
-  const StagingSizes tail{0, gx::MaxUniformSize + efb_ram::MaxAsyncReadbackSlots * staging_uniform_bytes(48), 0, 0};
+  const StagingSizes tail{0, gx::MaxUniformSize + efb_ram::MaxAsyncReadbackSlots * staging_uniform_bytes(64), 0, 0};
   const StagingSizes retained = g_suspendedEfbPass ? g_suspendedEfbBytes : StagingSizes{};
   if (!staging_fits(retained, demand, tail, g_stagingCapacity))
     throw StagingCapacityError("GPU operation exceeds staging capacity including retained EFB data");
@@ -559,7 +559,7 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
     Log.warn("Dropping resolve pass without an active render pass");
     return;
   }
-  ensure_staging_space({0, 2 * staging_uniform_bytes(48), 0, 0});
+  ensure_staging_space({0, 2 * staging_uniform_bytes(64), 0, 0});
   auto& prevPass = g_renderPasses[g_currentRenderPass];
   const auto targetWidth = static_cast<int32_t>(prevPass.targetSize.width);
   const auto targetHeight = static_cast<int32_t>(prevPass.targetSize.height);
@@ -648,6 +648,11 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
       std::max(copyFilterRowStride, 1.0f),
       clampTopUv,
       clampBottomUv,
+      // Source texels per destination texel (native-size copies of a scaled EFB box-filter them).
+      prevPass.resolveTarget ? sourceRect.z() / static_cast<float>(prevPass.resolveTarget->size.width) : 1.0f,
+      prevPass.resolveTarget ? sourceRect.w() / static_cast<float>(prevPass.resolveTarget->size.height) : 1.0f,
+      samplingPlan.usesLinearSampling ? 2.0f : 1.0f,
+      0.0f,
   };
   prevPass.resolveUniformRange = push_uniform(resolveUniform);
   const bool clearFullTarget = rect.x <= 0 && rect.y <= 0 &&

@@ -45,6 +45,7 @@ struct RuntimeUserConfig {
     std::optional<uint32_t> frameRate;
     std::optional<bool> skipUnreadyPipelines;
     std::optional<bool> disableCopyFilter;
+    std::optional<bool> scaledEfbCopy;
     std::optional<bool> textureReplacements;
     std::optional<bool> textureDumps;
     std::optional<bool> showFps;
@@ -334,6 +335,9 @@ inline void EnsureConfigFile() {
               "graphics_api = \"auto\"\n"
               "skip_unready_pipelines = true\n"
               "disable_copy_filter = true\n"
+              "# EFB copies at the internal resolution (Dolphin's Scaled EFB Copy). Off: native size,\n"
+              "# so blur, bloom and depth of field look as at native resolution.\n"
+              "scaled_efb_copy = true\n"
               "show_fps = true\n"
               "# Dolphin-style custom textures. When enabled, the renderer indexes\n"
               "# texture_replacements/ next to this file at startup and substitutes\n"
@@ -544,6 +548,7 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     }
     config.skipUnreadyPipelines = FindConfigValue<bool>(document, "video", "skip_unready_pipelines");
     config.disableCopyFilter = FindConfigValue<bool>(document, "video", "disable_copy_filter");
+    config.scaledEfbCopy = FindConfigValue<bool>(document, "video", "scaled_efb_copy");
     config.showFps = FindConfigValue<bool>(document, "video", "show_fps");
     config.textureReplacements = FindConfigValue<bool>(document, "video", "texture_replacements");
     config.textureDumps = FindConfigValue<bool>(document, "video", "texture_dumps");
@@ -771,6 +776,11 @@ inline bool SetSkipUnreadyPipelines(bool value) {
 inline bool SetDisableCopyFilter(bool value) {
     Mutable().disableCopyFilter = value;
     return WriteSetting("video", "disable_copy_filter", value ? "true" : "false");
+}
+
+inline bool SetScaledEfbCopy(bool value) {
+    Mutable().scaledEfbCopy = value;
+    return WriteSetting("video", "scaled_efb_copy", value ? "true" : "false");
 }
 
 inline bool SetShowFps(bool value) {
@@ -1127,6 +1137,10 @@ inline bool DisableCopyFilter(bool fallback = true) {
     return Get().disableCopyFilter.value_or(fallback);
 }
 
+inline bool ScaledEfbCopy(bool fallback = true) {
+    return Get().scaledEfbCopy.value_or(fallback);
+}
+
 inline bool ShowFps(bool fallback = true) {
     return Get().showFps.value_or(fallback);
 }
@@ -1285,6 +1299,9 @@ inline void LogLoadedConfig() {
             }
             if (config.disableCopyFilter) {
                 std::cout << " disable_copy_filter=" << (*config.disableCopyFilter ? "true" : "false");
+            }
+            if (config.scaledEfbCopy) {
+                std::cout << " scaled_efb_copy=" << (*config.scaledEfbCopy ? "true" : "false");
             }
             if (config.showFps) {
                 std::cout << " show_fps=" << (*config.showFps ? "true" : "false");
