@@ -69,6 +69,10 @@ internal static class JumpTableDetector
             return false;
         }
         entriesAreRelative = HasRelativeEntryAdd(ordered, loadIndex, mtctrIndex, targetRegister, baseReg.Name);
+        if (!OnlyRelativeEntryAddsBetween(ordered, loadIndex, mtctrIndex, targetRegister, baseReg.Name))
+        {
+            return false;
+        }
 
         if (!TryFindUpperBound(ordered, loadIndex, indexReg.Name, out var upperBound) || upperBound < 0 || upperBound >= MaxEntryCount)
         {
@@ -156,26 +160,58 @@ internal static class JumpTableDetector
         return false;
     }
 
+    // Between the entry load and mtctr, the target register may only be rebased onto the table
+    // (add rT, rT, rBase): any other write means the loaded entry isn't what reaches the CTR.
+    private static bool OnlyRelativeEntryAddsBetween(
+        IReadOnlyList<PpcInstruction> ordered,
+        int loadIndex,
+        int mtctrIndex,
+        string targetRegister,
+        string tableBaseRegister)
+    {
+        for (var i = loadIndex + 1; i < mtctrIndex; i++)
+        {
+            var ins = ordered[i];
+            if (!WritesRegister(ins, targetRegister))
+            {
+                continue;
+            }
+
+            if (!IsAddKeeping(ins, targetRegister) ||
+                ins.Operands[1] is not PpcRegisterOperand left || ins.Operands[2] is not PpcRegisterOperand right ||
+                !(RegistersEqual(left.Name, tableBaseRegister) || RegistersEqual(right.Name, tableBaseRegister)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // add rT, rT, rX or add rT, rX, rT.
+    private static bool IsAddKeeping(PpcInstruction ins, string register) =>
+        ins.Mnemonic == "add" && ins.Operands.Count >= 3 &&
+        ins.Operands[0] is PpcRegisterOperand dest && RegistersEqual(dest.Name, register) &&
+        ins.Operands[1] is PpcRegisterOperand left && ins.Operands[2] is PpcRegisterOperand right &&
+        (RegistersEqual(left.Name, register) || RegistersEqual(right.Name, register));
+
     private static int FindPreviousLoad(IReadOnlyList<PpcInstruction> ordered, int startIndex, string register)
     {
         for (var i = startIndex - 1; i >= 0 && startIndex - i <= MaxBacktrackInstructions; i--)
         {
             var ins = ordered[i];
-            if (ins.Operands.Count == 0 || ins.Operands[0] is not PpcRegisterOperand dest)
+            if (!WritesRegister(ins, register) || IsAddKeeping(ins, register))
             {
+                // An add that keeps the register as an input is the relative-entry add; it is
+                // checked against the table base once that is known.
                 continue;
             }
 
-            if (!string.Equals(dest.Name, register, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            // Decoder mnemonics are lowercase by construction.
-            if (ins.Mnemonic is "lwzx" or "lwz")
-            {
-                return i;
-            }
+            // The nearest other write decides; decoder mnemonics are lowercase by construction.
+            return ins.Mnemonic is "lwzx" or "lwz" && ins.Operands[0] is PpcRegisterOperand dest &&
+                   RegistersEqual(dest.Name, register)
+                ? i
+                : -1;
         }
 
         return -1;
@@ -189,12 +225,7 @@ internal static class JumpTableDetector
         for (var i = startIndex - 1; i >= 0 && startIndex - i <= MaxBacktrackInstructions; i--)
         {
             var ins = ordered[i];
-            if (ins.Operands.Count == 0 || ins.Operands[0] is not PpcRegisterOperand dest)
-            {
-                continue;
-            }
-
-            if (!string.Equals(dest.Name, baseRegister, StringComparison.OrdinalIgnoreCase))
+            if (!WritesRegister(ins, baseRegister))
             {
                 continue;
             }
@@ -217,6 +248,9 @@ internal static class JumpTableDetector
                 value = unchecked((uint)(hi + low));
                 return true;
             }
+
+            // Anything else wrote the register, so it doesn't hold a lis/addi constant here.
+            break;
         }
 
         value = 0;
@@ -383,21 +417,26 @@ internal static class JumpTableDetector
 
     private static bool TryFindUpperBound(IReadOnlyList<PpcInstruction> ordered, int startIndex, string register, out int upperBound)
     {
-        // Preferred: compare directly on the same register used for lwzx indexing.
+        // Preferred: the compare on the register used for lwzx indexing, followed back through the
+        // shift that scales it to a word offset (or a plain move), and never past another write.
+        var tracked = register;
         for (var i = startIndex - 1; i >= 0 && startIndex - i <= MaxBacktrackInstructions; i--)
         {
             var ins = ordered[i];
-            if (ins.Operands.Count < 2 || ins.Operands[0] is not PpcRegisterOperand reg ||
-                !string.Equals(reg.Name, register, StringComparison.OrdinalIgnoreCase) ||
-                ins.Operands[1] is not PpcImmediateOperand imm)
+            if (TryCompareImmediate(ins, out var compared, out var bound) && RegistersEqual(compared, tracked))
+            {
+                upperBound = bound;
+                return true;
+            }
+
+            if (!WritesRegister(ins, tracked))
             {
                 continue;
             }
 
-            if (ins.Mnemonic is "cmplwi" or "cmpwi")
+            if (!TryScaledOrMovedSource(ins, out tracked))
             {
-                upperBound = imm.Value;
-                return true;
+                break;
             }
         }
 
@@ -405,29 +444,124 @@ internal static class JumpTableDetector
         // register (e.g. r30) that feeds lwzx, so the bound check may not target the index register.
         for (var i = startIndex - 1; i >= 0 && startIndex - i <= MaxBacktrackInstructions; i--)
         {
-            var ins = ordered[i];
-            if (ins.Operands.Count < 2 || ins.Operands[1] is not PpcImmediateOperand imm)
+            if (!TryCompareImmediate(ordered[i], out _, out var bound) || bound < 0 || bound >= MaxEntryCount)
             {
                 continue;
             }
 
-            if (ins.Mnemonic is not ("cmplwi" or "cmpwi"))
-            {
-                continue;
-            }
-
-            if (imm.Value < 0 || imm.Value >= MaxEntryCount)
-            {
-                continue;
-            }
-
-            upperBound = imm.Value;
+            upperBound = bound;
             return true;
         }
 
         upperBound = 0;
         return false;
     }
+
+    // cmpwi / cmplwi [crN,] rA, imm: the decoder puts a CR field first unless it is cr0.
+    private static bool TryCompareImmediate(PpcInstruction ins, out string register, out int immediate)
+    {
+        register = string.Empty;
+        immediate = 0;
+        if (ins.Mnemonic is not ("cmplwi" or "cmpwi"))
+        {
+            return false;
+        }
+
+        var first = ins.Operands.Count > 0 && ins.Operands[0] is PpcConditionRegisterOperand ? 1 : 0;
+        if (ins.Operands.Count < first + 2 ||
+            ins.Operands[first] is not PpcRegisterOperand compared ||
+            ins.Operands[first + 1] is not PpcImmediateOperand value)
+        {
+            return false;
+        }
+
+        register = compared.Name;
+        immediate = value.Value;
+        return true;
+    }
+
+    // rlwinm rA, rS, 2, 0, 29 (slwi rA, rS, 2) or mr rA, rS: rA holds rS, as a word offset or as is.
+    private static bool TryScaledOrMovedSource(PpcInstruction ins, out string source)
+    {
+        source = string.Empty;
+        if (ins.Mnemonic == "slwi" && ins.Operands.Count == 3 &&
+            ins.Operands[1] is PpcRegisterOperand slwiSource &&
+            ins.Operands[2] is PpcImmediateOperand { Value: 2 })
+        {
+            source = slwiSource.Name;
+            return true;
+        }
+
+        if (ins.Mnemonic == "rlwinm" && ins.Operands.Count == 5 &&
+            ins.Operands[1] is PpcRegisterOperand shifted &&
+            ins.Operands[2] is PpcImmediateOperand { Value: 2 } &&
+            ins.Operands[3] is PpcImmediateOperand { Value: 0 } &&
+            ins.Operands[4] is PpcImmediateOperand { Value: 29 })
+        {
+            source = shifted.Name;
+            return true;
+        }
+
+        if (ins.Mnemonic == "mr" && ins.Operands.Count >= 2 && ins.Operands[1] is PpcRegisterOperand moved)
+        {
+            source = moved.Name;
+            return true;
+        }
+
+        return false;
+    }
+
+    // Whether `ins` writes `register`. The backward searches stop at the nearest write: one that
+    // stepped past it would read a value the register no longer holds.
+    private static bool WritesRegister(PpcInstruction ins, string register)
+    {
+        if (ins.IsCall)
+        {
+            return IsVolatileGpr(register);
+        }
+
+        var mnemonic = ins.Mnemonic;
+        if (IsUpdateForm(mnemonic) && ins.Operands.Count >= 2 &&
+            ((ins.Operands[1] is PpcDisplacementOperand displacement && RegistersEqual(displacement.BaseRegister, register)) ||
+             (ins.Operands[1] is PpcRegisterOperand updatedBase && RegistersEqual(updatedBase.Name, register))))
+        {
+            return true;
+        }
+
+        if (ins.Operands.Count == 0 || ins.Operands[0] is not PpcRegisterOperand destination)
+        {
+            return false;
+        }
+
+        if (mnemonic == "lmw")
+        {
+            return register.Length >= 2 && register[0] == 'r' &&
+                   int.TryParse(register.AsSpan(1), out var number) && number >= destination.Number;
+        }
+
+        return RegistersEqual(destination.Name, register) && !ReadsFirstOperand(mnemonic);
+    }
+
+    // Instructions whose first register operand is a source: stores, compares, mt*, traps, cache ops.
+    private static bool ReadsFirstOperand(string mnemonic) =>
+        mnemonic.StartsWith("st", StringComparison.Ordinal) ||
+        mnemonic.StartsWith("psq_st", StringComparison.Ordinal) ||
+        mnemonic.StartsWith("cmp", StringComparison.Ordinal) ||
+        mnemonic.StartsWith("mt", StringComparison.Ordinal) ||
+        mnemonic.StartsWith("tw", StringComparison.Ordinal) ||
+        mnemonic.StartsWith("dcb", StringComparison.Ordinal) ||
+        mnemonic.StartsWith("icb", StringComparison.Ordinal);
+
+    // Loads and stores with update (lwzu, stwux, psq_lu, ...) also write their base register.
+    private static bool IsUpdateForm(string mnemonic) =>
+        (mnemonic.StartsWith('l') || mnemonic.StartsWith("st", StringComparison.Ordinal) ||
+         mnemonic.StartsWith("psq_", StringComparison.Ordinal)) &&
+        (mnemonic.EndsWith('u') || mnemonic.EndsWith("ux", StringComparison.Ordinal));
+
+    // r0 and r3-r12, which a call may clobber.
+    private static bool IsVolatileGpr(string register) =>
+        register.Length >= 2 && register[0] == 'r' && int.TryParse(register.AsSpan(1), out var number) &&
+        (number == 0 || number is >= 3 and <= 12);
 
     private static bool TryReadWord(ProgramImage image, uint address, out uint value)
     {

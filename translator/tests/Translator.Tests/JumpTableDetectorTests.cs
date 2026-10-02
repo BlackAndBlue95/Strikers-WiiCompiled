@@ -173,6 +173,80 @@ public class JumpTableDetectorTests
     }
 
     [Fact]
+    public void RejectsTableBaseOverwrittenAfterLisAddi()
+    {
+        // r12 is reloaded from r11 after the lis/addi pair: the old constant is no longer the table.
+        const uint baseAddr = 0x80006000;
+        const uint tableAddr = 0x80006100;
+        var ordered = new List<PpcInstruction>
+        {
+            PpcInstruction.Synthetic(baseAddr + 0x00, 0, "cmplwi", new PpcOperand[] { new PpcRegisterOperand("r3", 3), new PpcImmediateOperand(1) }),
+            PpcInstruction.Synthetic(baseAddr + 0x04, 0, "lis", new PpcOperand[] { new PpcRegisterOperand("r12", 12), new PpcImmediateOperand(unchecked((short)0x8000)) }),
+            PpcInstruction.Synthetic(baseAddr + 0x08, 0, "addi", new PpcOperand[] { new PpcRegisterOperand("r12", 12), new PpcRegisterOperand("r12", 12), new PpcImmediateOperand(0x6100) }),
+            PpcInstruction.Synthetic(baseAddr + 0x0C, 0, "mr", new PpcOperand[] { new PpcRegisterOperand("r12", 12), new PpcRegisterOperand("r11", 11) }),
+            PpcInstruction.Synthetic(baseAddr + 0x10, 0, "lwzx", new PpcOperand[] { new PpcRegisterOperand("r0", 0), new PpcRegisterOperand("r12", 12), new PpcRegisterOperand("r3", 3) }),
+            PpcInstruction.Synthetic(baseAddr + 0x14, 0, "mtctr", new PpcOperand[] { new PpcRegisterOperand("r0", 0) }),
+            PpcInstruction.Synthetic(baseAddr + 0x18, 0, "bctr", System.Array.Empty<PpcOperand>(), isReturn: false, isCall: false, isConditional: false),
+        };
+        var image = TranslatorCppTestHarness.CreateImage(
+            (tableAddr + 0x00, baseAddr + 0x40),
+            (tableAddr + 0x04, baseAddr + 0x50));
+
+        Assert.False(JumpTableDetector.TryRecognize(
+            ordered, BuildIndex(ordered), baseAddr + 0x18, baseAddr, baseAddr + 0x100, image, out _));
+    }
+
+    [Fact]
+    public void RejectsCtrSourceOverwrittenAfterTheTableLoad()
+    {
+        const uint baseAddr = 0x80007000;
+        const uint tableAddr = 0x80007100;
+        var ordered = new List<PpcInstruction>
+        {
+            PpcInstruction.Synthetic(baseAddr + 0x00, 0, "cmplwi", new PpcOperand[] { new PpcRegisterOperand("r3", 3), new PpcImmediateOperand(1) }),
+            PpcInstruction.Synthetic(baseAddr + 0x04, 0, "lis", new PpcOperand[] { new PpcRegisterOperand("r12", 12), new PpcImmediateOperand(unchecked((short)0x8000)) }),
+            PpcInstruction.Synthetic(baseAddr + 0x08, 0, "addi", new PpcOperand[] { new PpcRegisterOperand("r12", 12), new PpcRegisterOperand("r12", 12), new PpcImmediateOperand(0x7100) }),
+            PpcInstruction.Synthetic(baseAddr + 0x0C, 0, "lwzx", new PpcOperand[] { new PpcRegisterOperand("r0", 0), new PpcRegisterOperand("r12", 12), new PpcRegisterOperand("r3", 3) }),
+            PpcInstruction.Synthetic(baseAddr + 0x10, 0, "li", new PpcOperand[] { new PpcRegisterOperand("r0", 0), new PpcImmediateOperand(5) }),
+            PpcInstruction.Synthetic(baseAddr + 0x14, 0, "mtctr", new PpcOperand[] { new PpcRegisterOperand("r0", 0) }),
+            PpcInstruction.Synthetic(baseAddr + 0x18, 0, "bctr", System.Array.Empty<PpcOperand>(), isReturn: false, isCall: false, isConditional: false),
+        };
+        var image = TranslatorCppTestHarness.CreateImage(
+            (tableAddr + 0x00, baseAddr + 0x40),
+            (tableAddr + 0x04, baseAddr + 0x50));
+
+        Assert.False(JumpTableDetector.TryRecognize(
+            ordered, BuildIndex(ordered), baseAddr + 0x18, baseAddr, baseAddr + 0x100, image, out _));
+    }
+
+    [Fact]
+    public void ReadsTheBoundFromACompareOnANonzeroCrField()
+    {
+        // The bound check uses cr1; an unrelated compare further back must not be taken instead.
+        const uint baseAddr = 0x80008000;
+        const uint tableAddr = 0x80008100;
+        var ordered = new List<PpcInstruction>
+        {
+            PpcInstruction.Synthetic(baseAddr + 0x00, 0, "cmplwi", new PpcOperand[] { new PpcRegisterOperand("r5", 5), new PpcImmediateOperand(7) }),
+            PpcInstruction.Synthetic(baseAddr + 0x04, 0, "cmplwi", new PpcOperand[] { new PpcConditionRegisterOperand("cr1", 4), new PpcRegisterOperand("r3", 3), new PpcImmediateOperand(2) }),
+            PpcInstruction.Synthetic(baseAddr + 0x08, 0, "rlwinm", new PpcOperand[] { new PpcRegisterOperand("r0", 0), new PpcRegisterOperand("r3", 3), new PpcImmediateOperand(2), new PpcImmediateOperand(0), new PpcImmediateOperand(29) }),
+            PpcInstruction.Synthetic(baseAddr + 0x0C, 0, "lis", new PpcOperand[] { new PpcRegisterOperand("r12", 12), new PpcImmediateOperand(unchecked((short)0x8001)) }),
+            PpcInstruction.Synthetic(baseAddr + 0x10, 0, "addi", new PpcOperand[] { new PpcRegisterOperand("r12", 12), new PpcRegisterOperand("r12", 12), new PpcImmediateOperand(unchecked((short)0x8100)) }),
+            PpcInstruction.Synthetic(baseAddr + 0x14, 0, "lwzx", new PpcOperand[] { new PpcRegisterOperand("r0", 0), new PpcRegisterOperand("r12", 12), new PpcRegisterOperand("r0", 0) }),
+            PpcInstruction.Synthetic(baseAddr + 0x18, 0, "mtctr", new PpcOperand[] { new PpcRegisterOperand("r0", 0) }),
+            PpcInstruction.Synthetic(baseAddr + 0x1C, 0, "bctr", System.Array.Empty<PpcOperand>(), isReturn: false, isCall: false, isConditional: false),
+        };
+        var image = TranslatorCppTestHarness.CreateImage(
+            (tableAddr + 0x00, baseAddr + 0x40),
+            (tableAddr + 0x04, baseAddr + 0x50),
+            (tableAddr + 0x08, baseAddr + 0x60));
+
+        Assert.True(JumpTableDetector.TryRecognize(
+            ordered, BuildIndex(ordered), baseAddr + 0x1C, baseAddr, baseAddr + 0x100, image, out var targets));
+        Assert.Equal(new uint[] { baseAddr + 0x40, baseAddr + 0x50, baseAddr + 0x60 }, targets);
+    }
+
+    [Fact]
     public void RejectsWhenEntryPointOrMtctrChainIsMissing()
     {
         const uint baseAddr = 0x80002000;
