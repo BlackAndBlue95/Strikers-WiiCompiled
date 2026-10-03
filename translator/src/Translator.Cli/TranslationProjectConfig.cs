@@ -132,7 +132,8 @@ internal sealed class TranslationProjectConfig
                     $"profiles.{name}.retro_wfc_legacy_bootstrap_hook"),
                 profileDto.RequiresGameId,
                 NormalizeHash(profileDto.RequiresDolSha256),
-                ResolveRiivolution(profileDto.Riivolution, name));
+                ResolveRiivolution(profileDto.Riivolution, name),
+                ParseOptionalUInt32(profileDto.InitHook, $"profiles.{name}.init_hook"));
         }
 
         var config = new TranslationProjectConfig(
@@ -442,6 +443,7 @@ internal sealed class TranslationProjectConfig
         public string? RequiresGameId { get; init; }
         public string? RequiresDolSha256 { get; init; }
         public RiivolutionDto? Riivolution { get; init; }
+        public string? InitHook { get; init; }
     }
 
     private sealed class RiivolutionDto
@@ -496,7 +498,11 @@ internal sealed record ProjectProfile(
     uint? RetroWfcLegacyBootstrapHook,
     string? RequiresGameId,
     string? RequiresDolSha256,
-    ProjectRiivolution? Riivolution);
+    ProjectRiivolution? Riivolution,
+    // Set for code mods loaded the Strikers way: the guest function whose call runs the modules'
+    // data patches and constructors, where the Strikers Mod Loader runs them on a console
+    // (glplatPreStartup, from nlInit). Unset keeps Pulsar's conventions (Mario Kart Wii).
+    uint? InitHook = null);
 internal sealed record ProjectRiivolution(
     string Xml,
     IReadOnlyList<ProjectRiivolutionOption> Options);

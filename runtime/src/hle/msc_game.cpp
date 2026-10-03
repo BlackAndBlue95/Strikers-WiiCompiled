@@ -22,10 +22,6 @@
 #include <SDL3/SDL_timer.h>
 #include "guest_interrupt_context.h"
 #include "hle/msc_guest.h"
-#include "mods/mod_plugins.h"
-#include "mods/mod_catalogs.h"
-#include "mods/mod_registry.h"
-#include "mods/variants.h"
 #include "ppc_runtime.h"
 
 bool DVDPathExistsForRuntime(const char* dvdPath);  // storage/dvd.cpp
@@ -526,7 +522,7 @@ void KitChoice() {
 // they are pointed there.
 void CaptainVoices() {
     if (Memory::Read32(kGamePtr) == 0) return;
-    if (!RuntimeConfigFile::ModAllCaptains() && !Mods::Variants::FixedTeamCaptain(0) && !Mods::Variants::FixedTeamCaptain(1)) return;
+    if (!RuntimeConfigFile::ModAllCaptains()) return;
     constexpr uint32_t kPlayerId = 0x1E4, kSoundSlot = 0x318;  // cPlayer
     for (uint32_t side = 0; side < 2; ++side) {
         const uint32_t team = Memory::Read32(kTeams + side * 4);
@@ -935,23 +931,8 @@ int g_csHover[4] = {-1, -1, -1, -1};
 int g_teamPartner[2] = {-1, -1};  // the partner leading each side's team (character), -1 = a captain
 uint32_t g_partnerTextures[8] = {};
 
-// Captain select's pages (- and +): the captains, the partners (captain-only teams) and the mod
-// captains (mod packages' [[character]] kind "captain", runtime/src/mods), twelve to a page on the
-// grid's buttons, each on its base captain's button when that's free. A mod captain picked from its
-// page makes the team its base's (the team id), with a selected button of none, so its base stays
-// free for the other side; the pick itself is [mod_selection] home/away, which the match reads.
-constexpr uint32_t kOffGrid = 12;     // mSelectedCaptains for a mod captain: no grid button
-int g_csModPage = -1;                 // the mods page shown, -1 = the captains or partners
-int g_csSwapTo = -1;                  // the page the grid comes back with once it has slid out
-const Mods::CharacterDef* g_teamMod[2] = {};
-std::map<std::pair<const Mods::CharacterDef*, bool>, uint32_t> g_modPortraits;  // (character, greyed) -> FETextureResource
-
-const Mods::CharacterDef* FindModCaptain(const std::string& name) {
-    for (const Mods::Package* package : Mods::ActivePackages())
-        for (const Mods::CharacterDef& c : package->characters)
-            if (c.name == name && c.kind == "captain" && c.baseIndex >= 0 && c.baseIndex < 12) return &c;
-    return nullptr;
-}
+// Captain select's pages (- and +): the captains, and the partners (captain-only teams).
+int g_csSwapTo = -1;  // the page the grid comes back with once it has slid out
 
 uint32_t TextureHash(const char* name) {  // FE texture resource hash ("fe/" + name, nlStringLowerHash)
     uint32_t h = 0xEB076B20u;
@@ -988,61 +969,8 @@ int GridIndexOf(int captain) {
     return -1;
 }
 
-const std::vector<std::array<const Mods::CharacterDef*, 12>>& ModPages() {
-    static std::vector<std::array<const Mods::CharacterDef*, 12>> pages;
-    static bool laidOut = false;
-    if (laidOut) return pages;
-    laidOut = true;
-    for (const Mods::Package* package : Mods::ActivePackages()) {
-        for (const Mods::CharacterDef& c : package->characters) {
-            if (c.kind != "captain" || c.baseIndex < 0 || c.baseIndex >= 12) continue;
-            const int own = GridIndexOf(c.baseIndex);
-            bool placed = false;
-            for (auto& page : pages)  // its base's button on the first page where it's free
-                if (!page[own]) { page[own] = &c; placed = true; break; }
-            for (size_t p = 0; !placed && p < pages.size(); ++p)  // else any free button
-                for (auto& slot : pages[p])
-                    if (!slot) { slot = &c; placed = true; break; }
-            if (!placed) {
-                pages.emplace_back();
-                pages.back().fill(nullptr);
-                pages.back()[own] = &c;
-            }
-        }
-    }
-    return pages;
-}
-
-const Mods::CharacterDef* ModAt(int button) {
-    const auto& pages = ModPages();
-    return g_csModPage >= 0 && static_cast<size_t>(g_csModPage) < pages.size() && button >= 0 && button < 12 ? pages[g_csModPage][button] : nullptr;
-}
-
 bool ButtonUsed(int button) {
-    if (g_csModPage >= 0) return ModAt(button) != nullptr;
-    if (g_csPartners) return kGridPartners[button] >= 0;
-    return true;
-}
-
-// A mod captain's portrait (captain select's FETextureResource, like the partners'): the texture its
-// mod adds as fe/screens/images/captain_<name>_s (greyed: _ds), else its base captain's portrait.
-uint32_t ModPortrait(CpuContext* ctx, uint32_t scene, const Mods::CharacterDef* def, bool greyed) {
-    const std::string name = "captain_" + def->name + (greyed ? "_ds" : "_s");
-    if (!Mods::Catalogs::HasFeTexture("fe/screens/images/" + name))
-        return Memory::Read32(scene + kCaptainTextures + static_cast<uint32_t>(GridIndexOf(def->baseIndex)) * 8 + (greyed ? 0 : 4));
-    uint32_t& texture = g_modPortraits[{def, greyed}];
-    if (texture == 0) {
-        const uint32_t model = Memory::Read32(scene + kCaptainTextures + 4);  // mCaptainTextures[0][1]
-        if (model == 0 || (texture = Call(ctx, kNlMalloc, {0x20, 8, 0})) == 0) return 0;
-        for (uint32_t i = 0; i < 0x20; i += 4) Memory::Write32(texture + i, Memory::Read32(model + i));
-        const uint32_t hash = TextureHash(name.c_str());
-        Memory::Write32(texture + 0x00, 0);     // m_next
-        Memory::Write32(texture + 0x04, 0);     // m_prev
-        Memory::Write32(texture + 0x0C, hash);  // m_hashID
-        Memory::Write8(texture + 0x10, 1);      // m_bValid
-        Memory::Write32(texture + 0x18, hash);  // m_glTextureHandle
-    }
-    return texture;
+    return !g_csPartners || kGridPartners[button] >= 0;
 }
 
 // The next captain after `from` (in grid order) that is unlocked and not the other team's.
@@ -1056,8 +984,8 @@ int NextColourway(CpuContext* ctx, uint32_t scene, int side, int from) {
     return from;
 }
 
-// Muted: the grid's hover and press handlers saved and emptied (the partner and mods pages handle
-// their picks here). Either way, buttons the page doesn't use are off and hidden.
+// Muted: the grid's hover and press handlers saved and emptied (the partner page handles its picks
+// here). Either way, buttons the page doesn't use are off and hidden.
 void MuteGrid(uint32_t scene, bool mute) {
     for (uint32_t i = 0; i < 12; ++i) {
         const uint32_t button = scene + kCaptainButtons + i * kPointerButtonSize;
@@ -1087,7 +1015,7 @@ void MuteGrid(uint32_t scene, bool mute) {
 void LeavePartnerMode(uint32_t scene) {
     if (scene != g_csScene) return;
     g_csPartners = false;
-    g_csModPage = g_csSwapTo = -1;
+    g_csSwapTo = -1;
     MuteGrid(scene, false);
     for (int& hover : g_csHover) hover = -1;
     g_csScene = 0;  // a later captain select starts afresh (even at the same address)
@@ -1116,42 +1044,6 @@ void ConfirmPartner(CpuContext* ctx, uint32_t scene, int side, int pad, int butt
                                 static_cast<uint32_t>(pad), 1});  // the panel shows whose colours the team wears
     g_teamPartner[side] = kSidekickCharacters[sidekick];
     SaveTeamPartner(side, g_teamPartner[side]);
-    if (g_teamMod[side]) {
-        g_teamMod[side] = nullptr;
-        RuntimeConfigFile::SetModSelection(side, "");
-    }
-    g_csHover[pad] = -1;
-}
-
-// The mod captain in grid button `button` leads `side`'s team: the team is its base captain's, picked
-// as OnCaptainPointerPress picks one, except the selected button (none: the base stays free).
-void ConfirmModCaptain(CpuContext* ctx, uint32_t scene, int side, int pad, int button) {
-    const Mods::CharacterDef* def = ModAt(button);
-    if (def == nullptr || CaptainLocked(ctx, def->baseIndex)) return;
-    if (Memory::Read8(scene + kCsConfirmed + (side ^ 1)) && g_teamMod[side ^ 1] == def) return;  // the other team's
-    const uint32_t base = static_cast<uint32_t>(def->baseIndex);
-    Memory::Write8(scene + kCsConfirmed + side, 1);
-    Memory::Write32(scene + kCsSidePads + side * 4, 0xFFFFFFFFu);
-    Memory::Write32(scene + kCsCaptainIds + side * 4, base);
-    Memory::Write32(scene + kCsSelected + side * 4, kOffGrid);
-    SetActiveSlide(ctx, Memory::Read32(scene + kCsSelectDisplays + side * 4), "off");
-    Memory::Write32(scene + kCsSelectButtons + side * kPointerButtonSize + kPointerStates + pad * 4, 0);
-    for (uint32_t p = 0; p < 4; ++p) Memory::Write32(scene + kCaptainButtons + button * kPointerButtonSize + kPointerStates + p * 4, 0);
-    if (const uint32_t arrow = Memory::Read32(scene + kCsGreenArrows + side * 4)) Memory::Write8(arrow + kInstanceVisible, 0);
-    if (!Mods::Variants::PlayMenuVoice(ctx, side, def))  // its own voice, else its base's accept sound
-        Call(ctx, kPlayAudioEvent, {Call(ctx, kCaptainAcceptSound, {base}), 0, 0, 1});
-    if (!Memory::Read8(scene + kCsChangeTextShown + side)) Call(ctx, kUpdateSelectText, {scene, static_cast<uint32_t>(side)});
-    if (const uint32_t select = Memory::Read32(scene + kCsSelectButtonInstances + side * 4)) Memory::Write8(select + kInstanceVisible, 1);
-    g_teamMod[side] = def;
-    RuntimeConfigFile::SetModSelection(side, def->name);
-    // The stats panel shows the mod character: its team id tagged for the side (mods/variants.h).
-    Mods::Variants::SetMenuCharacter(side, def);
-    Call(ctx, kSetCaptainInfo, {scene + kSceneCaptainPanels + side * kCaptainPanelSize, Mods::Variants::TagTeam(base, side),
-                                static_cast<uint32_t>(pad), 1});
-    if (g_teamPartner[side] >= 0) {
-        g_teamPartner[side] = -1;
-        SaveTeamPartner(side, -1);
-    }
     g_csHover[pad] = -1;
 }
 
@@ -1174,55 +1066,29 @@ void CaptainSelect() {
     const uint32_t depth = mgr ? Memory::Read32(mgr + 0x04) : 0;
     const uint32_t scene = depth >= 1 && depth <= 32 ? Memory::Read32(mgr + 0x88 + (depth - 1) * 4) : 0;
     const bool allCaptains = RuntimeConfigFile::ModAllCaptains();
-    static bool s_menuVoices = false;  // mod captains' voice banks loaded for captain select
-    if (scene == 0 || Memory::Read32(scene) != kChooseCaptainsVtable || !(allCaptains || !ModPages().empty()) ||
-        Memory::Read32(scene + kCaptainsSceneType) != 0 || !Offline()) {
-        if (s_menuVoices) {
-            GuestInterruptCallbackContext release;
-            s_menuVoices = !Mods::Variants::ReleaseMenuVoices(release.get());
-            Mods::Variants::SetMenuCharacter(0, nullptr);
-            Mods::Variants::SetMenuCharacter(1, nullptr);
-        }
+    // A code mod that drives captain select's pages itself (it has repointed the scene's virtual
+    // Update: the Super Team pack's mod characters) owns - and +; the partner page steps aside.
+    constexpr uint32_t kCaptainsUpdateSlot = 0x8051D174u, kCaptainsUpdate = 0x80223D88u;
+    if (scene == 0 || Memory::Read32(scene) != kChooseCaptainsVtable || !allCaptains ||
+        Memory::Read32(scene + kCaptainsSceneType) != 0 || !Offline() ||
+        Memory::Read32(kCaptainsUpdateSlot) != kCaptainsUpdate)
         return;
-    }
-    static bool s_fixSelected = false;
     if (scene != g_csScene) {  // a new captain select: its teams as left (coming back) or none
         g_csScene = scene;
         g_csPartners = g_csMuted = false;
-        g_csModPage = g_csSwapTo = -1;
+        g_csSwapTo = -1;
         for (int& hover : g_csHover) hover = -1;
-        for (int side = 0; side < 2; ++side) {
-            g_teamPartner[side] = allCaptains ? RuntimeConfigFile::ModCaptainSpot(side) : -1;
-            g_teamMod[side] = FindModCaptain(RuntimeConfigFile::ModSelection(side));
-        }
-        s_fixSelected = true;
+        for (int side = 0; side < 2; ++side) g_teamPartner[side] = RuntimeConfigFile::ModCaptainSpot(side);
     }
     if (!Loaded(scene) || !Memory::Read8(scene + kCsButtonsInitialized) || Memory::Read32(scene + kCaptainsState) != 1 ||
         Memory::Read8(scene + kCaptainsInputSuppressed))
         return;
     GuestInterruptCallbackContext call;
     CpuContext* ctx = call.get();
-    s_menuVoices = true;
-    Mods::Variants::UpdateMenuVoices(ctx);
-    if (s_fixSelected) {  // coming back: the scene marked buttons from the team ids; a mod captain has none
-        s_fixSelected = false;
-        for (int side = 0; side < 2; ++side) {
-            if (!Memory::Read8(scene + kCsConfirmed + side)) continue;
-            const int id = static_cast<int32_t>(Memory::Read32(scene + kCsCaptainIds + side * 4));
-            const bool mod = g_teamMod[side] && g_teamMod[side]->baseIndex == id;
-            if (!mod) g_teamMod[side] = nullptr;
-            Memory::Write32(scene + kCsSelected + side * 4, mod ? kOffGrid : static_cast<uint32_t>(GridIndexOf(id)));
-        }
-    }
-    for (int side = 0; side < 2; ++side) {  // choosing again: no longer a partner team or a mod captain
-        const bool confirmed = Memory::Read8(scene + kCsConfirmed + side);
-        if (!confirmed && g_teamPartner[side] >= 0) {
+    for (int side = 0; side < 2; ++side) {  // choosing again: no longer a partner team
+        if (!Memory::Read8(scene + kCsConfirmed + side) && g_teamPartner[side] >= 0) {
             g_teamPartner[side] = -1;
             SaveTeamPartner(side, -1);
-        }
-        if (g_teamMod[side] && (!confirmed || Memory::Read32(scene + kCsSelected + side * 4) != kOffGrid)) {
-            g_teamMod[side] = nullptr;
-            RuntimeConfigFile::SetModSelection(side, "");
         }
     }
     const bool bothChosen = Memory::Read8(scene + kCsConfirmed) && Memory::Read8(scene + kCsConfirmed + 1);
@@ -1239,8 +1105,7 @@ void CaptainSelect() {
         if (slide == 0 || Memory::Read32(slide + kSlideHash) != LowerHash("out") ||
             Memory::ReadFloat32(slide + kSlideTime) >= Memory::ReadFloat32(slide + kSlideDuration)) {
             g_csPartners = g_csSwapTo == 1;
-            g_csModPage = g_csSwapTo >= 2 ? g_csSwapTo - 2 : -1;
-            MuteGrid(scene, g_csSwapTo != 0);
+            MuteGrid(scene, g_csPartners);
             if (layer) Memory::Write8(layer + kInstanceVisible, 1);
             SetActiveSlide(ctx, layer, "in");
             Call(ctx, kPlayAudioEvent, {0xDF52130Fu, 0, 0, 1});
@@ -1250,20 +1115,13 @@ void CaptainSelect() {
     }
     if (!bothChosen) {
         for (int pad = 0; pad < 4; ++pad) {
-            const int step = justPressed(pad, kButtonPlus) ? 1 : justPressed(pad, kButtonMinus) ? -1 : 0;
-            if (step == 0) continue;
+            if (!justPressed(pad, kButtonPlus) && !justPressed(pad, kButtonMinus)) continue;
             // Only a pad that's choosing a captain: before that the grid isn't up, and sliding it in
             // would show it without the selection that goes with it.
             if (static_cast<int32_t>(Memory::Read32(scene + kCsSidePads)) != pad &&
                 static_cast<int32_t>(Memory::Read32(scene + kCsSidePads + 4)) != pad)
                 continue;
-            // The pages in order: captains (0), partners (1, captain-only teams), then the mods pages.
-            std::vector<int> pages = {0};
-            if (allCaptains) pages.push_back(1);
-            for (size_t m = 0; m < ModPages().size(); ++m) pages.push_back(2 + static_cast<int>(m));
-            const int current = g_csModPage >= 0 ? 2 + g_csModPage : g_csPartners ? 1 : 0;
-            const auto at = std::find(pages.begin(), pages.end(), current);
-            g_csSwapTo = pages[(static_cast<size_t>(at - pages.begin()) + pages.size() + static_cast<size_t>(step)) % pages.size()];
+            g_csSwapTo = g_csPartners ? 0 : 1;  // the captains and the partners
             MuteGrid(scene, true);  // nothing to pick while it's away
             for (int& hover : g_csHover) hover = -1;
             SetActiveSlide(ctx, layer, "out");
@@ -1271,7 +1129,7 @@ void CaptainSelect() {
             break;
         }
     }
-    if (!g_csPartners && g_csModPage < 0) return;
+    if (!g_csPartners) return;
     for (int pad = 0; pad < 4; ++pad) {
         int side = -1;
         for (int s = 1; s >= 0; --s)
@@ -1288,22 +1146,13 @@ void CaptainSelect() {
             Memory::Write32(scene + kCaptainButtons + i * kPointerButtonSize + kPointerStates + pad * 4, static_cast<int>(i) == hit ? 1 : 0);
         if (hit != g_csHover[pad]) {
             g_csHover[pad] = hit;
-            if (const Mods::CharacterDef* def = side >= 0 && hit >= 0 ? ModAt(hit) : nullptr;
-                def && !Memory::Read8(scene + kCsConfirmed + side)) {  // a mod captain's stats, as hovering a captain shows theirs
-                Mods::Variants::SetMenuCharacter(side, def);
-                Call(ctx, kSetCaptainInfo, {scene + kSceneCaptainPanels + static_cast<uint32_t>(side) * kCaptainPanelSize,
-                                            Mods::Variants::TagTeam(static_cast<uint32_t>(def->baseIndex), side), static_cast<uint32_t>(pad), 1});
-            }
             if (hit >= 0) {
                 SetActiveSlide(ctx, Memory::Read32(scene + kCaptainInstances + static_cast<uint32_t>(hit) * 4), "over");
                 Call(ctx, kPlayHoverFeedback, {scene + kCaptainButtons + static_cast<uint32_t>(hit) * kPointerButtonSize, static_cast<uint32_t>(pad)});
                 Call(ctx, kPlayAudioEvent, {0xA183DBCDu + static_cast<uint32_t>(pad), 0, 0, 1});
             }
         }
-        if (side >= 0 && hit >= 0 && justPressed(pad, kButtonSelect)) {
-            if (g_csPartners) ConfirmPartner(ctx, scene, side, pad, hit);
-            else ConfirmModCaptain(ctx, scene, side, pad, hit);
-        }
+        if (side >= 0 && hit >= 0 && justPressed(pad, kButtonSelect)) ConfirmPartner(ctx, scene, side, pad, hit);
     }
 }
 
@@ -1334,53 +1183,6 @@ void SetLeaderImage(CpuContext* ctx, uint32_t board, int side, int character) {
     Memory::WriteFloat32(image + kInstanceRotation, 0.0f);
     Memory::WriteFloat32(image + kInstanceRotation + 4, (facing && side == 0) || (!facing && side == 1) ? 3.1415927f : 0.0f);
     Memory::WriteFloat32(image + kInstanceRotation + 8, 0.0f);
-}
-
-// A mod character's own version of a front-end head texture: its base's "<base>_right" / "<base>_left"
-// (partner select's board heads) becomes "<name>_right" / "_left" when the mod adds it.
-std::map<std::pair<const Mods::CharacterDef*, std::string>, uint32_t> g_variantTextures;
-uint32_t VariantTexture(CpuContext* ctx, uint32_t resource, const Mods::CharacterDef* def) {
-    if (resource == 0 || def == nullptr) return resource;
-    const uint32_t hash = Memory::Read32(resource + 0x0C);  // FETextureResource::m_hashID
-    const std::string base = Mods::BaseCharacterName(def->baseIndex);
-    for (const char* suffix : {"_right", "_left"}) {
-        if (hash != TextureHash((base + suffix).c_str())) continue;
-        const std::string name = def->name + suffix;
-        if (!Mods::Catalogs::HasFeTexture("fe/screens/images/" + name)) return resource;
-        uint32_t& copy = g_variantTextures[{def, name}];
-        if (copy == 0 && (copy = Call(ctx, kNlMalloc, {0x20, 8, 0})) != 0) {
-            for (uint32_t i = 0; i < 0x20; i += 4) Memory::Write32(copy + i, Memory::Read32(resource + i));
-            const uint32_t own = TextureHash(name.c_str());
-            Memory::Write32(copy + 0x00, 0);    // m_next
-            Memory::Write32(copy + 0x04, 0);    // m_prev
-            Memory::Write32(copy + 0x0C, own);  // m_hashID
-            Memory::Write8(copy + 0x10, 1);     // m_bValid
-            Memory::Write32(copy + 0x18, own);  // m_glTextureHandle (same size as the base's)
-        }
-        return copy ? copy : resource;
-    }
-    return resource;
-}
-
-// A mod character's heads on a board: the captain spot (as SetLeaderImage finds it) and, with
-// `slot` 0-2, that slot's images (as SetSlotCaptain).
-void SetVariantHead(CpuContext* ctx, uint32_t board, int slot, const Mods::CharacterDef* def) {
-    static const char* const kDummies[] = {"00_dummy_texture_positions", "01_dummy_texture_positions",
-                                           "02_dummy_texture_positions", "03_dummy_texture_positions"};
-    const char* const dummyPath[] = {"positions", "field_positions", "idle", "dummies", kDummies[slot + 1]};
-    const uint32_t dummy = FindInSlide(ActiveSlide(Memory::Read32(board + kBoardPositions)), dummyPath);
-    auto apply = [&](uint32_t image) {
-        if (image) Memory::Write32(image + kImageTexture, VariantTexture(ctx, Memory::Read32(image + kImageTexture), def));
-    };
-    if (slot < 0) {
-        const char* const path[] = {kDummies[0]};
-        apply(FindInSlide(ActiveSlide(dummy), path));
-        return;
-    }
-    for (const char* state : {"off", "over", "down"}) {
-        const char* const path[] = {state, kDummies[slot + 1]};
-        apply(FindIn(dummy, path));
-    }
 }
 
 // A board slot shows `captain`: their picture as the board's captain spot has it, unturned.
@@ -1572,37 +1374,10 @@ void Update() {
 }
 } // namespace FastMenus
 
-// The match intro (the presentation's "GameBegin") shows a black screen until it ends (frames are
-// discarded meanwhile), so one that never ends looks like a hang. Captain-only teams skip it; a
-// fixed team (mods/variants.h; captains in sidekick slots too) plays it, with this as a safety net:
-// an intro still running after 90 seconds is ended as the skip button ends it (Presentation::Finish).
-void IntroWatchdog() {
-    constexpr uint32_t kPresentation = 0x8057ABBCu;  // GetPresentation()'s instance
-    constexpr uint32_t kCurrentFunction = 0x30, kFinish = 0x8028518Cu;
-    static uint64_t s_since = 0;
-    static bool s_ended = false;
-    const bool watched = Memory::Read32(kGamePtr) != 0 && !RuntimeConfigFile::ModAllCaptains() &&
-                         (Mods::Variants::FixedTeamCaptain(0) || Mods::Variants::FixedTeamCaptain(1));
-    if (!watched || MscGuest::CString(kPresentation + kCurrentFunction, 64) != "GameBegin") {
-        s_since = 0;
-        s_ended = false;
-        return;
-    }
-    const uint64_t now = SDL_GetTicks();
-    if (s_since == 0) s_since = now;
-    if (s_ended || now - s_since < 90000) return;
-    s_ended = true;
-    RT_LOG(RT_TAG_MODS) << "match intro still running after 90 s (fixed team): ended" << std::endl;
-    GuestInterruptCallbackContext call;
-    call.get()->gpr[3] = kPresentation;
-    InvokeIndirectCpu(kFinish, call.get());
-}
-
 void Apply() {
     try {
         UnlockEverything();
         CaptainVoices();
-        IntroWatchdog();
         PartnerLeaders();
         FastMenus::Update();
         PartnerGrid::CaptainSelect();
@@ -1613,10 +1388,6 @@ void Apply() {
         FastStadiums();
         WinByTwo();
         NkFix();
-    } catch (const Memory::AccessViolation&) {
-    }
-    try {
-        Mods::RunFrameEvents();  // mod plugins (they report their own bad accesses)
     } catch (const Memory::AccessViolation&) {
     }
 }
@@ -1732,7 +1503,9 @@ extern "C" void MSC_ChooseSidekicksOnSidekickPress_8022AB68(CpuContext* ctx)
     Call(ctx, kPlayAudioEvent, {Call(ctx, kSidekickAcceptSound, {sidekick}), 0, 0, 1});
     const uint32_t info = Memory::Read32(FrameMods::kGameInfoManager);
     const uint32_t team = Memory::Read32(scene + kTeams + side * 4);  // GetTeam(side)
-    Memory::Write32(info + kRulesTable + team * kRulesSize + slot * 4, sidekick);
+    // The rules table has the 12 captains' rows; a code mod's own team keeps its partners itself (and
+    // its 13th row would be the online profile's).
+    if (team < 12) Memory::Write32(info + kRulesTable + team * kRulesSize + slot * 4, sidekick);
     if (BoardSide(scene + kBoards + side * kBoardSize) == side) {
         g_picks[side][slot] = static_cast<int>(Call(ctx, kSidekickCharacter, {sidekick}));
         SavePicks(side);
@@ -1772,37 +1545,6 @@ extern "C" void MSC_CaptainComponentUpdateOverallSlides_801DAFC8(CpuContext* ctx
         if (overall == 0) continue;
         Memory::Write8(overall + kInstanceVisible, character == -1 ? 0 : 1);
         if (character != -1) SetOverallSlide(ctx, overall, CharacterInfo(static_cast<uint32_t>(character)));
-    }
-    // A mod captain's team (mods/variants.h): its own heads where its mod adds them, for the captain
-    // spot and the teammates its manifest makes mod characters too (captain-only teams).
-    const int boardSide = side >= 0 ? side : static_cast<int>(Memory::Read32(board + kBoardSide) & 1);
-    const Mods::CharacterDef* mod = Mods::Variants::SelectedCaptain(boardSide);
-    if (mod == nullptr || mod->baseIndex != captain || leader >= 0) return;
-    SetVariantHead(ctx, board, -1, mod);
-    if (side < 0 && Mods::Variants::FixedTeamCaptain(boardSide) == mod) {
-        // A fixed team (its teammates whatever is picked) on the usual partner select: its slots show
-        // its teammates, with their role labels.
-        for (int slot = 0; slot < 3; ++slot) {
-            const int cc = Mods::Variants::TeammateClass(mod, slot + 1);
-            if (cc < 0 || IsSidekick(cc)) continue;
-            SetSlotCaptain(ctx, board, boardSide, slot, cc);
-            uint32_t info = CharacterInfo(static_cast<uint32_t>(cc));
-            if (const Mods::CharacterDef* mate = FindModCaptain(mod->teammates[static_cast<size_t>(slot)])) {
-                SetVariantHead(ctx, board, slot, mate);
-                if (const auto* v = Mods::Variants::ForCharacter(ctx, mate)) info = v->row;
-            }
-            static const char* const kOveralls[] = {"overall_1", "overall_2", "overall_3"};
-            const char* const path[] = {"positions", kOveralls[slot]};
-            if (const uint32_t overall = FindInSlide(slide, path)) {
-                Memory::Write8(overall + kInstanceVisible, 1);
-                SetOverallSlide(ctx, overall, info);
-            }
-        }
-        return;
-    }
-    for (int slot = 0; side >= 0 && slot < 3 && static_cast<size_t>(slot) < mod->teammates.size(); ++slot) {
-        const Mods::CharacterDef* mate = FindModCaptain(mod->teammates[static_cast<size_t>(slot)]);
-        if (mate && mate->baseIndex == SlotCharacter(board, side, slot)) SetVariantHead(ctx, board, slot, mate);
     }
 }
 PPC_NATIVE_OVERRIDE_VOID(801DAFC8, MSC_CaptainComponentUpdateOverallSlides_801DAFC8, (CpuContext* ctx), (ctx));
@@ -1987,7 +1729,6 @@ extern "C" void MSC_ChooseCaptainsRefreshImages_80227608(CpuContext* ctx)
     const uint32_t savedLr = ctx->lr;
     const uint32_t draft = Memory::Read32(ctx->gpr[13] - 8784);  // NetworkDraft
     const bool partners = scene == g_csScene && g_csPartners;
-    const bool mods = scene == g_csScene && g_csModPage >= 0;
     for (uint32_t i = 0; i < 12; ++i) {
         const int captain = kGridCaptains[i];
         char group[8], texture[32];
@@ -2004,12 +1745,6 @@ extern "C" void MSC_ChooseCaptainsRefreshImages_80227608(CpuContext* ctx)
         uint32_t resource = 0;
         if (partners) {
             if (kGridPartners[i] >= 0) resource = PartnerTexture(ctx, scene, kGridPartners[i]);
-        } else if (mods) {
-            if (const Mods::CharacterDef* def = ModAt(static_cast<int>(i))) {
-                const bool taken = (Memory::Read8(scene + kCsConfirmed) && g_teamMod[0] == def) ||
-                                   (Memory::Read8(scene + kCsConfirmed + 1) && g_teamMod[1] == def);
-                resource = ModPortrait(ctx, scene, def, taken);
-            }
         } else if ((Memory::Read8(scene + kCsConfirmed) && Memory::Read32(scene + kCsSelected) == i) ||
                    (Memory::Read8(scene + kCsConfirmed + 1) && Memory::Read32(scene + kCsSelected + 4) == i)) {
             resource = Memory::Read32(scene + kCaptainTextures + i * 8);  // greyed
@@ -2025,34 +1760,6 @@ extern "C" void MSC_ChooseCaptainsRefreshImages_80227608(CpuContext* ctx)
     ctx->lr = savedLr;
 }
 PPC_NATIVE_OVERRIDE_VOID(80227608, MSC_ChooseCaptainsRefreshImages_80227608, (CpuContext* ctx), (ctx));
-
-// void FECharacterPDAComponent::ApplyCaptainColours(int captain, int opponent): a stats panel in its
-// team's colour against the other team's (captain select, once captains are chosen). As the original;
-// on captain select, a side led by (or hovering) a mod captain passes its team id tagged, so the
-// colours are the mod character's, and a mod captain against its base isn't taken for a clash.
-extern "C" void func_801E0B8C(CpuContext* ctx);
-static void ApplyCaptainColoursForMods(CpuContext* ctx)
-{
-    using namespace FrameMods;
-    using namespace FrameMods::PartnerGrid;
-    const uint32_t panel = ctx->gpr[3];
-    const uint32_t panels = g_csScene ? g_csScene + kSceneCaptainPanels : 0;
-    if (panels != 0 && panel >= panels && panel < panels + 2 * kCaptainPanelSize && (panel - panels) % kCaptainPanelSize == 0) {
-        const int side = static_cast<int>((panel - panels) / kCaptainPanelSize);
-        const auto effective = [&](int s) -> const Mods::CharacterDef* {
-            if (g_teamMod[s]) return g_teamMod[s];
-            return Memory::Read8(g_csScene + kCsConfirmed + s) ? nullptr : Mods::Variants::MenuCharacter(s);
-        };
-        for (int arg = 0; arg < 2; ++arg) {  // r4 = this side's captain, r5 = the other side's
-            const int s = arg == 0 ? side : side ^ 1;
-            const Mods::CharacterDef* def = effective(s);
-            if (def && ctx->gpr[4 + arg] == static_cast<uint32_t>(def->baseIndex))
-                ctx->gpr[4 + arg] = Mods::Variants::TagTeam(ctx->gpr[4 + arg], s);
-        }
-    }
-    func_801E0B8C(ctx);
-}
-PPC_NATIVE_WRAP(801E0B8C, ApplyCaptainColoursForMods);
 
 // Partner holograms (choose sides, captain select's partner mode), made from a copy of the partner's
 // template:
@@ -2141,15 +1848,6 @@ extern "C" void MSC_FEModelManagerCreateModel_801C27C4(CpuContext* ctx)
             if (static_cast<int32_t>(Memory::Read32(game + side * 4)) == captain) character = RuntimeConfigFile::ModCaptainSpot(side);
     }
     const bool partner = character >= 12 && character <= 19 && captain >= 0 && captain <= 11;
-    // A mod captain's team (homemodel / awaymodel: which side the presentation asks for): the mod
-    // character's own template, so the hologram is its model and textures.
-    uint32_t variantInfo = 0;
-    if (savedLr >= kPresentationCallsBegin && savedLr < kPresentationCallsEnd) {
-        const std::string model = MscGuest::CString(name);
-        const int side = model == "homemodel" ? 0 : model == "awaymodel" ? 1 : -1;
-        if (const Mods::CharacterDef* def = side >= 0 ? Mods::Variants::SelectedCaptain(side) : nullptr; def && def->baseIndex == captain)
-            if (const auto* variant = Mods::Variants::ForCharacter(ctx, def)) variantInfo = variant->templateInfo;
-    }
     if (character < 0) {
         ctx->gpr[3] = static_cast<uint32_t>(captain);
         InvokeIndirectCpu(kCaptainCharacter, ctx);
@@ -2163,7 +1861,6 @@ extern "C" void MSC_FEModelManagerCreateModel_801C27C4(CpuContext* ctx)
     ctx->gpr[3] = static_cast<uint32_t>(character);
     InvokeIndirectCpu(kTemplateInfo, ctx);
     uint32_t templateInfo = ctx->gpr[3];
-    if (variantInfo != 0 && !partner) templateInfo = variantInfo;
     if (partner) {
         templateInfo = PartnerHolograms::TeamTemplate(ctx, templateInfo, static_cast<uint32_t>(character), static_cast<uint32_t>(captain), (alternate & 0xFF) != 0);
         alternate = 1;  // load the team bundle as the alternate textures
@@ -2321,12 +2018,26 @@ PPC_NATIVE_OVERRIDE_VOID(80286288, MSC_PresentationPlayGameBegin_80286288, (CpuC
 //     NisUseStadiumOffset useStadiumOffset, NisWinnerType winnerType, bool mirrored, int param6)
 // Plays a cutscene's optional sidekick companion, "<nis>_<sidekick>_same/other.nis" (goal, outraged
 // and defeated scenes), when the disc has one for the chosen sidekick. With the captain-only teams
-// mod, or a fixed team (mods/variants.h), the picked sidekicks aren't on the pitch, and a companion
+// mod, or a pack's fixed team (captains in sidekick slots), the picked sidekicks aren't on the pitch, and a companion
 // waited forever for its missing actor (the game hung after a goal), so they are skipped. Otherwise
 // as the original.
+static bool CaptainsInSidekickSlots() {  // captain-only teams, or a pack character's fixed team
+    constexpr uint32_t kCharacterClass = 0x24;  // cCharacter
+    for (uint32_t side = 0; side < 2; ++side) {
+        const uint32_t team = Memory::Read32(FrameMods::kTeams + side * 4);
+        for (uint32_t i = 1; team != 0 && i < 4; ++i) {
+            const uint32_t player = Memory::Read32(team + FrameMods::kTeamPlayers + i * 4);
+            // A captain's class: the game's (0-11) or a code mod's own (after the goalies' 20-31).
+            const int32_t cls = player ? static_cast<int32_t>(Memory::Read32(player + kCharacterClass)) : 12;
+            if (cls < 12 || cls >= 32) return true;
+        }
+    }
+    return false;
+}
+
 extern "C" void MSC_NisPlayCompanion_8028041C(CpuContext* ctx)
 {
-    if (RuntimeConfigFile::ModAllCaptains() || Mods::Variants::FixedTeamCaptain(0) || Mods::Variants::FixedTeamCaptain(1)) return;
+    if (RuntimeConfigFile::ModAllCaptains() || CaptainsInSidekickSlots()) return;
     constexpr uint32_t kGetTargetFilter = 0x8027F9D4u;  // NisPlayer::GetTargetFilter(NisTarget, NisWinnerType)
     constexpr uint32_t kPlayNis = 0x802805B4u;          // NisPlayer::fn_802805B4(NisHeader&, ...)
     constexpr uint32_t kDictSize = 0x30, kDict = 0x34, kHeaderSize = 0x1A0, kHeaderMirrored = 0x195;
@@ -2459,29 +2170,6 @@ void ApplyRoster(uint32_t loader)
     }
 }
 
-// A side led by a fixed-team mod character (mods/variants.h; SMS's Super Team): its players 1-3 are
-// its teammates whatever partner select picked, with or without captain-only teams. Entered as
-// ApplyRoster enters a captain or a partner; a mod character as its base, which the variant
-// machinery then makes the mod character (Variants::ForSlot).
-void ApplyFixedTeams(uint32_t loader)
-{
-    for (uint32_t side = 0; side < 2; ++side) {
-        const Mods::CharacterDef* fixed = Mods::Variants::FixedTeamCaptain(static_cast<int>(side));
-        if (fixed == nullptr) continue;
-        for (uint32_t i = 0; i < 10; ++i) {
-            const uint32_t entry = loader + i * kEntrySize;
-            const uint32_t player = Memory::Read32(entry + kEntryPlayer);
-            if (Memory::Read8(entry + kEntryGoalie) != 0 || player < 1 || player > 3 || (Memory::Read32(entry + kEntryTeam) & 1) != side) continue;
-            const int pick = Mods::Variants::TeammateClass(fixed, static_cast<int>(player));
-            if (pick < 0) continue;
-            const bool sidekick = pick >= 12;
-            Memory::Write32(entry + kEntryClass, static_cast<uint32_t>(pick));
-            Memory::Write8(entry + kEntryCaptain, sidekick ? 0 : 1);
-            Memory::Write8(entry + kEntrySidekick, sidekick ? 1 : 0);
-            Memory::Write32(loader + kSidekicks + (side * 3 + player - 1) * 4, static_cast<uint32_t>(pick));
-        }
-    }
-}
 } // namespace CaptainTeams
 
 // bool CharacterLoader_8056B290::fn_80009EFC(): moves to the next character entry. As the original;
@@ -2494,7 +2182,6 @@ extern "C" void MSC_CharacterLoaderNextEntry_80009EFC(CpuContext* ctx)
     Memory::Write32(loader + kCurrentIndex, static_cast<uint32_t>(index));
     if (index == 0) {
         if (RuntimeConfigFile::ModAllCaptains()) ApplyRoster(loader);
-        ApplyFixedTeams(loader);
     }
     const bool more = index < 10;
     Memory::Write32(loader + kCurrent, more ? loader + static_cast<uint32_t>(index) * kEntrySize : 0);
@@ -2531,18 +2218,10 @@ extern "C" void MSC_CharacterLoaderExtraTextures_8000A67C(CpuContext* ctx)
         const uint32_t game = info ? Memory::Read32(info + 0x80 + Memory::Read32(info + 0x11C) * 4) : 0;  // GetTeam(side)
         if (game != 0 && RuntimeConfigFile::ModCaptainSpot(side) == static_cast<int>(character)) character = Memory::Read32(game + side * 4);
     }
-    std::string path;
-    {
-        Mods::Variants::LoaderScope scope;  // a mod character's template: its own folder
-        ctx->gpr[3] = character;
-        InvokeIndirectCpu(kGetTemplateInfo, ctx);
-    }
-    path = MscGuest::CString(Memory::Read32(ctx->gpr[3] + 0x14), 127);  // szTextureFilename
+    ctx->gpr[3] = character;
+    InvokeIndirectCpu(kGetTemplateInfo, ctx);
+    std::string path = MscGuest::CString(Memory::Read32(ctx->gpr[3] + 0x14), 127);  // szTextureFilename
     path = path.substr(0, path.rfind('/')) + "/ExtraTextures.rlt";
-    if (!DVDPathExistsForRuntime(path.c_str())) {  // a mod character without its own: its base's
-        const std::string base = MscGuest::CString(Memory::Read32(0x804F7F18u + (character < 20 ? character : 0) * 0x5C + 0x14), 127);
-        path = base.substr(0, base.rfind('/')) + "/ExtraTextures.rlt";
-    }
     if (path.size() > 127) path.resize(127);
     // The path lives in a stack frame of ours for the call, as the original's szPath[128].
     const uint32_t sp = ctx->gpr[1], frame = sp - 0x90;
@@ -2561,8 +2240,7 @@ PPC_NATIVE_OVERRIDE_VOID(8000A67C, MSC_CharacterLoaderExtraTextures_8000A67C, (C
 
 // void CharacterLoader_8056B290::fn_8000C130(): loads a captain's voice bank into the team's captain
 // slot (1 home, 5 away). As the original, except that a captain in a sidekick slot (captain-only
-// teams, a fixed team) loads into that player's own slot, as a sidekick would, so the team captain
-// keeps its voice.
+// teams) loads into that player's own slot, as a sidekick would, so the team captain keeps its voice.
 extern "C" void MSC_CharacterLoaderCaptainAudio_8000C130(CpuContext* ctx)
 {
     using namespace CaptainTeams;
@@ -2571,15 +2249,13 @@ extern "C" void MSC_CharacterLoaderCaptainAudio_8000C130(CpuContext* ctx)
     const uint32_t loader = ctx->gpr[3];
     const uint32_t entry = Memory::Read32(loader + kCurrent);
     const int32_t cc = static_cast<int32_t>(Memory::Read32(entry + kEntryClass));
-    uint32_t info = FrameMods::kCharacterInfo + static_cast<uint32_t>(cc >= 0 && cc < 32 ? cc : 32) * 0x5C;
-    if (const auto* variant = Mods::Variants::ForSlot(ctx, static_cast<int>(Memory::Read32(entry + kEntryTeam) & 1),
-                                                      static_cast<int>(Memory::Read32(entry + kEntryPlayer)), cc))
-        info = variant->row;  // a mod character's voice bank
+    const uint32_t savedLr = ctx->lr;
+    // GetCharacterInfo itself, which code mods extend with characters of their own.
+    const uint32_t info = MscGuest::Call(ctx, 0x800FBD60u, {static_cast<uint32_t>(cc)});
     const uint32_t count = Memory::Read32(loader + kAudioRequestCount) + Memory::Read8(ctx->gpr[13] - 28528);  // + gAudioEnabled
     Memory::Write32(loader + kAudioRequestCount, count);
     uint32_t slot = Memory::Read32(entry + kEntryTeam) == 0 ? 1u : 5u;
     slot += Memory::Read32(entry + kEntryPlayer);  // 0 for the team captain
-    const uint32_t savedLr = ctx->lr;
     ctx->gpr[3] = Memory::Read32(ctx->gpr[13] - 5028);  // g_pAudioSystem
     ctx->gpr[4] = Memory::Read32(info + 0x1C);           // CharacterInfo voice bank
     ctx->gpr[5] = slot;
@@ -2644,13 +2320,6 @@ uint32_t BundleFindName(uint32_t bundle, uint32_t namePtr, bool printError)
             if (first) RT_LOGF(RT_TAG_HLE, "%s is not on the disc: using the home kit's image\n", name.c_str());
             return index;
         }
-    }
-    // A mod character's image (its name in the file name) its mod doesn't add: its base's.
-    if (std::string base; Mods::Variants::ToBaseName(name, base)) {
-        index = BundleFindHash(bundle, BundleHash(base));
-        if (index == kNotFound && base.size() > 4 && base.compare(base.size() - 4, 4, "_alt") == 0)
-            index = BundleFindHash(bundle, BundleHash(base.substr(0, base.size() - 4)));
-        if (index != kNotFound) return index;
     }
     if (printError && first) RT_LOGF(RT_TAG_HLE, "Bundle file not found: %s\n", name.c_str());
     return kNotFound;

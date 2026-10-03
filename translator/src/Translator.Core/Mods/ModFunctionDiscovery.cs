@@ -55,6 +55,16 @@ public static class ModFunctionDiscovery
                 case KamekCommandId.BranchLink:
                     AddImageAddress(KamekAddress.Resolve(command.Arguments[0], moduleGuestBase), command.Id.ToString());
                     break;
+                // kmWritePointer/kmCondWritePointer into the game (a vtable slot, a callback table): module
+                // code that nothing else reaches, even a leaf with no stack frame for the scans below.
+                case KamekCommandId.Addr32 when command.AddressIsAbsolute:
+                case KamekCommandId.CondWritePointer when command.AddressIsAbsolute:
+                    var pointer = KamekAddress.Resolve(command.Arguments[0], moduleGuestBase);
+                    if (LooksLikeFunctionPointerTarget(pointer, moduleGuestBase, moduleImageEnd, relocatedModuleImage))
+                    {
+                        AddImageAddress(pointer, "pointer written into the game");
+                    }
+                    break;
             }
         }
 

@@ -1,0 +1,15 @@
+<wiidisc version="1">
+  <id game="R4Q"/>
+  <options>
+    <section name="Hello">
+      <option name="Hello" id="hello" default="1">
+        <choice name="Enabled"><patch id="hello"/></choice>
+      </option>
+    </section>
+  </options>
+  <!-- A code mod is a file at the disc root named sml_<NN>_<pack>.bin: the Strikers Mod Loader loads
+       them in name order on a console, and build.sh translates them into the port. -->
+  <patch id="hello" root="/hello">
+    <file disc="/sml_10_hello.bin" external="hello.bin" create="true"/>
+  </patch>
+</wiidisc>

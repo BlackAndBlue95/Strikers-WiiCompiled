@@ -29,6 +29,7 @@ namespace {
 struct RiivoState {
     std::vector<RuntimeRiivolution::Overlay> overlays;
     std::optional<RuntimeRiivolution::SaveRedirect> saveRedirect;
+    std::vector<RuntimeRiivolution::Pack> packs;
 };
 
 std::once_flag g_riivoOnce;
@@ -199,8 +200,12 @@ void RiivoCollectMappings(const RiivolutionContract::Patch& patch, const std::st
             ++set.skippedExternals;
             continue;
         }
-        set.mappings.push_back(
-            {RuntimeRiivolution::Mapping::Kind::File, file.disc, hostFile, true, file.create});
+        RuntimeRiivolution::Mapping mapping{RuntimeRiivolution::Mapping::Kind::File, file.disc, hostFile, true, file.create};
+        mapping.partial = file.offset != 0 || file.fileoffset != 0 || file.length != 0;
+        mapping.offset = file.offset;
+        mapping.fileOffset = file.fileoffset;
+        mapping.length = file.length;
+        set.mappings.push_back(std::move(mapping));
     }
 
     for (const auto& folder : patch.folderPatches) {
@@ -273,6 +278,32 @@ std::optional<RuntimeRiivolution::PatchSet> RiivoLoadPatchSet(const fs::path& ov
             RiivoCollectMappings(patch, sdRootGeneric, xmlDirGeneric, set);
         }
 
+        RuntimeRiivolution::Pack pack;
+        pack.xml = xmlFile;
+        pack.root = xmlSet->sdRoot;
+        pack.mappings = set.mappings.size() - before;
+        for (const auto& section : disc->sections) {
+            for (const auto& option : section.options) {
+                RuntimeRiivolution::PackOption entry;
+                entry.section = section.name;
+                entry.name = option.name;
+                entry.configId = option.id.empty() ? section.name + option.name : option.id;
+                for (const auto& choice : option.choices) {
+                    entry.choices.push_back(choice.name);
+                }
+                entry.selected = option.selectedChoice;
+                pack.options.push_back(std::move(entry));
+            }
+        }
+        for (size_t index = before; index < set.mappings.size(); ++index) {
+            std::string name;
+            if (set.mappings[index].kind == RuntimeRiivolution::Mapping::Kind::File &&
+                RuntimeRiivolution::IsCodeModuleDiscPath(set.mappings[index].discPath, name)) {
+                pack.codeModules.push_back(name);
+            }
+        }
+        state.packs.push_back(std::move(pack));
+
         // Highest-priority overlay with a <savegame> wins.
         if (!state.saveRedirect) {
             if (const auto* savegame = RiivolutionContract::FindSavegamePatch(activePatches)) {
@@ -330,6 +361,69 @@ const std::vector<Overlay>& Overlays() {
 const std::optional<SaveRedirect>& GetSaveRedirect() {
     std::call_once(g_riivoOnce, RiivoInitialize);
     return g_riivoState.saveRedirect;
+}
+
+bool IsCodeModuleDiscPath(std::string_view discPath, std::string& name) {
+    while (!discPath.empty() && discPath.front() == '/') {
+        discPath.remove_prefix(1);
+    }
+    std::string lower(discPath);
+    RuntimeHle::LowerInPlace(lower);
+    if (lower.find('/') != std::string::npos || lower.find('\\') != std::string::npos || lower.size() <= 8 ||
+        lower.compare(0, 4, "sml_") != 0 || lower.compare(lower.size() - 4, 4, ".bin") != 0) {
+        return false;
+    }
+    name = std::move(lower);
+    return true;
+}
+
+const std::vector<Pack>& Packs() {
+    std::call_once(g_riivoOnce, RiivoInitialize);
+    return g_riivoState.packs;
+}
+
+std::string SaveOptionChoice(const Pack& pack, const PackOption& option, uint32_t choice) {
+    const fs::path configXml =
+        pack.root / "riivolution" / "config" / (RiivoGameId().substr(0, 4) + ".xml");
+
+    // Keep the other options the file remembers, in their order.
+    std::vector<RiivolutionContract::ConfigOption> options;
+    if (const auto text = RiivoReadFile(configXml)) {
+        if (auto config = RiivolutionContract::ParseConfigString(*text)) {
+            options = std::move(config->options);
+        }
+    }
+    const auto existing = std::find_if(options.begin(), options.end(),
+        [&](const RiivolutionContract::ConfigOption& entry) { return entry.id == option.configId; });
+    if (existing != options.end()) {
+        existing->defaultChoice = choice;
+    } else {
+        options.push_back({option.configId, choice});
+    }
+
+    pugi::xml_document document;
+    pugi::xml_node root = document.append_child("riivolution");
+    root.append_attribute("version") = 2;
+    for (const auto& entry : options) {
+        pugi::xml_node node = root.append_child("option");
+        node.append_attribute("id") = entry.id.c_str();
+        node.append_attribute("default") = entry.defaultChoice;
+    }
+
+    std::error_code ec;
+    fs::create_directories(configXml.parent_path(), ec);
+    const fs::path temporary = configXml.string() + ".tmp";
+    if (!document.save_file(temporary.c_str(), "\t", pugi::format_default, pugi::encoding_utf8)) {
+        return "can't write " + PathToUtf8(temporary);
+    }
+    fs::rename(temporary, configXml, ec);
+    if (ec) {
+        fs::remove(temporary, ec);
+        return "can't replace " + PathToUtf8(configXml);
+    }
+    RT_LOG(RT_TAG_RIIVOLUTION) << PathToUtf8(configXml) << ": " << option.configId << " = " << choice
+                               << " (from the next launch)" << std::endl;
+    return {};
 }
 
 } // namespace RuntimeRiivolution

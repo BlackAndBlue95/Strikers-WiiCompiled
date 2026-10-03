@@ -38,3 +38,16 @@ output:
   runtime_config: RuntimeConfig.h
   data_initializer: data_sections_init.cpp
   base_manifest: ../build/base/msc_base_manifest.json
+
+# Code mods: Kamek modules that Riivolution packs put at the disc root as sml_<NN>_<pack>.bin. build.sh
+# (translator link-code-mods) folds the installed packs' modules into modules.bin; while it exists the
+# base translation accounts for their patches, and translate-mod --profile code-mods builds them in.
+# runtime/src/mods/code_mods.cpp wraps init_hook to apply their patches and run their constructors
+# where the Strikers Mod Loader does on a console.
+profiles:
+  code-mods:
+    code_pul: generated/kamek_mods/modules.bin
+    region: E
+    module_guest_base: 0x81800000   # the port's 2 MiB code-mod region above MEM1
+    init_hook: 0x80369538           # glplatPreStartup, called from nlInit
+    output: generated/kamek_mods/translated

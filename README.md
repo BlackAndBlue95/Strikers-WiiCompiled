@@ -79,10 +79,12 @@ once with [Zadig](https://zadig.akeo.ie/)).
 
 ## Mods and tweaks
 
-Mods are packages with a `mod.toml` manifest that go in the `Mods` folder: new characters with
-their own models, animations, voices, cutscenes and menu art, additions to the game's shared files,
-and native plugins. Switch them on or off in **F10 > Mods**; [docs/modding](docs/modding/README.md)
-explains how to make one.
+Mods are Riivolution packs, the format Wii mods use, so the same pack runs on a Wii, in Dolphin and
+here. Put them in the `Riivolution` folder of the data folder and pick their options in
+**F10 > Mods**. A pack can replace and add game files, and add code (Kamek modules, which build.sh
+builds into the game). The Super Team pack (`packs/superteam`) puts SMS's robot team on a second
+page of captain select. [docs/modding](docs/modding/README.md) explains how packs work and how to
+make one.
 
 **F10 > Tweaks** has quality-of-life switches:
 

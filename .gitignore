@@ -61,3 +61,7 @@ output.txt
 
 # Operating System
 .DS_Store
+
+# Code-mod toolchain (sdk/kamek/fetch-toolchain.sh)
+/sdk/kamek/.toolchain/
+/sdk/kamek/examples/*/pack/

@@ -166,8 +166,76 @@ return command switch
     "emit-build-shards" => RunEmitBuildShards(tail),
     "emit-base-manifest" => RunEmitBaseManifest(tail),
     "check-base-mod-awareness" => RunCheckBaseModAwareness(tail),
+    "link-code-mods" => RunLinkCodeMods(tail),
     _ => ShowHelp(command)
 };
+
+/// <summary>
+/// Finds the code mods (Kamek modules) of the Riivolution packs installed in the given overlay roots
+/// and folds them into the single module set the project's code-mods profile translates
+/// (<c>modules.bin</c>, plus <c>modules.json</c> describing what went in). With no code mods it removes
+/// both, so the next translation is the unmodded game again.
+/// </summary>
+int RunLinkCodeMods(string[] argsTail)
+{
+    var loadedProject = RequireProject();
+    var outDir = Path.GetFullPath(OptionValue(argsTail, "--out") ?? Path.Combine(root, "generated", "kamek_mods"));
+    var gameId = OptionValue(argsTail, "--game-id") ?? loadedProject.Identity.GameId;
+    if (gameId is not { Length: 6 })
+    {
+        Console.Error.WriteLine("[translator] link-code-mods needs the six-character game ID (--game-id or project.game_id).");
+        return 1;
+    }
+
+    var roots = OptionValues(argsTail, "--riivolution-root");
+    var modules = RiivolutionCodeModules.Find(roots, gameId, line => Console.WriteLine($"  {line}"));
+    var setPath = Path.Combine(outDir, "modules.bin");
+    var manifestPath = Path.Combine(outDir, "modules.json");
+    if (modules.Count == 0)
+    {
+        if (Directory.Exists(outDir))
+        {
+            File.Delete(setPath);
+            File.Delete(manifestPath);
+        }
+        Console.WriteLine("[translator] No code mods installed.");
+        return 0;
+    }
+
+    KamekModuleSet set;
+    try
+    {
+        set = KamekModuleSet.Fold(modules.Select(module => (module.DiscName, File.ReadAllBytes(module.HostPath))).ToArray());
+    }
+    catch (InvalidDataException ex)
+    {
+        Console.Error.WriteLine($"[translator] A code mod isn't a Kamek module the port can load: {ex.Message}");
+        return 2;
+    }
+
+    Directory.CreateDirectory(outDir);
+    var serialized = set.Serialize();
+    FileOutput.WriteBytesIfChanged(setPath, serialized);
+    JsonOutput.WriteIfChanged(
+        manifestPath,
+        new CodeModManifest(
+            CodeModManifest.CurrentFormat,
+            CodeModManifest.CurrentFormatVersion,
+            gameId,
+            Convert.ToHexString(SHA256.HashData(serialized)).ToLowerInvariant(),
+            set.Modules.Zip(modules, (entry, module) => new CodeModManifestModule(
+                entry.Name, entry.Sha256, module.HostPath, module.XmlPath,
+                entry.Offset, entry.CodeSize, entry.BssSize, entry.CtorCount)).ToArray()),
+        JsonOutput.Indented);
+
+    Console.WriteLine($"[translator] {modules.Count} code mod(s), 0x{set.Chunk.CodeSize:X} bytes: {setPath}");
+    foreach (var entry in set.Modules)
+    {
+        Console.WriteLine(
+            $"  {entry.Name}: +0x{entry.Offset:X}, code 0x{entry.CodeSize:X}, bss 0x{entry.BssSize:X}, {entry.CtorCount} ctor(s)");
+    }
+    return 0;
+}
 
 /// <summary>
 /// May the workspace's completed base translation be reused for the Code.pul about to build?
@@ -1677,15 +1745,28 @@ int RunTranslateModCore(string[] argsTail, string? outputDirectoryOverride)
         return 1;
     }
     var modName = OptionValue(argsTail, "--mod-name")
-        ?? (!string.IsNullOrWhiteSpace(modRoot) ? Path.GetFileName(Path.GetFullPath(modRoot)) : "Pulsar Mod");
-    var region = OptionValue(argsTail, "--region") ?? profile?.Region ?? "P";
+        ?? (!string.IsNullOrWhiteSpace(modRoot) ? Path.GetFileName(Path.GetFullPath(modRoot))
+            : profile?.InitHook is not null ? "code mods" : "Pulsar Mod");
+    var region = OptionValue(argsTail, "--region") ?? profile?.Region ?? project?.Identity.Region ?? "P";
     var moduleGuestBase = OptionValue(argsTail, "--module-guest-base") is { } moduleBaseText
         ? ParseAddress(moduleBaseText)
         : profile?.ModuleGuestBase ?? 0x81700000u;
+    // The Strikers way (a profile with init_hook) links nothing at a fixed address: Kamek's dynamic
+    // modules are relocated to wherever they're loaded, here the guest base.
+    var initHook = profile?.InitHook;
     var moduleLinkBaseText = OptionValue(argsTail, "--module-link-base");
     var moduleLinkBase = moduleLinkBaseText is not null
         ? ParseAddress(moduleLinkBaseText)
-        : profile?.ModuleLinkBase ?? 0x803992E0u;
+        : profile?.ModuleLinkBase ?? (initHook.HasValue ? moduleGuestBase : 0x803992E0u);
+    if (initHook is { } hook &&
+        !runtimeNativeIndex.Value.Registrations.Any(registration =>
+            registration.Address == hook && !registration.IsTranslatedOverride))
+    {
+        Console.Error.WriteLine(
+            $"[translator] The profile's init_hook 0x{hook:X8} has no native registration in the runtime, " +
+            "so nothing would apply the code mods' patches or run their constructors.");
+        return 1;
+    }
     Directory.CreateDirectory(outDir);
 
     var pul = KamekPulFile.Load(codePul);
@@ -1879,33 +1960,48 @@ int RunTranslateModCore(string[] argsTail, string? outputDirectoryOverride)
         .ToList();
     var emitFullInitializerSet = emitCpp &&
         cppFailureCount == 0;
-    ModDataPatchWriter.Write(
-        Path.Combine(outDir, "cpp", "mod_data_patches.cpp"),
-        patchPlan,
-        moduleLinkBase,
-        baseManifest,
-        dvdOverlayRoots,
-        relocatedModuleImage,
-        SHA1.HashData(selected.CodeBlob),
-        retroWfcLoweringPlan?.StaticPointers,
-        selected.CodeSize,
-        selected.BssSize,
-        checked(moduleGuestBase + selected.CtorStart),
-        checked(moduleGuestBase + selected.CtorEnd),
-        emitFullInitializerSet,
-        emitFullInitializerSet ? retroWfcInitializerTarget : null,
-        emitFullInitializerSet
-            ? retroWfcPayload?.Summary.HelperModuleBase
-            : null,
-        emitFullInitializerSet
-            ? retroWfcPayload?.Summary.InitializationSuccessReturnValue
-            : null,
-        Path.Combine(
-            translateModPublishedOutputDirectory ?? outDir,
-            "cpp",
-            "mod_data_patches_blobs"),
-        profile?.Riivolution?.Xml,
-        riivolutionOptions);
+    if (initHook.HasValue)
+    {
+        ModDataPatchWriter.WriteCodeMods(
+            Path.Combine(outDir, "cpp", "mod_data_patches.cpp"),
+            patchPlan,
+            relocatedModuleImage,
+            checked(moduleGuestBase + selected.CtorStart),
+            checked(moduleGuestBase + selected.CtorEnd),
+            emitFullInitializerSet,
+            CodeModManifest.TryReadBeside(codePul)?.Modules,
+            Path.Combine(translateModPublishedOutputDirectory ?? outDir, "cpp", "mod_data_patches_blobs"));
+    }
+    else
+    {
+        ModDataPatchWriter.Write(
+            Path.Combine(outDir, "cpp", "mod_data_patches.cpp"),
+            patchPlan,
+            moduleLinkBase,
+            baseManifest,
+            dvdOverlayRoots,
+            relocatedModuleImage,
+            SHA1.HashData(selected.CodeBlob),
+            retroWfcLoweringPlan?.StaticPointers,
+            selected.CodeSize,
+            selected.BssSize,
+            checked(moduleGuestBase + selected.CtorStart),
+            checked(moduleGuestBase + selected.CtorEnd),
+            emitFullInitializerSet,
+            emitFullInitializerSet ? retroWfcInitializerTarget : null,
+            emitFullInitializerSet
+                ? retroWfcPayload?.Summary.HelperModuleBase
+                : null,
+            emitFullInitializerSet
+                ? retroWfcPayload?.Summary.InitializationSuccessReturnValue
+                : null,
+            Path.Combine(
+                translateModPublishedOutputDirectory ?? outDir,
+                "cpp",
+                "mod_data_patches_blobs"),
+            profile?.Riivolution?.Xml,
+            riivolutionOptions);
+    }
 
     if (emitCpp && cppFailureCount == 0)
     {
@@ -2620,8 +2716,8 @@ static string ModuleFunctionName(uint address)
 ProgramImage BuildSyntheticModProgramImage(string outDir, OverlayBuildResult overlayBuild)
 {
     var loadedProject = RequireProject();
-    var rel = relFile.Value ?? throw new InvalidOperationException("Kamek mod translation currently requires the project's single configured REL.");
-    var relImage = rel.BuildImage(loadedProject.Inputs.Rel!.LoadAddress);
+    // A game without a REL (Strikers is all main.dol) translates its mods against the DOL alone.
+    var relImage = relFile.Value?.BuildImage(loadedProject.Inputs.Rel!.LoadAddress);
     var baseImage = new ProgramImageBuilder().Build(dolFile.Value, relImage, loadedProject.Memory.Base, loadedProject.Memory.Size);
     var memory = baseImage.Memory.ToArray();
 
@@ -2762,8 +2858,8 @@ int RunEmitBaseManifest(string[] argsTail)
     outputMetadata?.RequireReleaseEligible(outputMetadataPath!);
     var region = OptionValue(argsTail, "--region") ?? loadedProject.Identity.Region ?? "unknown";
 
-    var rel = relFile.Value ?? throw new InvalidOperationException("Base mod manifest generation currently requires the project's single configured REL.");
-    var relImage = rel.BuildImage(loadedProject.Inputs.Rel!.LoadAddress);
+    var rel = relFile.Value;
+    var relImage = rel?.BuildImage(loadedProject.Inputs.Rel!.LoadAddress);
     var baseImage = new ProgramImageBuilder().Build(dolFile.Value, relImage, loadedProject.Memory.Base, loadedProject.Memory.Size);
     var result = BaseManifestBuilder.BuildAndWrite(
         dolFile.Value,
@@ -2779,7 +2875,7 @@ int RunEmitBaseManifest(string[] argsTail)
         loadedProject.Memory.Base,
         dolFile.Value.MemoryRange.Start,
         Path.GetFileName(loadedProject.Inputs.Dol.Path),
-        Path.GetFileName(loadedProject.Inputs.Rel.Path),
+        loadedProject.Inputs.Rel is { } relInput ? Path.GetFileName(relInput.Path) : "module.rel",
         outputMetadata);
 
     Console.WriteLine($"[translator] Wrote base manifest: {result.ManifestPath}");
@@ -3545,7 +3641,8 @@ static string[] KnownCommands() => new[]
     "translate-mod",
     "emit-base-manifest",
     "emit-build-shards",
-    "check-base-mod-awareness"
+    "check-base-mod-awareness",
+    "link-code-mods"
 };
 
 /// <summary>
@@ -3594,6 +3691,12 @@ static (string? Positional, CommandOption[] Options)? CommandSpec(string command
         new("--functions-dir", "generated/functions"),
         new("--translation-output-metadata", "path"),
         new("--region", "P")
+    }),
+    "link-code-mods" => (null, new CommandOption[]
+    {
+        new("--riivolution-root", "path (repeatable, highest priority first)"),
+        new("--out", "generated/kamek_mods"),
+        new("--game-id", "R4QE01")
     }),
     "emit-build-shards" => (null, new CommandOption[]
     {
@@ -3799,6 +3902,19 @@ static string? OptionValue(string[] argsTail, string name)
         return argsTail[index + 1];
     }
     return null;
+}
+
+static IReadOnlyList<string> OptionValues(string[] argsTail, string name)
+{
+    var values = new List<string>();
+    for (var index = 0; index + 1 < argsTail.Length; index++)
+    {
+        if (string.Equals(argsTail[index], name, StringComparison.Ordinal))
+        {
+            values.Add(argsTail[++index]);
+        }
+    }
+    return values;
 }
 
 static (string? Value, string[] Remaining) ExtractOption(string[] values, string name)

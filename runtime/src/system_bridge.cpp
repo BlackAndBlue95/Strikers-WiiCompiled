@@ -318,6 +318,9 @@ void SystemBridge::Initialize() {
     // initial memory state for .data, .rodata, .sdata, etc.
     RT_LOG(RT_TAG_RUNTIME) << "Initializing data sections from embedded DOL/REL data" << std::endl;
     InitializeDataSections();
+    // Code mods built into this game: their module image goes in place before any guest code runs
+    // (their patches and constructors wait for the game's init hook, see mods/code_mods.cpp).
+    RecompMod::RunMemoryInitializers();
 
     // Constructors run before the main entry point, but they still require the
     // PowerPC ABI environment. Keep using the persistent context here: the old
@@ -467,10 +470,6 @@ void SystemBridge::DumpCrashHeuristics(std::ostream& os, const CpuContext* cpu,
 // MEM2 space reserved at startup for the runtime FST.
 extern "C" uint32_t g_dvdFstReservedBase = 0;
 extern "C" uint32_t g_dvdFstReservedSize = 0;
-// Guest memory for the mod framework's own data (mod characters' rows, template info, path strings),
-// below the FST reservation: kept for the whole session, out of the game's heaps.
-extern "C" uint32_t g_modDataReservedBase = 0;
-extern "C" uint32_t g_modDataReservedSize = 0;
 
 void SystemBridge::SeedLowMemDefaults(const Memory::Config& config) {
 
@@ -501,7 +500,6 @@ void SystemBridge::SeedLowMemDefaults(const Memory::Config& config) {
     constexpr uint32_t kMem2LoFloor = 0x90000800u;
     // Reserve enough guest memory for the runtime-built DVD FST.
     constexpr uint32_t kDvdFstReserveSize = 0x200000u;
-    constexpr uint32_t kModDataReserveSize = 0x40000u;
     // IOS36 reserves 128 KiB for IPC immediately below a 128 KiB IOS-owned
     // block. Dolphin's RAM override preserves both sizes and moves them to the
     // top of the expanded MEM2 mapping.
@@ -556,9 +554,7 @@ void SystemBridge::SeedLowMemDefaults(const Memory::Config& config) {
         // Reserve FST memory before guest code can use this part of the arena.
         g_dvdFstReservedSize = kDvdFstReserveSize;
         g_dvdFstReservedBase = ipcBufLo - kDvdFstReserveSize;
-        g_modDataReservedSize = kModDataReserveSize;
-        g_modDataReservedBase = g_dvdFstReservedBase - kModDataReserveSize;
-        const uint32_t mem2ArenaHi = g_modDataReservedBase;
+        const uint32_t mem2ArenaHi = g_dvdFstReservedBase;
 
         entries.push_back({0x80003118u, mem2Size, "Physical MEM2 size", true});
         entries.push_back({0x8000311Cu, mem2Size, "Simulated MEM2 size", true});

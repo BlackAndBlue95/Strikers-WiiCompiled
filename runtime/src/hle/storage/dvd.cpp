@@ -9,8 +9,6 @@
 // layer's caches must be notified explicitly that these bytes changed.
 extern "C" void GxNotifyGuestRamDmaWrite(uint32_t addr, uint32_t size);
 #include "hle/storage/riivolution.h"
-#include "mods/mod_catalogs.h"
-#include "mods/mod_registry.h"
 #include "ppc_runtime.h"
 #include "recomp_mod_loader.h"
 #include "runtime_config.h"
@@ -73,8 +71,8 @@ struct DVDFileEntry {
     uint32_t size;
     uint32_t discOffsetWords = 0;
     bool isDirectory = false;
-    // Data appended after hostPath's (a mod catalog adding streams to a sound bank's .nlxwb): each
-    // {offset in the file, host file}, in order, back to back up to `size`.
+    // Data appended after hostPath's (a pack growing a disc file, such as a sound bank's .nlxwb):
+    // each {offset in the file, host file}, in order, back to back up to `size`.
     std::vector<std::pair<uint32_t, fs::path>> appended;
 };
 
@@ -600,51 +598,28 @@ static void ApplyFolderByNameMapping(const RuntimeRiivolution::Mapping& mapping)
               << " disc file(s) by filename" << std::endl;
 }
 
-// Mod packages (runtime/src/mods): each active package's files/ folder is disc-shaped and may add
-// files or replace them. A replaced disc file is a global override (it applies whoever plays), so
-// it's reported; two packages shipping the same file is a conflict, and the later one wins.
-static void ScanModPackages(size_t discEntryCount) {
-    std::map<std::string, std::string> owners;  // normalized dvd path -> package id
-    for (const Mods::Package* package : Mods::ActivePackages()) {
-        Mods::MountStats stats;
-        std::vector<std::string> overrides;
-        std::error_code ec;
-        if (fs::is_directory(package->FilesRoot(), ec)) {
-            WalkDirectory(package->FilesRoot(), /*recursive=*/true, /*announceErrors=*/true, [&](const fs::directory_entry& entry) {
-                std::error_code entryEc;
-                if (!entry.is_regular_file(entryEc) || entryEc) return;
-                const std::uintmax_t size = fs::file_size(entry.path(), entryEc);
-                const fs::path relative = fs::relative(entry.path(), package->FilesRoot(), entryEc);
-                if (entryEc) return;
-                // Skip what file managers and version control leave behind (.DS_Store, .git/...,
-                // Thumbs.db, desktop.ini): the game never asks for them.
-                for (const fs::path& part : relative) {
-                    const std::string name = HostPathText(part);
-                    if (name.empty() || name[0] == '.' || name == "Thumbs.db" || name == "desktop.ini") return;
-                }
-                const std::string dvdPath = "/" + HostPathText(relative);
-                const std::string key = NormalizePath(DvdFstContract::CanonicalizePath(dvdPath));
-                if (const auto owner = owners.find(key); owner != owners.end()) {
-                    ++stats.conflicts;
-                    RT_LOG(RT_TAG_MODS) << package->id << ": " << dvdPath << " is also in " << owner->second
-                                        << " (" << package->id << "'s copy wins)" << std::endl;
-                } else if (const auto existing = g_pathToEntry.find(key);
-                           existing != g_pathToEntry.end() && static_cast<size_t>(existing->second) < discEntryCount) {
-                    ++stats.replaced;
-                    overrides.push_back(dvdPath);
-                } else {
-                    ++stats.added;
-                }
-                owners[key] = package->id;
-                RegisterFileEntry(dvdPath, entry.path(), static_cast<uint32_t>(size));
-            });
-        }
-        Mods::SetMountStats(package->id, stats);
-        RT_LOG(RT_TAG_MODS) << package->id << ": " << stats.added << " file(s) added, " << stats.replaced
-                            << " disc file(s) replaced (global overrides)" << std::endl;
-        for (size_t i = 0; i < overrides.size() && i < 8; ++i) RT_LOG(RT_TAG_MODS) << "    replaces " << overrides[i] << std::endl;
-        if (overrides.size() > 8) RT_LOG(RT_TAG_MODS) << "    ... and " << (overrides.size() - 8) << " more" << std::endl;
+// A <file offset="..."> patch: the external's bytes written into a disc file at an offset. The case
+// packs use is appending at the file's end (adding streams to a sound bank's .nlxwb without copying
+// it); that grows the entry by an appended segment. Others are reported, not applied.
+static void ApplyPartialFileMapping(const RuntimeRiivolution::Mapping& mapping) {
+    const auto it = g_pathToEntry.find(NormalizePath(DvdFstContract::CanonicalizePath(mapping.discPath)));
+    std::error_code ec;
+    const std::uintmax_t hostSize = fs::file_size(mapping.hostPath, ec);
+    if (it == g_pathToEntry.end() || it->second < 0 || it->second >= static_cast<int32_t>(g_fileEntries.size()) || ec) {
+        RT_LOG(RT_TAG_DVD) << "Riivolution: " << mapping.discPath << " (offset patch) isn't on the disc" << std::endl;
+        return;
     }
+    DVDFileEntry& entry = g_fileEntries[it->second];
+    const uint64_t length = mapping.length != 0 ? mapping.length : hostSize;
+    if (entry.isDirectory || mapping.offset != entry.size || mapping.fileOffset != 0 || length != hostSize ||
+        static_cast<uint64_t>(entry.size) + length > 0xFFFFFFFFull) {
+        RT_LOG(RT_TAG_DVD) << "Riivolution: " << mapping.discPath << " offset 0x" << std::hex << mapping.offset
+                           << std::dec << ": only appending a whole file at the end is supported" << std::endl;
+        return;
+    }
+    entry.appended.emplace_back(entry.size, mapping.hostPath);
+    entry.size += static_cast<uint32_t>(length);
+    RT_LOG(RT_TAG_DVD) << "Riivolution: " << mapping.discPath << " + " << length << " byte(s) appended" << std::endl;
 }
 
 static void ScanOverlayRoot(const RuntimeRiivolution::Overlay& overlay) {
@@ -661,6 +636,10 @@ static void ScanOverlayRoot(const RuntimeRiivolution::Overlay& overlay) {
     for (const auto& mapping : overlay.patches->mappings) {
         switch (mapping.kind) {
         case RuntimeRiivolution::Mapping::Kind::File: {
+            if (mapping.partial) {
+                ApplyPartialFileMapping(mapping);
+                break;
+            }
             if (!mapping.create && !DvdEntryExists(mapping.discPath)) {
                 break;
             }
@@ -980,38 +959,16 @@ extern "C" void DVDInit_80396CC0()
     // Map "<dvd_root>/sys" -> "/sys/" (e.g. main.dol, bi2.bin)
     ScanDirectory(rootPath / "sys", "/sys/");
 
-    // RegisterFileEntry lets the last registration win. Mod packages go first, then the
-    // Riivolution packs (in reverse discovery order, so the first root listed wins).
+    // RegisterFileEntry lets the last registration win: the Riivolution packs go in reverse discovery
+    // order, so the first root listed wins.
     const size_t vanillaEntryCount = g_fileEntries.size();
-    ScanModPackages(vanillaEntryCount);
-    const size_t modEntryCount = g_fileEntries.size() - vanillaEntryCount;
     const auto& overlays = RuntimeRiivolution::Overlays();
     for (auto overlay = overlays.rbegin(); overlay != overlays.rend(); ++overlay) {
         ScanOverlayRoot(*overlay);
     }
-    const size_t overlayEntryCount = g_fileEntries.size() - vanillaEntryCount - modEntryCount;
-    // Then the catalogs mods add to (front-end texture bundles, ...): rebuilt from the file as it
-    // stands now (the disc's, or a replacement) and registered in its place.
-    Mods::Catalogs::Merge(
-        [](const std::string& dvdPath) -> std::optional<fs::path> {
-            const auto it = g_pathToEntry.find(NormalizePath(DvdFstContract::CanonicalizePath(dvdPath)));
-            if (it == g_pathToEntry.end() || it->second < 0 || it->second >= static_cast<int32_t>(g_fileEntries.size())) return std::nullopt;
-            return g_fileEntries[it->second].hostPath;
-        },
-        [](const std::string& dvdPath, const fs::path& hostPath, uint32_t size) { RegisterFileEntry(dvdPath, hostPath, size); },
-        [](const std::string& dvdPath, const fs::path& hostPath, uint32_t size) -> std::optional<uint32_t> {
-            const auto it = g_pathToEntry.find(NormalizePath(DvdFstContract::CanonicalizePath(dvdPath)));
-            if (it == g_pathToEntry.end() || it->second < 0 || it->second >= static_cast<int32_t>(g_fileEntries.size())) return std::nullopt;
-            DVDFileEntry& entry = g_fileEntries[it->second];
-            if (entry.isDirectory || static_cast<uint64_t>(entry.size) + size > 0xFFFFFFFFull) return std::nullopt;
-            const uint32_t at = entry.size;
-            entry.appended.emplace_back(at, hostPath);
-            entry.size += size;
-            return at;
-        });
-    RT_LOG(RT_TAG_DVD) << "disc index: " << vanillaEntryCount << " disc file(s), " << modEntryCount
-              << " mod file(s), " << overlayEntryCount << " Riivolution registration(s) from "
-              << overlays.size() << " root(s)" << std::endl;
+    const size_t overlayEntryCount = g_fileEntries.size() - vanillaEntryCount;
+    RT_LOG(RT_TAG_DVD) << "disc index: " << vanillaEntryCount << " disc file(s), " << overlayEntryCount
+              << " Riivolution registration(s) from " << overlays.size() << " root(s)" << std::endl;
 
     // Load FST mapping so real files keep their physical disc extents.
     LoadFstIndex();

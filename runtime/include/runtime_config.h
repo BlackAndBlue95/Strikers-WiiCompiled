@@ -99,13 +99,6 @@ struct RuntimeUserConfig {
     // Riivolution packs: each root is laid out like a Wii SD card (riivolution/*.xml and the pack
     // folders). <data>/Riivolution is used too when it exists (hle/storage/riivolution.cpp).
     std::vector<std::string> overlayRoots;
-    // Mod packages (runtime/src/mods): [paths] mods_dir, and per mod id whether it is enabled
-    // ([mod_packages]) and whether its native plugin may load ([mod_plugins]).
-    std::optional<std::string> modsDirectory;
-    std::map<std::string, bool> modPackagesEnabled;
-    std::map<std::string, bool> modPluginsEnabled;
-    std::map<std::string, std::map<std::string, bool>> modSettings;  // [mod_settings."<id>"]: plugin settings
-    std::optional<std::string> modSelection[2];  // [mod_selection] home / away: a mod character leading the side
     // Controller mappings use Wii/GameCube button names as keys and up to two
     // comma-separated SDL-style physical button names ("south", or
     // "dpad_up,left_shoulder") as values; pressing either bound button counts.
@@ -386,7 +379,6 @@ inline void EnsureConfigFile() {
               "# Relative paths are relative to this file.\n"
               "# dvd_root = \"Game\"\n"
               "# nand_root = \"NAND\"\n"
-              "# mods_dir = \"Mods\"\n"
               "# Riivolution packs, each laid out like a Wii SD card (riivolution/*.xml\n"
               "# plus the pack folders). A Riivolution folder next to this file is used too.\n"
               "# overlay_roots = [\"D:\\\\Riivolution\"]\n";
@@ -493,25 +485,6 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
         }
     }
 
-    for (const auto& [tableName, target] : {std::pair<const char*, std::map<std::string, bool>*>{"mod_packages", &config.modPackagesEnabled},
-                                            std::pair<const char*, std::map<std::string, bool>*>{"mod_plugins", &config.modPluginsEnabled}}) {
-        if (const auto* table = document.contains(tableName) ? &document.at(tableName) : nullptr;
-            table != nullptr && table->is_table()) {
-            for (const auto& [key, value] : table->as_table()) {
-                if (value.is_boolean()) (*target)[key] = value.as_boolean();
-            }
-        }
-    }
-
-    if (const auto* settings = document.contains("mod_settings") ? &document.at("mod_settings") : nullptr;
-        settings != nullptr && settings->is_table()) {
-        for (const auto& [id, table] : settings->as_table()) {
-            if (!table.is_table()) continue;
-            for (const auto& [key, value] : table.as_table())
-                if (value.is_boolean()) config.modSettings[id][key] = value.as_boolean();
-        }
-    }
-
     config.widescreen = FindConfigValue<bool>(document, "video", "widescreen");
     config.forceAspect169 = FindConfigValue<bool>(document, "video", "force_16_9");
     config.windowPosX = FindConfigInt(document, "video", "window_x");
@@ -576,9 +549,6 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
 
     config.nandRoot = FindConfigValue<std::string>(document, "paths", "nand_root");
     config.dvdRoot = FindConfigValue<std::string>(document, "paths", "dvd_root");
-    config.modsDirectory = FindConfigValue<std::string>(document, "paths", "mods_dir");
-    config.modSelection[0] = FindConfigValue<std::string>(document, "mod_selection", "home");
-    config.modSelection[1] = FindConfigValue<std::string>(document, "mod_selection", "away");
     if (auto roots = FindConfigValue<std::vector<std::string>>(document, "paths", "overlay_roots")) {
         for (auto& root : *roots) {
             root = Trim(root);
@@ -813,7 +783,7 @@ inline bool SetControllerExpression(const std::string& key, const std::string& v
     return WriteSetting("controller", key, FormatString(value));
 }
 
-// Mods (F10 > Mods). Each is on unless disabled.
+// Tweaks (F10 > Tweaks, [mods] in Config.toml).
 inline bool ModMenuNavigation() { return Get().modMenuNavigation.value_or(true); }
 inline bool ModSelectionBadge() { return Get().modSelectionBadge.value_or(false); }
 inline bool ModNoMegaStrikes() { return Get().modNoMegaStrikes.value_or(true); }
@@ -1191,54 +1161,6 @@ inline std::string DiscordClientId(std::string fallback = "") {
 
 inline const std::vector<std::string>& OverlayRoots() {
     return Get().overlayRoots;
-}
-
-// Where mod packages are installed: [paths] mods_dir (relative to Config.toml), else <data>/Mods.
-inline std::filesystem::path ModsDirectory() {
-    if (const auto& configured = Get().modsDirectory; configured && !Trim(*configured).empty()) {
-        return ResolveRelativeToConfig(Trim(*configured));
-    }
-    return ResolveConfigPath().parent_path() / "Mods";
-}
-
-// A mod's switches, or nullopt when Config.toml doesn't mention it.
-inline std::optional<bool> ModPackageEnabled(const std::string& id) {
-    const auto& table = Get().modPackagesEnabled;
-    const auto it = table.find(id);
-    return it == table.end() ? std::nullopt : std::optional<bool>(it->second);
-}
-inline std::optional<bool> ModPluginEnabled(const std::string& id) {
-    const auto& table = Get().modPluginsEnabled;
-    const auto it = table.find(id);
-    return it == table.end() ? std::nullopt : std::optional<bool>(it->second);
-}
-inline bool SetModPackageEnabled(const std::string& id, bool enabled) {
-    Mutable().modPackagesEnabled[id] = enabled;
-    return WriteSetting("mod_packages", FormatString(id), enabled ? "true" : "false");
-}
-inline bool SetModPluginEnabled(const std::string& id, bool enabled) {
-    Mutable().modPluginsEnabled[id] = enabled;
-    return WriteSetting("mod_plugins", FormatString(id), enabled ? "true" : "false");
-}
-inline std::optional<bool> ModSetting(const std::string& id, const std::string& key) {
-    const auto& settings = Get().modSettings;
-    const auto mod = settings.find(id);
-    if (mod == settings.end()) return std::nullopt;
-    const auto it = mod->second.find(key);
-    return it == mod->second.end() ? std::nullopt : std::optional<bool>(it->second);
-}
-inline bool SetModSetting(const std::string& id, const std::string& key, bool value) {
-    Mutable().modSettings[id][key] = value;
-    const bool bare = !key.empty() && std::all_of(key.begin(), key.end(), [](char c) {
-        return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-';
-    });
-    return WriteSetting("mod_settings." + FormatString(id), bare ? key : FormatString(key), value ? "true" : "false");
-}
-// The mod character (internal name) leading a side, "" for the game's own captain.
-inline std::string ModSelection(int side) { return Trim(Get().modSelection[side & 1].value_or("")); }
-inline bool SetModSelection(int side, const std::string& name) {
-    Mutable().modSelection[side & 1] = name;
-    return WriteSetting("mod_selection", side == 0 ? "home" : "away", FormatString(name));
 }
 
 inline void LogLoadedConfig() {

@@ -17,8 +17,8 @@ public static partial class BaseManifestBuilder
 {
     public static BaseManifestBuildResult BuildAndWrite(
         DolFile dol,
-        RelFile rel,
-        RelImage relImage,
+        RelFile? rel,
+        RelImage? relImage,
         ProgramImage image,
         string generatedFunctionsDir,
         string outputDir,
@@ -62,10 +62,15 @@ public static partial class BaseManifestBuilder
                 section.IsExecutable && dolTextOffsets.TryGetValue(section.Name, out var imageOffset) ? imageOffset : 0));
         }
 
-        var relTextOffsets = WriteRelExecutableImage(rel, relImage, relTextPath);
-        foreach (var section in rel.Sections.Where(s => s.Size > 0))
+        // A game with no REL (all of it in main.dol) has only the DOL's sections.
+        var relTextOffsets = rel is not null && relImage is not null
+            ? WriteRelExecutableImage(rel, relImage, relTextPath)
+            : new Dictionary<int, uint>();
+        foreach (var section in rel is not null && relImage is not null
+                     ? rel.Sections.Where(s => s.Size > 0)
+                     : Enumerable.Empty<RelSection>())
         {
-            var guestStart = relImage.BaseAddress + section.FileOffset;
+            var guestStart = relImage!.BaseAddress + section.FileOffset;
             sections.Add(new BaseSectionMetadata(
                 $"{relSourceName}:{section.Index}",
                 relSourceName,
@@ -84,7 +89,7 @@ public static partial class BaseManifestBuilder
             gameId,
             region,
             image.Sha256,
-            relImage.BaseAddress,
+            relImage?.BaseAddress ?? 0,
             sections,
             functions,
             $"{fileStem}_function_ranges.json");

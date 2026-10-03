@@ -173,17 +173,42 @@ if (-not $SkipTranslate) {
     Step 'Building the translator'
     Logged 'translator-build.log' $dotnet @('build', 'translator/src/Translator.Cli', '-c', 'Release', '--nologo')
 
+    # Code mods: the Kamek modules of the Riivolution packs in the data folder's Riivolution folder.
+    # They're translated into the game, so adding, updating or removing one takes another build.
+    Step 'Looking for code mods'
+    Logged 'code-mods.log' $dotnet @($TranslatorDll, 'link-code-mods', '--project', $Project,
+        '--riivolution-root', (Join-Path $AppDir 'Riivolution'), '--out', 'generated/kamek_mods')
+    $codeMods = Test-Path (Join-Path $Repo 'generated/kamek_mods/modules.bin')
+    if ($codeMods) {
+        Get-Content (Join-Path $BuildDir 'code-mods.log') |
+            ForEach-Object { if ($_ -match '^  (sml_[^:]*):') { Write-Host "    $($Matches[1])" } }
+    } else {
+        Write-Host '    none'
+    }
+
     Step 'Translating main.dol (this takes a few minutes)'
     Logged 'translate.log' $dotnet @($TranslatorDll, 'translate-recursive', '0x80006124', '--project', $Project,
         '--outdir', 'generated/functions', '--output-metadata', 'generated/base_translation_output.json',
         '--production-source-bundle', 'generated/base_translation_sources.bin',
         '--no-function-files', '--prune-stale', '--threads', "$Jobs")
 
+    $shardModArgs = @()
+    if ($codeMods) {
+        Step 'Translating the code mods'
+        Logged 'base-manifest.log' $dotnet @($TranslatorDll, 'emit-base-manifest', '--project', $Project,
+            '--translation-output-metadata', 'generated/base_translation_output.json')
+        Logged 'translate-mod.log' $dotnet @($TranslatorDll, 'translate-mod', '--project', $Project,
+            '--profile', 'code-mods', '--base-manifest', 'build/base/msc_base_manifest.json', '--emit-cpp',
+            '--threads', "$Jobs")
+        $shardModArgs = @('--resolved-profile', 'generated/kamek_mods/translated/resolved_dispatch_profile.json',
+            '--retro-cpp-dir', 'generated/kamek_mods/translated/cpp')
+    }
+
     Step 'Generating data sections and the build graph'
     Logged 'data-init.log' $dotnet @($TranslatorDll, 'generate-data-init', '--project', $Project)
-    Logged 'build-shards.log' $dotnet @($TranslatorDll, 'emit-build-shards', '--project', $Project,
+    Logged 'build-shards.log' $dotnet (@($TranslatorDll, 'emit-build-shards', '--project', $Project,
         '--base-metadata', 'generated/base_translation_output.json', '--base-functions-dir', 'generated/functions',
-        '--native-source-dir', 'runtime/src', '--out', 'generated/build_shards')
+        '--native-source-dir', 'runtime/src', '--out', 'generated/build_shards') + $shardModArgs)
 }
 
 Step 'Configuring the native build'

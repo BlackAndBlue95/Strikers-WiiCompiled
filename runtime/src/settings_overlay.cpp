@@ -3,9 +3,9 @@
 #include "aurora_events.h"
 #include "controller_button_names.h"
 #include "controller_mapping_wizard.h"
+#include "hle/storage/riivolution.h"
 #include "input_bindings.h"
-#include "mods/mod_plugins.h"
-#include "mods/mod_registry.h"
+#include "mods/code_mods.h"
 #include "nand_path.h"
 #include "runtime_config.h"
 #include "runtime_log.h"
@@ -35,6 +35,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <iostream>
 #include <mutex>
 #include <string>
@@ -1218,57 +1219,104 @@ void Draw() {
 }
 } // namespace Miis
 
-// F10 > Mods: the installed mod packages (runtime/src/mods). Switches are saved to Config.toml and
-// apply on the next launch: the disc file table is built once, at boot.
-void DrawModPackages() {
-    const auto& packages = Mods::Packages();
-    const std::string dir = RuntimeConfigFile::PathToUtf8(Mods::Directory());
-    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 34.0f);
-    if (packages.empty()) {
-        ImGui::TextUnformatted("No mods installed.");
-        ImGui::TextDisabled("Put each mod's folder (the one holding its mod.toml) in %s", dir.c_str());
-    }
+// F10 > Mods, Riivolution packs: every pack XML in the overlay roots with its options. A choice is
+// saved to the root's riivolution/config/R4QE.xml, as Riivolution and Dolphin save it, and applies at
+// the next launch (the disc is put together once, at boot). A pack's code mods are built into the
+// game, so changing one of those also takes another build.sh.
+void DrawRiivolutionPacks() {
+    static std::map<std::string, uint32_t> chosen;  // pack xml + option -> choice saved this session
+    static std::string saveError;
     const ImVec4 errorColour(1.0f, 0.45f, 0.35f, 1.0f), warningColour(1.0f, 0.75f, 0.25f, 1.0f);
-    for (const Mods::Package& package : packages) {
-        ImGui::PushID(package.id.c_str());
-        bool enabled = RuntimeConfigFile::ModPackageEnabled(package.id).value_or(true);
-        const std::string label = package.name + (package.version.empty() ? "" : "  " + package.version);
-        if (ImGui::Checkbox(label.c_str(), &enabled)) Mods::SetEnabled(package.id, enabled);
-        std::string authors;
-        for (const std::string& author : package.authors) authors += (authors.empty() ? "" : ", ") + author;
-        ImGui::TextDisabled("%s%s%s", package.id.c_str(), authors.empty() ? "" : " - by ", authors.c_str());
-        if (!package.description.empty()) ImGui::TextDisabled("%s", package.description.c_str());
-        if (package.active) {
-            const Mods::MountStats mount = Mods::GetMountStats(package.id);
-            ImGui::TextDisabled("%zu character(s), %d file(s) added", package.characters.size(), mount.added);
-            if (mount.replaced > 0)
-                ImGui::TextColored(warningColour, "Replaces %d game file(s) for every match and menu.", mount.replaced);
-            if (mount.conflicts > 0)
-                ImGui::TextColored(warningColour, "%d file(s) are also in another mod (this one wins).", mount.conflicts);
+    const auto& packs = RuntimeRiivolution::Packs();
+    const std::string folder =
+        RuntimeConfigFile::PathToUtf8(RuntimeConfigFile::ResolveConfigPath().parent_path() / "Riivolution");
+
+    ImGui::SeparatorText("Riivolution packs");
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 34.0f);
+    if (packs.empty()) {
+        ImGui::TextUnformatted("No Riivolution packs installed.");
+        ImGui::TextDisabled("Copy a pack as it goes on an SD card (its riivolution folder and its own folder) into %s",
+                            folder.c_str());
+    }
+    bool restart = false, rebuild = false;
+    for (const RuntimeRiivolution::Pack& pack : packs) {
+        const std::string xml = RuntimeConfigFile::PathToUtf8(pack.xml);
+        ImGui::PushID(xml.c_str());
+        ImGui::TextUnformatted(RuntimeConfigFile::PathToUtf8(pack.xml.stem()).c_str());
+        ImGui::TextDisabled("%s", xml.c_str());
+        if (!pack.codeModules.empty()) {
+            std::string names;
+            for (const std::string& name : pack.codeModules) names += (names.empty() ? "" : ", ") + name;
+            ImGui::TextDisabled("Code: %s", names.c_str());
         }
-        for (const std::string& error : package.errors) ImGui::TextColored(errorColour, "%s", error.c_str());
-        for (const std::string& warning : package.warnings) ImGui::TextColored(warningColour, "%s", warning.c_str());
-        if (package.HasPlugin()) {
-            bool allowed = RuntimeConfigFile::ModPluginEnabled(package.id).value_or(false);
-            if (ImGui::Checkbox("Allow its native code", &allowed)) Mods::SetPluginAllowed(package.id, allowed);
-            ImGui::TextDisabled("This mod includes a native plugin, which runs with your account's permissions. "
-                                "Only allow mods you trust.");
-            if (const Mods::PluginStatus* plugin = Mods::GetPluginStatus(package.id)) {
-                if (!plugin->loaded && !plugin->error.empty())
-                    ImGui::TextColored(package.pluginSetting ? errorColour : warningColour, "Plugin: %s", plugin->error.c_str());
-                for (const Mods::PluginSetting& setting : plugin->settings) {
-                    bool value = Mods::PluginSettingValue(package.id, setting);
-                    if (ImGui::Checkbox(setting.label.c_str(), &value)) Mods::SetPluginSettingValue(package.id, setting, value);
-                    if (!setting.help.empty()) ImGui::TextDisabled("%s", setting.help.c_str());
+        for (const RuntimeRiivolution::PackOption& option : pack.options) {
+            const std::string key = xml + "\n" + option.configId;
+            const auto saved = chosen.find(key);
+            const uint32_t current = saved != chosen.end() ? saved->second : option.selected;
+            const std::string label = option.section.empty() || option.section == option.name
+                                          ? option.name
+                                          : option.section + ": " + option.name;
+            const char* preview = current == 0 || current > option.choices.size()
+                                      ? "Disabled"
+                                      : option.choices[current - 1].c_str();
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
+            if (ImGui::BeginCombo(label.c_str(), preview)) {
+                for (uint32_t choice = 0; choice <= option.choices.size(); ++choice) {
+                    const char* name = choice == 0 ? "Disabled" : option.choices[choice - 1].c_str();
+                    ImGui::PushID(static_cast<int>(choice));
+                    if (ImGui::Selectable(name, choice == current) && choice != current) {
+                        saveError = RuntimeRiivolution::SaveOptionChoice(pack, option, choice);
+                        if (saveError.empty()) chosen[key] = choice;
+                    }
+                    ImGui::PopID();
                 }
+                ImGui::EndCombo();
+            }
+            if (current != option.selected) {
+                restart = true;
+                rebuild |= !pack.codeModules.empty();
             }
         }
         ImGui::PopID();
         ImGui::Separator();
     }
-    if (Mods::RestartRequired()) ImGui::TextColored(warningColour, "Restart the game to apply these changes.");
-    if (ImGui::Button("Open the mods folder")) OpenFolder(dir);
+    for (const CodeMods::Module& module : CodeMods::Status()) {
+        switch (module.state) {
+        case CodeMods::Module::State::BuiltIn:
+            ImGui::TextDisabled("Code mod %s: built in", module.name.c_str());
+            break;
+        case CodeMods::Module::State::NotInstalled:
+            ImGui::TextColored(warningColour, "Code mod %s is built in but no longer installed or turned on; it "
+                               "stays in the game until build.sh runs again.", module.name.c_str());
+            break;
+        case CodeMods::Module::State::Changed:
+            ImGui::TextColored(warningColour, "Code mod %s changed since this game was built; run build.sh again.",
+                               module.name.c_str());
+            break;
+        case CodeMods::Module::State::NotBuiltIn:
+            ImGui::TextColored(warningColour, "Code mod %s is installed but not built in; run build.sh again.",
+                               module.name.c_str());
+            break;
+        }
+    }
+    if (!saveError.empty()) ImGui::TextColored(errorColour, "Couldn't save: %s", saveError.c_str());
+    if (rebuild) {
+        ImGui::TextColored(warningColour, "Run build.sh again, then restart the game, to apply these changes "
+                                          "(the pack's code is built into the game).");
+    } else if (restart) {
+        ImGui::TextColored(warningColour, "Restart the game to apply these changes.");
+    }
+    if (ImGui::Button("Open the Riivolution folder")) {
+        std::error_code ec;
+        std::filesystem::create_directories(RuntimeConfigFile::PathFromUtf8(folder), ec);
+        OpenFolder(folder);
+    }
     ImGui::PopTextWrapPos();
+}
+
+// F10 > Mods: the Riivolution packs (DrawRiivolutionPacks).
+void DrawModPackages() {
+    DrawRiivolutionPacks();
 }
 
 // F10 > Tweaks: changes to the game built into the runtime ([mods] in Config.toml).

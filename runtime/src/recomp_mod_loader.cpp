@@ -33,6 +33,16 @@ std::vector<RecompMod::InitializerFn>& PostRelInitializers() {
     return initializers;
 }
 
+std::vector<RecompMod::PreStartupFn>& PreStartupInitializers() {
+    static std::vector<RecompMod::PreStartupFn> initializers;
+    return initializers;
+}
+
+std::vector<RecompMod::CodeModule>& CodeModuleList() {
+    static std::vector<RecompMod::CodeModule> modules;
+    return modules;
+}
+
 std::vector<std::filesystem::path>& OverlayRoots() {
     static std::vector<std::filesystem::path> roots;
     return roots;
@@ -64,6 +74,11 @@ bool& MemoryInitializersRan() {
 }
 
 bool& PostRelInitializersRan() {
+    static bool ran = false;
+    return ran;
+}
+
+bool& PreStartupInitializersRan() {
     static bool ran = false;
     return ran;
 }
@@ -267,6 +282,40 @@ void RunPostRelInitializers() {
     if (!pending.empty()) {
         RT_LOG(RT_TAG_MOD) << "Ran " << pending.size() << " recomp mod post-REL initializer(s)" << std::endl;
     }
+}
+
+void RegisterPreStartupInitializer(PreStartupFn fn) {
+    if (!fn) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(ModMutex());
+    PreStartupInitializers().push_back(fn);
+}
+
+void RunPreStartupInitializers(CpuContext* ctx) {
+    std::vector<PreStartupFn> pending;
+    {
+        std::lock_guard<std::mutex> lock(ModMutex());
+        if (PreStartupInitializersRan()) {
+            return;
+        }
+        PreStartupInitializersRan() = true;
+        pending = PreStartupInitializers();
+    }
+
+    for (auto* fn : pending) {
+        fn(ctx);
+    }
+}
+
+void RegisterCodeModule(const char* name, const char* sha256, uint32_t base, uint32_t codeSize, uint32_t bssSize) {
+    std::lock_guard<std::mutex> lock(ModMutex());
+    CodeModuleList().push_back({name ? name : "", sha256 ? sha256 : "", base, codeSize, bssSize});
+}
+
+const std::vector<CodeModule>& CodeModules() {
+    return CodeModuleList();
 }
 
 void RegisterDvdOverlayRoot(std::string root) {

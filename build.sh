@@ -180,17 +180,42 @@ if [ "$SKIP_TRANSLATE" -eq 0 ]; then
     step "Building the translator"
     logged translator-build.log dotnet build translator/src/Translator.Cli -c Release --nologo
 
+    # Code mods: the Kamek modules of the Riivolution packs in the data folder's Riivolution folder.
+    # They're translated into the game, so adding, updating or removing one takes another build.sh.
+    step "Looking for code mods"
+    logged code-mods.log dotnet "$TRANSLATOR_DLL" link-code-mods --project "$PROJECT" \
+        --riivolution-root "$APP_DIR/Riivolution" --out generated/kamek_mods
+    CODE_MODS=0
+    if [ -f generated/kamek_mods/modules.bin ]; then
+        CODE_MODS=1
+        sed -n 's/^  \(sml_[^:]*\):.*/    \1/p' "$BUILD_DIR/code-mods.log"
+    else
+        echo "    none"
+    fi
+
     step "Translating main.dol (this takes a few minutes)"
     logged translate.log dotnet "$TRANSLATOR_DLL" translate-recursive 0x80006124 --project "$PROJECT" \
         --outdir generated/functions --output-metadata generated/base_translation_output.json \
         --production-source-bundle generated/base_translation_sources.bin \
         --no-function-files --prune-stale --threads "$JOBS"
 
+    SHARD_MOD_ARGS=()
+    if [ "$CODE_MODS" -eq 1 ]; then
+        step "Translating the code mods"
+        logged base-manifest.log dotnet "$TRANSLATOR_DLL" emit-base-manifest --project "$PROJECT" \
+            --translation-output-metadata generated/base_translation_output.json
+        logged translate-mod.log dotnet "$TRANSLATOR_DLL" translate-mod --project "$PROJECT" --profile code-mods \
+            --base-manifest build/base/msc_base_manifest.json --emit-cpp --threads "$JOBS"
+        SHARD_MOD_ARGS=(--resolved-profile generated/kamek_mods/translated/resolved_dispatch_profile.json
+            --retro-cpp-dir generated/kamek_mods/translated/cpp)
+    fi
+
     step "Generating data sections and the build graph"
     logged data-init.log dotnet "$TRANSLATOR_DLL" generate-data-init --project "$PROJECT"
+    # (bash 3.2, macOS's, treats an empty array as unset under set -u, hence the ${...+...})
     logged build-shards.log dotnet "$TRANSLATOR_DLL" emit-build-shards --project "$PROJECT" \
         --base-metadata generated/base_translation_output.json --base-functions-dir generated/functions \
-        --native-source-dir runtime/src --out generated/build_shards
+        --native-source-dir runtime/src --out generated/build_shards ${SHARD_MOD_ARGS[@]+"${SHARD_MOD_ARGS[@]}"}
 fi
 
 step "Configuring the native build"

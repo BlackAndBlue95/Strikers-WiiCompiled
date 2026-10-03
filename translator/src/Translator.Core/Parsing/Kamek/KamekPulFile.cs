@@ -47,6 +47,12 @@ public sealed class KamekPulFile
 
     public KamekChunk SelectRegion(string region)
     {
+        // A raw chunk is one module built for one game: it has no per-region table to choose from.
+        if (!IsCombined)
+        {
+            return Chunks[0];
+        }
+
         if (region is not ("P" or "E" or "J" or "K"))
         {
             throw new ArgumentException("Region must be exactly P, E, J, or K.", nameof(region));

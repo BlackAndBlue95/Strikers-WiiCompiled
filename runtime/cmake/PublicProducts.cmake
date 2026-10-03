@@ -81,8 +81,7 @@ add_custom_target(msc_build_version
     BYPRODUCTS "${MSC_BUILD_VERSION_DIR}/msc_build_version.h"
     VERBATIM)
 add_dependencies(mkw_runtime_common msc_build_version)
-target_include_directories(mkw_runtime_common PRIVATE "${MSC_BUILD_VERSION_DIR}"
-    "${MKW_RUNTIME_SOURCE_DIR}/../sdk/include")  # msc_mod_api.h, the native plugin API
+target_include_directories(mkw_runtime_common PRIVATE "${MSC_BUILD_VERSION_DIR}")
 target_compile_features(mkw_runtime_common PRIVATE cxx_std_20)
 target_compile_definitions(mkw_runtime_common PRIVATE
     SDL_MAIN_HANDLED
@@ -93,8 +92,8 @@ target_link_libraries(mkw_runtime_common PRIVATE mkw_platform mkw::pugixml mkw::
 if(MKW_PLATFORM_WINDOWS)
     target_link_libraries(mkw_runtime_common PRIVATE shell32 windowsapp)
 elseif(MKW_PLATFORM_LINUX)
-    # ${CMAKE_DL_LIBS} for the mod plugin loader's dlopen (mods/mod_plugins.cpp). Empty string on
-    # glibc >= 2.34 where dl* is in libc.
+    # ${CMAKE_DL_LIBS} for music_attenuation.cpp's dlopen(libdbus-1). Empty string on glibc >= 2.34
+    # where dl* is in libc.
     target_link_libraries(mkw_runtime_common PRIVATE mkw::libco ${CMAKE_DL_LIBS})
 endif()
 
@@ -156,6 +155,26 @@ endif()
 add_library(mkw_base_shared STATIC ${MKW_BASE_COMMON_SHARDS})
 mkw_configure_translated_target(mkw_base_shared)
 target_precompile_headers(mkw_base_shared PRIVATE "${MKW_RUNTIME_SOURCE_DIR}/include/mkw_pch.h")
+
+# Code mods (Kamek modules from Riivolution packs; build.sh translates them into generated/kamek_mods).
+# The translator then builds the game as its mod product: the code-mod translations (patched
+# overlays, module functions, continuations) plus the game's callers whose direct calls now reach
+# them, with the mod product's registrations and dispatch table instead of the plain game's.
+# MKW_RETRO_EXTRA_SOURCES is the generated support file and the module image it embeds.
+if(MKW_HAVE_RETRO_REWIND_SHARDS)
+    add_library(mkw_code_mods OBJECT ${MKW_RETRO_PORTABLE_SENSITIVE_SHARDS} ${MKW_RETRO_MOD_SHARDS})
+    mkw_configure_translated_target(mkw_code_mods)
+    target_precompile_headers(mkw_code_mods PRIVATE "${MKW_RUNTIME_SOURCE_DIR}/include/mkw_pch.h")
+    set(MKW_PRODUCT_REGISTRATION_SOURCES ${MKW_RETRO_REGISTRATION_SOURCES} ${MKW_RETRO_EXTRA_SOURCES})
+    foreach(source IN LISTS MKW_RETRO_EXTRA_SOURCES)
+        if(source MATCHES "\\.S$")
+            enable_language(ASM)
+            set_source_files_properties("${source}" PROPERTIES LANGUAGE ASM SKIP_UNITY_BUILD_INCLUSION ON)
+        endif()
+    endforeach()
+else()
+    set(MKW_PRODUCT_REGISTRATION_SOURCES ${MKW_BASE_REGISTRATION_SOURCES})
+endif()
 
 function(mkw_configure_product target)
     target_sources(${target} PRIVATE $<TARGET_OBJECTS:mkw_runtime_common>)
@@ -271,8 +290,11 @@ function(mkw_configure_product target)
     endif()
 endfunction()
 
-add_executable(WiiCompiled "${MKW_BASE_PRODUCT_SOURCE}" ${MKW_BASE_REGISTRATION_SOURCES})
+add_executable(WiiCompiled "${MKW_BASE_PRODUCT_SOURCE}" ${MKW_PRODUCT_REGISTRATION_SOURCES})
 mkw_configure_product(WiiCompiled)
+if(TARGET mkw_code_mods)
+    target_sources(WiiCompiled PRIVATE $<TARGET_OBJECTS:mkw_code_mods>)
+endif()
 set_target_properties(WiiCompiled PROPERTIES OUTPUT_NAME "Strikers-WiiCompiled")
 target_precompile_headers(WiiCompiled PRIVATE
     "${MKW_RUNTIME_SOURCE_DIR}/include/mkw_pch.h")
@@ -290,7 +312,7 @@ else()
     set(MKW_BASELINE_ARCH_FLAG "")
 endif()
 
-set(MKW_ALL_BUILD_TARGETS mkw_runtime_common mkw_base_shared WiiCompiled)
+set(MKW_ALL_BUILD_TARGETS mkw_runtime_common mkw_base_shared mkw_code_mods WiiCompiled)
 foreach(target IN LISTS MKW_ALL_BUILD_TARGETS)
     if(TARGET ${target} AND MKW_BASELINE_ARCH_FLAG)
         target_compile_options(${target} PRIVATE ${MKW_BASELINE_ARCH_FLAG})
