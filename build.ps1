@@ -173,6 +173,16 @@ if (-not $SkipTranslate) {
     Step 'Building the translator'
     Logged 'translator-build.log' $dotnet @('build', 'translator/src/Translator.Cli', '-c', 'Release', '--nologo')
 
+    # The Strikers Tweaks pack (packs/tweaks) comes with the game: installed, or updated, in the data
+    # folder's Riivolution folder, where F10 > Mods turns its tweaks on and off (the choices are kept).
+    Step 'Installing the Strikers Tweaks pack'
+    $riivolution = Join-Path $AppDir 'Riivolution'
+    New-Item -ItemType Directory -Force (Join-Path $riivolution 'riivolution'), (Join-Path $riivolution 'tweaks') | Out-Null
+    Copy-Item (Join-Path $Repo 'packs/tweaks/riivolution/tweaks.xml') (Join-Path $riivolution 'riivolution') -Force
+    Copy-Item (Join-Path $Repo 'packs/tweaks/sml_20_tweaks.bin') (Join-Path $riivolution 'tweaks') -Force
+    [IO.File]::WriteAllText((Join-Path $riivolution 'tweaks/on'), "on`n")
+    Write-Host "    $riivolution"
+
     # Code mods: the Kamek modules of the Riivolution packs in the data folder's Riivolution folder.
     # They're translated into the game, so adding, updating or removing one takes another build.
     Step 'Looking for code mods'

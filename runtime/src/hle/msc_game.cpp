@@ -106,170 +106,16 @@ void MSC_PollRemoteConnections()
 // controller arrived late, e.g. a Wii Remote finishing its HID setup after the title screen loaded:
 // nothing polled, so nothing called KPADRead.) Then the original loop: UpdateChannel per connected
 // channel (PlatPadManager::connected[] at +0x2F0).
-// Gameplay extras (F10 > Tweaks), applied once per frame from UpdatePlatPad.
+// Gameplay extras (F10 > Tweaks) that stay native, applied once per frame from UpdatePlatPad. The rest
+// are the Strikers Tweaks pack (packs/tweaks), the same here as on a Wii.
 namespace FrameMods {
-constexpr uint32_t kUnlockAll = 0x806E0F98u;          // gUnlockAll: the game's unlock-everything override
 constexpr uint32_t kGameInfoManager = 0x806E0F54u;    // GameInfoManager singleton pointer
 constexpr uint32_t kUseCurGameSettings = 0x27C;       // GetCurrentSettings() returns the per-match copy
-constexpr uint32_t kCurGameLimitType = 0x04 + 0x04;   // mCurGameGameplayOptions.GameLimitType (1 = goals)
-constexpr uint32_t kCurGameGoalLimit = 0x04 + 0x0C;   // mCurGameGameplayOptions.GoalLimit
 constexpr uint32_t kGamePtr = 0x806E0C94u;            // g_pGame (non-null during a match)
 constexpr uint32_t kTeams = 0x806E0DF8u;              // g_pTeams[2]
-constexpr uint32_t kTeamScore = 0x04;                 // cTeam::m_nScore
-
-void UnlockEverything() {
-    static bool s_applied = false;
-    const bool want = RuntimeConfigFile::ModUnlockEverything();
-    if (want) {
-        Memory::Write8(kUnlockAll, 1);
-        s_applied = true;
-    } else if (s_applied) {
-        Memory::Write8(kUnlockAll, 0);
-        s_applied = false;
-    }
-}
-
-// Win by 2: every win check reads GetCurrentSettings()->GoalLimit, which for a local match is the
-// per-match copy (mUseCurGameSettings), never the saved options. Tied one short of the target, the
-// target becomes score + 2; the original is put back between matches.
-void WinByTwo() {
-    static int32_t s_original = -1;
-    static uint32_t s_info = 0;
-    const auto restore = [&] {
-        if (s_original >= 0 && s_info != 0) Memory::Write32(s_info + kCurGameGoalLimit, static_cast<uint32_t>(s_original));
-        s_original = -1;
-        s_info = 0;
-    };
-    const uint32_t info = Memory::Read32(kGameInfoManager);
-    const uint32_t game = Memory::Read32(kGamePtr);
-    if (!RuntimeConfigFile::ModWinByTwo() || info == 0 || game == 0 || Memory::Read8(info + kUseCurGameSettings) == 0 ||
-        Memory::Read32(info + kCurGameLimitType) != 1) {
-        restore();
-        return;
-    }
-    const uint32_t home = Memory::Read32(kTeams), away = Memory::Read32(kTeams + 4);
-    if (home == 0 || away == 0) return;
-    const int32_t s0 = static_cast<int32_t>(Memory::Read32(home + kTeamScore));
-    const int32_t s1 = static_cast<int32_t>(Memory::Read32(away + kTeamScore));
-    if (s_original < 0 || s_info != info || (s0 == 0 && s1 == 0)) {
-        restore();
-        s_info = info;
-        s_original = static_cast<int32_t>(Memory::Read32(info + kCurGameGoalLimit));
-    }
-    int32_t limit = static_cast<int32_t>(Memory::Read32(info + kCurGameGoalLimit));
-    if (s0 == s1 && s0 >= s_original - 1 && limit < s0 + 2) {
-        limit = s0 + 2;
-        Memory::Write32(info + kCurGameGoalLimit, static_cast<uint32_t>(limit));
-    }
-}
-
-// NK bug: action 0x21 (a fielder going through the opposing goalie, cFielder::fn_8004ED64) turns off
-// that goalie's ball collision and the ball's player/goalie collision; only the action's normal exit
-// turns them back on. Cut short (Boo deking into his own Kritter, Dry Bones teleporting behind the
-// goal), they stay off and every shot passes through Kritter. When a fielder leaves 0x21 by any
-// route, do what the exit does; and since nothing else ever disables the ball's flags, keep them on
-// whenever no fielder is in 0x21. (The goalie's own flag is also cleared briefly by goalie actions,
-// so it is only restored on that transition.)
-constexpr uint32_t kBallPtr = 0x806E0BC0u;        // g_pBall
-constexpr uint32_t kBallPhysics = 0xE8;           // cBall::m_pPhysicsBall
-constexpr uint32_t kBallCanCollidePlayer = 0x80;  // PhysicsAIBall::mbCanCollidePlayer / +0x81 goalie
-constexpr uint32_t kTeamPlayers = 0xA4;           // cTeam::m_pPlayers[5], goalie last
-constexpr uint32_t kFielderAction = 0x430;        // cFielder::m_eActionState
-constexpr uint32_t kCharPhysics = 0x20;           // cCharacter::m_pPhysicsCharacter
-constexpr uint32_t kPhysFlags = 0x98;             // PhysicsCharacter collision bitfield
-constexpr uint32_t kCanCollideWithBall = 0x40000000u;
-constexpr uint32_t kActionThroughGoalie = 0x21;
-
-void NkFix() {
-    static bool s_inAction[2][4] = {};
-    const uint32_t game = Memory::Read32(kGamePtr);
-    if (!RuntimeConfigFile::ModNkFix() || game == 0) {
-        std::memset(s_inAction, 0, sizeof(s_inAction));
-        return;
-    }
-    const uint32_t teams[2] = {Memory::Read32(kTeams), Memory::Read32(kTeams + 4)};
-    const uint32_t ball = Memory::Read32(kBallPtr);
-    if (teams[0] == 0 || teams[1] == 0 || ball == 0) return;
-    const uint32_t ballPhys = Memory::Read32(ball + kBallPhysics);
-    const auto restoreBall = [&] {
-        if (ballPhys == 0) return;
-        Memory::Write8(ballPhys + kBallCanCollidePlayer, 1);
-        Memory::Write8(ballPhys + kBallCanCollidePlayer + 1, 1);
-    };
-    bool anyInAction = false;
-    for (int t = 0; t < 2; ++t) {
-        for (int j = 0; j < 4; ++j) {
-            const uint32_t fielder = Memory::Read32(teams[t] + kTeamPlayers + j * 4);
-            const bool in = fielder != 0 && Memory::Read32(fielder + kFielderAction) == kActionThroughGoalie;
-            if (s_inAction[t][j] && !in) {
-                const uint32_t goalie = Memory::Read32(teams[1 - t] + kTeamPlayers + 4 * 4);
-                const uint32_t phys = goalie != 0 ? Memory::Read32(goalie + kCharPhysics) : 0;
-                if (phys != 0) Memory::Write32(phys + kPhysFlags, Memory::Read32(phys + kPhysFlags) | kCanCollideWithBall);
-                restoreBall();
-            }
-            s_inAction[t][j] = in;
-            anyInAction = anyInAction || in;
-        }
-    }
-    if (!anyInAction) restoreBall();
-}
-
-// All stadiums fast-paced: the pitch surface comes from the stadium's TerrainTweaks (ini/Terrain/*.ini,
-// reached through gGameTweaks.mTerrainTweaks); during a match its four values are set to
-// DryTerrain.ini's, the fast surface. Each TweakFloatBinding keeps its value pointer at +0x0C.
-constexpr uint32_t kGameTweaks = 0x8056CF08u;     // gGameTweaks
-constexpr uint32_t kTerrainTweaks = 0x04;         // GameTweaks::mTerrainTweaks
-void FastStadiums() {
-    if (!RuntimeConfigFile::ModFastStadiums() || Memory::Read32(kGamePtr) == 0) return;
-    const uint32_t terrain = Memory::Read32(kGameTweaks + kTerrainTweaks);
-    if (terrain == 0) return;
-    static constexpr float kDry[4] = {0.65f, 0.0f, 0.2f, 0.6f}; // Speed, Slipperyness, Friction, Bounce
-    for (uint32_t i = 0; i < 4; ++i) {
-        const uint32_t value = Memory::Read32(terrain + 0x04 + i * 0x10 + 0x0C);
-        if (value != 0) Memory::WriteFloat32(value, kDry[i]);
-    }
-}
-
-// Shot counter: the match summary's Mega Strike row shows a team's PlayerStats +0x18 / +0x16. The
-// game tallies every shot by charge (cFielder shot: STATS_00 under 0.4 = white, STATS_01 = yellow,
-// STATS_02 from 0.8 = red/orange) in +0x00/+0x02/+0x04; with the mod those fill the Mega Strike
-// fields of the team totals both summary screens copy from (StatsTracker current and cumulative).
-constexpr uint32_t kStatsTracker = 0x806E0F58u;   // nlSingleton<StatsTracker>::s_pInstance
-constexpr uint32_t kCumulativeTeamStats = 0x04;   // TeamStats* [2]
-constexpr uint32_t kCurrentTeamStats = 0x0C;      // TeamStats [2], 0x70 each
-constexpr uint32_t kTeamTotals = 0x1C;            // TeamStats::mPlayerTotalStats
-void ShotCounter() {
-    if (!RuntimeConfigFile::ModShotCounter()) return;
-    const uint32_t tracker = Memory::Read32(kStatsTracker);
-    if (tracker == 0) return;
-    const auto fill = [](uint32_t team) {
-        if (team == 0) return;
-        const uint32_t stats = team + kTeamTotals;
-        const uint16_t white = Memory::Read16(stats + 0x00), yellow = Memory::Read16(stats + 0x02);
-        Memory::Write16(stats + 0x16, static_cast<uint16_t>(white + yellow));
-        Memory::Write16(stats + 0x18, Memory::Read16(stats + 0x04));
-    };
-    for (uint32_t side = 0; side < 2; ++side) {
-        fill(tracker + kCurrentTeamStats + side * 0x70);
-        fill(Memory::Read32(tracker + kCumulativeTeamStats + side * 4));
-    }
-}
-
-// Blue Peach: kits clash when two captains' CharacterInfo colour masks overlap, and the higher
-// colour rank switches to its _alt kit (GetAlternateCaptain / NeedsAlternateColour). Peach's mask is
-// pink only (0x04), so she stays pink against red teams. With the mod her mask also has red (0x01)
-// and her rank is the highest, so against red captains she alone switches, to blue.
-constexpr uint32_t kCharacterInfo = 0x80505944u;  // sCharacterInfo[], 0x5C per entry
-constexpr uint32_t kPeachInfo = kCharacterInfo + 5 * 0x5C;
+constexpr uint32_t kTeamPlayers = 0xA4;               // cTeam::m_pPlayers[5], goalie last
+constexpr uint32_t kCharacterInfo = 0x80505944u;      // sCharacterInfo[], 0x5C per entry
 constexpr uint32_t kColourMask = 0x4C, kColourRank = 0x50, kPrimaryColour = 0x54, kAlternateColour = 0x58;
-void BluePeach() {
-    static bool s_applied = false;
-    const bool want = RuntimeConfigFile::ModBluePeach();
-    if (want == s_applied) return;
-    Memory::Write32(kPeachInfo + kColourMask, want ? 0x05u : 0x04u);
-    Memory::Write32(kPeachInfo + kColourRank, want ? 240u : 5u);
-    s_applied = want;
-}
 
 // Kit choice: on captain select, X switches the home team between its home and away kit and Y the
 // away team (Wii Remote: - and 2). The game decides kits from the two captains' CharacterInfo colour masks and
@@ -1292,102 +1138,14 @@ void PartnerLeaders() {
     Memory::Write32(kTeamBannerIndex, call.get()->gpr[3]);
 }
 
-// Fast menus: menu transitions are skipped, outside matches. 2D: one-shot FE slides (panels sliding
-// in and out, button states, a board's screen flickering on) jump to their end (TLSlide::Update
-// override below); long one-shot slides are content (credits), and looping ones idle animation, so
-// those keep their pace, as do the boot screens (notices, the studio logo). 3D: while
-// the front-end presentation runs a transition script (FrontEndPresentation::IsActive: anything but
-// "Idle", e.g. the zoom from the main menu), the game's time dilation runs the time-dilated tasks
-// (camera animations and moves, FE scenes, effects) kDilation times faster, so they finish within a
-// frame or two, and each scripted wait ends as it starts; audio keeps real time.
-namespace FastMenus {
-constexpr float kDilation = 30.0f;
-constexpr float kLongestTransition = 3.0f;              // seconds; longer one-shot slides are content
-constexpr float kLongestPresentation = 6.0f;            // seconds; a screen's main slide (text fading in)
-constexpr uint32_t kTaskManager = 0x806E1DA0u;          // nlTaskManager::m_pInstance (mTimeDilation at +0x00)
-constexpr uint32_t kAudioTask = 0x8056F870u;            // audioUpdateTask
-constexpr uint32_t kTaskTimeDilated = 0x1C;             // nlTask::mTimeDilated
-constexpr uint32_t kPresentationInstance = 0x801FEEACu; // FrontEndPresentation::GetInstance()
-constexpr uint32_t kPresentationIsActive = 0x801FF168u; // FrontEndPresentation::IsActive() const
-constexpr uint32_t kPresentationWait = 0xA8;            // FrontEndPresentation::mWaitTime
-
-uint32_t g_presentation = 0;
-bool g_dilating = false;
-
-// Slides set again this frame (SetActiveSlide resets a slide with Update(0)) take this frame's step
-// as they would: partner select sets its pointers and its unhovered slots every frame, holding them
-// on their first frame, and jumping those to their end showed the wrong state for a frame each time
-// they were set. A one-shot slide set once jumps to its end on its next step.
-uint32_t g_frame = 0;                                   // game frames (Update, from the pad update)
-std::unordered_map<uint32_t, uint32_t> g_slideResets;  // slide -> the frame it was last set in
-
-void NoteSlideReset(uint32_t slide) { g_slideResets[slide] = g_frame; }
-
-bool ResetThisFrame(uint32_t slide) {
-    const auto it = g_slideResets.find(slide);
-    return it != g_slideResets.end() && it->second == g_frame;
-}
-
-// The boot screens (BootLoadingScene): the notices are meant to be read, and the studio logo's
-// jingle bank is unloaded as its slide ends, which under the playing jingle crashes the sound
-// update (see SkipIntro).
-bool BootScreens() {
-    constexpr uint32_t kBootLoadingSceneVtable = 0x805207D8u;
-    const uint32_t top = TopScene();
-    return top != 0 && Memory::Read32(top) == kBootLoadingSceneVtable;
-}
-
-bool InMenus() {
-    const bool menus = RuntimeConfigFile::ModFastMenus() && Memory::Read32(kGamePtr) == 0;
-    if (!menus && !g_slideResets.empty()) g_slideResets.clear();  // a match frees and reuses FE slides
-    return menus;
-}
-
-void Update() {
-    ++g_frame;
-    bool transition = false;
-    if (InMenus()) {
-        const uint32_t mgr = Memory::Read32(kSceneManager);
-        if (mgr != 0 && Memory::Read32(mgr + 0x04) != 0) {  // front end running: the presentation exists
-            GuestInterruptCallbackContext call;
-            if (g_presentation == 0) {
-                InvokeIndirectCpu(kPresentationInstance, call.get());
-                g_presentation = call.get()->gpr[3];
-            }
-            call.get()->gpr[3] = g_presentation;
-            InvokeIndirectCpu(kPresentationIsActive, call.get());
-            transition = (call.get()->gpr[3] & 0xFF) != 0;
-        }
-    }
-    const uint32_t taskManager = Memory::Read32(kTaskManager);
-    if (transition && taskManager != 0) {
-        Memory::WriteFloat32(taskManager, kDilation);
-        Memory::Write8(kAudioTask + kTaskTimeDilated, 0);
-        g_dilating = true;
-        if (Memory::ReadFloat32(g_presentation + kPresentationWait) > 0.0f)  // a wait started: over
-            Memory::WriteFloat32(g_presentation + kPresentationWait, 0.0f);
-    } else if (g_dilating) {
-        if (taskManager != 0) Memory::WriteFloat32(taskManager, 1.0f);
-        Memory::Write8(kAudioTask + kTaskTimeDilated, 1);
-        g_dilating = false;
-    }
-}
-} // namespace FastMenus
 
 void Apply() {
     try {
-        UnlockEverything();
         CaptainVoices();
         PartnerLeaders();
-        FastMenus::Update();
         PartnerGrid::CaptainSelect();
         PartnerGrid::Update();
         KitChoice();
-        BluePeach();
-        ShotCounter();
-        FastStadiums();
-        WinByTwo();
-        NkFix();
     } catch (const Memory::AccessViolation&) {
     }
 }
@@ -1605,117 +1363,8 @@ extern "C" void MSC_CaptainComponentRandomizeSidekicks_801DCB28(CpuContext* ctx)
 }
 PPC_NATIVE_OVERRIDE_VOID(801DCB28, MSC_CaptainComponentRandomizeSidekicks_801DCB28, (CpuContext* ctx), (ctx));
 
-// void TLSlide::Update(float dt). As the original (FE timeline: the slide's time advances by dt,
-// looping or stopping at its end, its animations are evaluated at that time, and its children
-// updated with dt: components' active slides, then UpdateAsset), plus fast menus
-// (FrameMods::FastMenus): a one-shot slide no longer than a transition goes straight to its end.
-// Only on a real step: SetActiveSlide resets a slide with Update(0), and a scene that holds a slide
-// on its first frame (the sidekick screen while its portraits load) must keep it there; nor in the
-// frame the slide was set (FastMenus::ResetThisFrame), so one set every frame plays as it would.
-extern "C" void MSC_TLSlideUpdate_802FFCD4(CpuContext* ctx)
-{
-    using namespace FrameMods::FastMenus;
-    constexpr uint32_t kAnimationUpdate = 0x802FA19Cu;  // FEAnimation::Update(float time)
-    constexpr uint32_t kComponentUpdate = 0x80302114u;  // TLComponentInstance::Update(float dt)
-    constexpr uint32_t kUpdateAsset = 0x802FFAFCu;      // TLSlide::UpdateAsset(TLInstance*, float dt)
-    constexpr uint32_t kChildren = 0x08, kAnimations = 0x0C, kStart = 0x10, kDuration = 0x14, kTime = 0x18,
-                       kPlayMode = 0x1C, kPaused = 0x44;  // TLSlide
-    const uint32_t slide = ctx->gpr[3];
-    const uint32_t savedLr = ctx->lr;
-    const double dt = Memory::Read8(slide + kPaused) ? 0.0 : ctx->fpr[1].d;
-    const int32_t mode = static_cast<int32_t>(Memory::Read32(slide + kPlayMode));
-    const float start = Memory::ReadFloat32(slide + kStart), duration = Memory::ReadFloat32(slide + kDuration);
-    float time = Memory::ReadFloat32(slide + kTime) + static_cast<float>(dt);
-    const float end = start + duration;
-    // Play modes: 0 stops at the end, 1 loops, 2 runs on past the end.
-    if (dt == 0.0 && !Memory::Read8(slide + kPaused) && InMenus()) NoteSlideReset(slide);
-    if ((mode == 0 || mode == 2) && duration <= kLongestTransition && dt > 0.0 && InMenus() && !ResetThisFrame(slide) &&
-        !BootScreens())
-        time = end;
-    if (time > end) {
-        if (mode == 1) time -= end;      // TLPM_LOOPING
-        else if (mode == 0) time = end;  // TLPM_STOP_AT_END
-    }
-    Memory::WriteFloat32(slide + kTime, time);
-    if (const uint32_t animations = Memory::Read32(slide + kAnimations)) {  // ring of FEAnimation (m_next at +4)
-        for (uint32_t anim = Memory::Read32(animations + 4), guard = 0; anim != 0 && guard < 4096; ++guard) {
-            ctx->gpr[3] = anim;
-            ctx->fpr[1].d = Memory::ReadFloat32(slide + kTime);
-            InvokeIndirectCpu(kAnimationUpdate, ctx);
-            if (anim == Memory::Read32(slide + kAnimations)) break;
-            anim = Memory::Read32(anim + 4);
-        }
-    }
-    if (const uint32_t children = Memory::Read32(slide + kChildren)) {  // ring of TLInstance (m_next at +0)
-        for (uint32_t child = Memory::Read32(children), guard = 0; child != 0 && guard < 4096; ++guard) {
-            if (Memory::Read32(child + 0x88) == 4) {  // TLAT_COMPONENT
-                ctx->gpr[3] = child;
-                ctx->fpr[1].d = dt;
-                InvokeIndirectCpu(kComponentUpdate, ctx);
-            }
-            ctx->gpr[3] = slide;
-            ctx->gpr[4] = child;
-            ctx->fpr[1].d = dt;
-            InvokeIndirectCpu(kUpdateAsset, ctx);
-            if (child == Memory::Read32(slide + kChildren)) break;
-            child = Memory::Read32(child);
-        }
-    }
-    ctx->lr = savedLr;
-}
-PPC_NATIVE_OVERRIDE_VOID(802FFCD4, MSC_TLSlideUpdate_802FFCD4, (CpuContext* ctx), (ctx));
 
-// void FEPresentation::Update(float dt). A screen's presentation keeps its own clock (m_fadeDuration)
-// and sets its current slide's time from it before updating the slide, so the text and art on a
-// screen's main slide follow that clock. As the original, plus fast menus: a one-shot slide short
-// enough to be the screen coming in starts at its end, as the game itself does for pop-ups and the
-// pause menu (m_fadeDuration = 999.9).
-extern "C" void MSC_FEPresentationUpdate_802FBC4C(CpuContext* ctx)
-{
-    using namespace FrameMods::FastMenus;
-    constexpr uint32_t kTLSlideUpdate = 0x802FFCD4u;
-    constexpr uint32_t kCurrentSlide = 0x04, kFadeDuration = 0x08;               // FEPresentation
-    constexpr uint32_t kStart = 0x10, kDuration = 0x14, kTime = 0x18, kPlayMode = 0x1C;  // TLSlide
-    const uint32_t presentation = ctx->gpr[3];
-    const double dt = ctx->fpr[1].d;
-    const uint32_t slide = Memory::Read32(presentation + kCurrentSlide);
-    if (slide == 0) return;
-    const int32_t mode = static_cast<int32_t>(Memory::Read32(slide + kPlayMode));
-    const float duration = Memory::ReadFloat32(slide + kDuration);
-    const float end = Memory::ReadFloat32(slide + kStart) + duration;
-    float fade = Memory::ReadFloat32(presentation + kFadeDuration) + static_cast<float>(dt);
-    if ((mode == 0 || mode == 2) && duration <= kLongestPresentation && dt > 0.0 && InMenus() && !BootScreens())
-        fade = end;
-    if (fade > end) {
-        if (mode == 1) fade -= end;      // TLPM_LOOPING
-        else if (mode == 0) fade = end;  // TLPM_STOP_AT_END
-    }
-    Memory::WriteFloat32(presentation + kFadeDuration, fade);
-    Memory::WriteFloat32(slide + kTime, fade);
-    const uint32_t savedLr = ctx->lr;
-    ctx->gpr[3] = slide;
-    ctx->fpr[1].d = dt;
-    InvokeIndirectCpu(kTLSlideUpdate, ctx);
-    ctx->lr = savedLr;
-}
-PPC_NATIVE_OVERRIDE_VOID(802FBC4C, MSC_FEPresentationUpdate_802FBC4C, (CpuContext* ctx), (ctx));
 
-// void FEPopupMenu::SetPositions(). As the original (lays out the message and options, sizes the
-// black box to them and starts it growing, hides the text until Update shows it), plus: the text is
-// shown again afterwards. Update shows it once (mUnidentified99D) when the popup's slide is 1 s in,
-// and the first SetPositions can't measure the text yet (it's laid out on the slide's first update),
-// so it runs again the next frame. A slide already past 1 s on that first frame (fast menus start
-// it at its end) had the text shown before that second SetPositions hid it for good: the help
-// popups came up empty.
-extern "C" void func_801C9D38(CpuContext* ctx);
-static void PopupTextAfterLayout(CpuContext* ctx)
-{
-    constexpr uint32_t kMenuDisplayed = 0x99C, kTextShown = 0x99D;  // FEPopupMenu
-    const uint32_t popup = ctx->gpr[3];
-    func_801C9D38(ctx);
-    if (popup != 0 && Memory::Read8(popup + kMenuDisplayed)) Memory::Write8(popup + kTextShown, 0);
-}
-PPC_NATIVE_WRAP(801C9D38, PopupTextAfterLayout);
 
 // void ChooseCaptainsSceneV2::RefreshCaptainImages(). As the original (each grid button's portrait
 // for its current state: greyed for a team's chosen captain or one taken in an online draft, static
@@ -2767,53 +2416,3 @@ extern "C" void MSC_DpadActionHeld_80036F88(CpuContext* ctx)
 }
 PPC_NATIVE_OVERRIDE_VOID(80036F88, MSC_DpadActionHeld_80036F88, (CpuContext* ctx), (ctx));
 
-// Skip intro (Tweaks): boot straight to the main menu. The boot screens (BootLoadingScene's notice,
-// strap and Nunchuk slides; the studio logo keeps its few seconds) end at once, the intro movie is
-// skipped as if A were pressed, and the title screen is passed as if its controller pressed A, so the
-// game's own transition to the main menu runs. Once per launch: back on the title screen later, it
-// waits for A as usual.
-namespace SkipIntro {
-bool g_passed = false;  // the title screen was passed
-bool Active() { return !g_passed && RuntimeConfigFile::ModSkipIntro(); }
-} // namespace SkipIntro
-
-// void BootLoadingScene::Update(float dt): its slides run on dt (the strap screen also times out on
-// it), so a long step ends each one at once. Not the studio logo's: its jingle's bank is unloaded as
-// the slide ends, and unloaded under the playing jingle it crashes the sound update.
-extern "C" void func_80263A54(CpuContext* ctx);
-static void SkipIntroBootLoading(CpuContext* ctx)
-{
-    constexpr uint32_t kPhase = 0x28, kLogoPhase = 3;  // BootLoadingScene
-    if (SkipIntro::Active() && ctx->gpr[3] != 0 && Memory::Read32(ctx->gpr[3] + kPhase) != kLogoPhase)
-        ctx->fpr[1].d = std::max(ctx->fpr[1].d, 30.0);
-    func_80263A54(ctx);
-}
-PPC_NATIVE_WRAP(80263A54, SkipIntroBootLoading);
-
-// bool MoviePlayerScene::CheckMoviePlayerAbort(): A pressed on any pad skips the movie playing.
-extern "C" void func_801D97B0(CpuContext* ctx);
-static void SkipIntroMovie(CpuContext* ctx)
-{
-    func_801D97B0(ctx);
-    if (SkipIntro::Active()) ctx->gpr[3] = 1;
-}
-PPC_NATIVE_WRAP(801D97B0, SkipIntroMovie);
-
-// void TitleScene::Update(float dt): once it takes input (1.5 s in), OnControllerPointerPress for the
-// controller the front end listens to, as its A does, unless the scene was already left this frame.
-extern "C" void func_801D1354(CpuContext* ctx);
-static void SkipIntroTitle(CpuContext* ctx)
-{
-    constexpr uint32_t kControllerIndex = 0x806E18B0u;  // gFEControllerIndex
-    constexpr uint32_t kPointerPress = 0x801D22C8u;   // TitleScene::OnControllerPointerPress(int, void*)
-    constexpr uint32_t kStartedDemo = 0xDC, kInitialized = 0xDE;  // TitleScene
-    const uint32_t scene = ctx->gpr[3];
-    func_801D1354(ctx);
-    if (!SkipIntro::Active() || scene == 0) return;
-    if (!Memory::Read8(scene + kInitialized) || Memory::Read8(scene + kStartedDemo)) return;
-    if (FrameMods::TopScene() != scene) return;
-    SkipIntro::g_passed = true;
-    RT_LOG(RT_TAG_MODS) << "skip intro: title screen passed" << std::endl;
-    MscGuest::Call(ctx, kPointerPress, {scene, Memory::Read32(kControllerIndex), 0});
-}
-PPC_NATIVE_WRAP(801D1354, SkipIntroTitle);

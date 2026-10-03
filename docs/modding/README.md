@@ -30,6 +30,7 @@ page of the wiki has the short version.
 | [Super Team](../../packs/superteam/README.md) | Super Mario Strikers' robot team as a captain of its own, on a second page of captain select | Strikers Recharged, Dolphin, Wii |
 | [GameCube controllers](../../packs/gamecube/README.md) | GameCube controllers as players: menu navigation, Super Mario Strikers' controls | Dolphin, Wii (built into Strikers Recharged) |
 | [Strikers Mod Loader](../../packs/loader/README.md) | loads the other packs' code | Dolphin, Wii |
+| [Strikers Tweaks](../../packs/tweaks/README.md) | the port's gameplay and menu tweaks, each an option | Strikers Recharged (installed by build.sh), Dolphin, Wii |
 
 [packs/](../../packs/README.md) says how to build each one.
 

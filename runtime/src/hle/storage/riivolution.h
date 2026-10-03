@@ -71,11 +71,18 @@ const std::optional<SaveRedirect>& GetSaveRedirect();
 struct PackOption {
     std::string section;
     std::string name;
+    std::string description;  // the option's description attribute, if it has one
     // How the config file names it: the option's id, or its section name + option name.
     std::string configId;
     std::vector<std::string> choices;
     // 1-based choice in effect since launch; 0 is off.
     uint32_t selected = 0;
+    // A choice of it adds a code mod (a disc-root sml_*.bin): changing it takes a build.
+    bool addsCode = false;
+    // Its choices only add files the disc doesn't have (each of the Strikers Tweaks: a file its code
+    // looks for): a change applies at once, the files coming and going while the game runs.
+    bool live = false;
+    size_t liveIndex = 0;  // its live state, while live
 };
 
 // A pack XML in an overlay root, as loaded at launch.
@@ -96,8 +103,24 @@ bool IsCodeModuleDiscPath(std::string_view discPath, std::string& name);
 const std::vector<Pack>& Packs();
 
 // Remembers a choice in the root's riivolution/config/<GameID4>.xml, the file Riivolution and
-// Dolphin use, keeping its other options. Takes effect at the next launch. Empty on success,
-// else why it failed.
+// Dolphin use, keeping its other options. A live option's choice applies at once, the others' at the
+// next launch. Empty on success, else why it failed.
 std::string SaveOptionChoice(const Pack& pack, const PackOption& option, uint32_t choice);
+
+// A file a live option's choice adds. dvd.cpp puts every one on the disc at launch, the current
+// choices' and the others', and the game doesn't see the others (LiveFileHidden).
+struct LiveFile {
+    std::string discPath;
+    std::filesystem::path hostPath;
+    size_t option = 0;  // the live option's liveIndex
+};
+const std::vector<LiveFile>& LiveFiles();
+
+// dvd.cpp, at launch: a live option one of whose files the disc has would replace a game file, which
+// can't come and go, so its changes apply at the next launch like other options'.
+void NotLive(size_t liveIndex);
+
+// Whether a file on the disc (by its path) is a live option's file that no current choice adds.
+bool LiveFileHidden(const std::string& discPath);
 
 } // namespace RuntimeRiivolution

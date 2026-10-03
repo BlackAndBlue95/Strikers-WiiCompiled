@@ -652,28 +652,6 @@ void DrawHighlight() {
 
 void DrawOverlay() { MenuNav::DrawHighlight(); }
 
-// No Mega Strikes with controllers (mod, F10 > Mods > no_mega_strikes): defending one means pointing at the incoming balls,
-// which a non-Wii-Remote controller can't do. While any emulated remote (a gamepad or keyboard) is
-// in use, the current match's per-game settings have Mega Strikes off for both sides, the game's
-// own switch (cFielder::CanDoCaptainShootToScore checks it), so a full charge is a normal strong
-// shot for players and AI alike. Only the per-match copy changes; saved options are untouched,
-// and sessions with only real Wii Remotes never get here.
-namespace NoMegaStrikes {
-constexpr uint32_t kGameInfoManagerPtr = 0x806E0F54u;  // nlSingleton<GameInfoManager>::s_pInstance
-constexpr uint32_t kHomeMegastrikeEnabled = 0x1Au;     // mCurGameGameplayOptions (+0x04) +0x16
-constexpr uint32_t kAwayMegastrikeEnabled = 0x1Bu;     // ... +0x17
-constexpr uint32_t kUseCurGameSettings = 0x27Cu;
-
-void Apply() {
-    if (!RuntimeConfigFile::ModNoMegaStrikes()) return;
-    try {
-        const uint32_t info = Memory::Read32(kGameInfoManagerPtr);
-        if (!info || !Memory::Read8(info + kUseCurGameSettings)) return;
-        Memory::Write8(info + kHomeMegastrikeEnabled, 0);
-        Memory::Write8(info + kAwayMegastrikeEnabled, 0);
-    } catch (...) {}
-}
-} // namespace NoMegaStrikes
 
 // Shared by every controller: Nunchuk stick, level remote, menu navigation and the pointer.
 void ApplyCommon(uint32_t chan, WiiRemoteInput::KpadSample& sample, uint32_t navDpad, float freeX, float freeY,
@@ -712,7 +690,6 @@ void ApplyCommon(uint32_t chan, WiiRemoteInput::KpadSample& sample, uint32_t nav
         if (navDpad & MenuNav::kNavRight) sample.hold |= kWRight;
         moveX = moveY = 0.0f;  // the pointer belongs to navigation
     }
-    NoMegaStrikes::Apply();
     const float speed = 1.6f * static_cast<float>(RuntimeConfigFile::PointerSpeed());
     s_cursor[chan][0] = std::clamp(s_cursor[chan][0] + dz(moveX) * speed * dt, -1.0f, 1.0f);
     s_cursor[chan][1] = std::clamp(s_cursor[chan][1] - dz(moveY) * speed * dt, -1.0f, 1.0f);

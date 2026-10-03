@@ -187,6 +187,9 @@ struct Choice {
 struct Option {
     std::string name;
     std::string id;
+    // Not Riivolution's: a line Strikers Recharged shows under the option in F10 > Mods. Riivolution
+    // and Dolphin ignore attributes they don't know.
+    std::string description;
     std::vector<Choice> choices;
 
     // 1-based index into choices; 0 means disabled.
@@ -335,6 +338,7 @@ inline std::optional<Disc> ParseString(std::string_view xml) {
                     Option option;
                     option.id = optionNode.Attribute("id");
                     option.name = optionNode.Attribute("name");
+                    option.description = optionNode.Attribute("description");
                     option.selectedChoice = optionNode.AttributeUint("default", 0);
                     auto optionParams = Detail::ReadParams(optionNode);
                     for (const XmlNode& choiceNode : optionNode.children) {

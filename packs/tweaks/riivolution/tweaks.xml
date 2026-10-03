@@ -1,0 +1,64 @@
+<wiidisc version="1" root="/tweaks">
+  <id game="R4QE"/>
+  <!-- description: not Riivolution's, Strikers Recharged shows it under the option in F10 > Mods;
+       Riivolution and Dolphin ignore it. -->
+  <options>
+    <section name="Strikers Tweaks">
+      <option name="Tweaks" id="tweaks" default="1"
+              description="The tweaks' code: the tweaks below work while this is enabled.">
+        <choice name="Enabled"><patch id="tweaks"/></choice>
+      </option>
+      <option name="Skip intro" id="tweaks_skipintro"
+              description="Boots straight to the main menu: no notice screens, intro movie or title screen (the studio logo still shows).">
+        <choice name="Enabled"><patch id="skipintro"/></choice>
+      </option>
+      <option name="Fast menus" id="tweaks_fastmenus"
+              description="Skips menu transitions: panels sliding in and out, and camera moves such as the zoom from the main menu. Idle animations and matches are unchanged.">
+        <choice name="Enabled"><patch id="fastmenus"/></choice>
+      </option>
+      <option name="All stadiums fast-paced" id="tweaks_faststadiums"
+              description="Every pitch plays like the fast, dry ones such as Bowser Stadium (the game's DryTerrain surface).">
+        <choice name="Enabled"><patch id="faststadiums"/></choice>
+      </option>
+      <option name="No Mega Strikes with controllers" id="tweaks_nomegastrikes" default="1"
+              description="Blocking a Mega Strike needs a Wii Remote's pointer. While a controller plays (a gamepad or the keyboard in Strikers Recharged, a GameCube controller with the GameCube controllers pack), matches have Mega Strikes off for both sides.">
+        <choice name="Enabled"><patch id="nomegastrikes"/></choice>
+      </option>
+      <option name="Unlock everything" id="tweaks_unlockall"
+              description="All characters, stadiums and cheats, through the game's own unlock-all switch. The save isn't changed: turn it off to see your own progress.">
+        <choice name="Enabled"><patch id="unlockall"/></choice>
+      </option>
+      <option name="Win by 2" id="tweaks_winbytwo"
+              description="First-to-X goal matches: tied one goal short of the target, the target moves up, so the winner has to be 2 goals ahead.">
+        <choice name="Enabled"><patch id="winbytwo"/></choice>
+      </option>
+      <option name="Fix the NK bug" id="tweaks_nkfix" default="1"
+              description="A deke or teleport through the goalie that gets cut short (Boo deking into his own Kritter, Dry Bones teleporting behind the goal) no longer leaves every shot passing through Kritter for the rest of the match.">
+        <choice name="Enabled"><patch id="nkfix"/></choice>
+      </option>
+      <option name="Blue Peach against red teams" id="tweaks_bluepeach"
+              description="Peach wears her blue kit against red captains (Mario, Bowser, Bowser Jr., Petey, Daisy, Diddy Kong), so the teams are easy to tell apart.">
+        <choice name="Enabled"><patch id="bluepeach"/></choice>
+      </option>
+      <option name="Shot counter on the results screen" id="tweaks_shotcounter"
+              description="The Mega Strike goals / shots row shows white and yellow shots / red and orange shots instead.">
+        <choice name="Enabled"><patch id="shotcounter"/></choice>
+      </option>
+    </section>
+  </options>
+  <!-- The code, there while the pack is on: each tweak's option only adds a file to the disc
+       (/tweaks/<name>), which the code looks for, so in Strikers Recharged turning a tweak on or
+       off needs no rebuild. -->
+  <patch id="tweaks">
+    <file disc="/sml_20_tweaks.bin" external="sml_20_tweaks.bin" create="true"/>
+  </patch>
+  <patch id="skipintro"><file disc="/tweaks/skipintro" external="on" create="true"/></patch>
+  <patch id="fastmenus"><file disc="/tweaks/fastmenus" external="on" create="true"/></patch>
+  <patch id="faststadiums"><file disc="/tweaks/faststadiums" external="on" create="true"/></patch>
+  <patch id="nomegastrikes"><file disc="/tweaks/nomegastrikes" external="on" create="true"/></patch>
+  <patch id="unlockall"><file disc="/tweaks/unlockall" external="on" create="true"/></patch>
+  <patch id="winbytwo"><file disc="/tweaks/winbytwo" external="on" create="true"/></patch>
+  <patch id="nkfix"><file disc="/tweaks/nkfix" external="on" create="true"/></patch>
+  <patch id="bluepeach"><file disc="/tweaks/bluepeach" external="on" create="true"/></patch>
+  <patch id="shotcounter"><file disc="/tweaks/shotcounter" external="on" create="true"/></patch>
+</wiidisc>

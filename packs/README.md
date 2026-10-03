@@ -10,6 +10,7 @@ one.
 | [Strikers Mod Loader](loader/README.md) | loads the other packs' code | Dolphin, Wii |
 | [Super Team](superteam/README.md) | Super Mario Strikers' robot team as a captain of its own | Strikers Recharged, Dolphin, Wii |
 | [GameCube controllers](gamecube/README.md) | GameCube controllers as players, with menu navigation | Dolphin, Wii (built into Strikers Recharged) |
+| [Strikers Tweaks](tweaks/README.md) | skip intro, fast menus, unlock everything, win by 2, the NK bug fix and more, each an option | Strikers Recharged (installed by build.sh), Dolphin, Wii |
 
 ## Building
 
@@ -24,6 +25,7 @@ Then each `build-pack.sh` writes its `riivolution/<pack>.xml` and its folder int
 ```bash
 packs/loader/build-pack.sh out/
 packs/gamecube/build-pack.sh out/
+packs/tweaks/build-pack.sh --code out/
 packs/superteam/build-pack.sh --assets <Super Team's assets> --game <your extracted game> out/
 ```
 

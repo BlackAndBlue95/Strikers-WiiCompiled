@@ -145,6 +145,15 @@ mypack/sml_50_mypack.bin
 </wiidisc>
 ```
 
+### Options for your code
+
+Turning the module's own option on or off takes a build in Strikers Recharged. For switches inside
+your mod, give each one an option that adds a small file, and have the code look for it with
+`DVDConvertPathToEntrynum` (every half second, say): the module stays the same, and in Strikers
+Recharged such an option applies at once
+([Options that apply at once](making-packs.md#options-that-apply-at-once)). The
+[Strikers Tweaks](../../packs/tweaks/README.md)' `code/options.cpp` is one to copy.
+
 ## Try it
 
 **In Strikers Recharged:**

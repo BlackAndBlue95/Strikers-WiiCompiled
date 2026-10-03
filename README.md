@@ -83,8 +83,10 @@ once with [Zadig](https://zadig.akeo.ie/)).
 Mods are Riivolution packs, the format Wii mods use, so the same pack runs here, in Dolphin and on a
 Wii. Put them in the data folder's `Riivolution` folder and pick their options in **F10 > Mods**. A
 pack can replace and add game files, and add code (Kamek modules, which build.sh builds into the
-game). This repository has two:
+game). This repository has three:
 
+- **[Strikers Tweaks](packs/tweaks/README.md):** comes with the port (see below), and works in
+  Dolphin and on a Wii too.
 - **[Super Team](packs/superteam/README.md):** Super Mario Strikers' robot team as a captain of its
   own, on a second page of captain select, with its SMS cutscenes, effects and Super Strike.
 - **[GameCube controllers](packs/gamecube/README.md):** this port's GameCube controller support, for
@@ -93,14 +95,15 @@ game). This repository has two:
 [Mods](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Mods) has installing and playing
 them; [docs/modding](docs/modding/README.md) has making them.
 
-**F10 > Tweaks** has quality-of-life switches:
+Quality-of-life switches, each applying at once:
 
-- **Menus:** navigate with the D-pad and sticks instead of a pointer, skip transitions with
-  **Fast menus**, and boot straight to the main menu with **Skip intro**.
-- **No Mega Strikes with controllers** (on by default): defending a Mega Strike takes a Wii Remote
-  pointer, so with a controller they're off for both sides to keep matches playable.
-- **Community fixes and extras:** the NK bug fix, home/away kit choice on captain select, win by 2,
-  Blue Peach against red teams, captain-only teams.
+- **F10 > Tweaks:** navigate menus with the D-pad and sticks instead of a pointer, home/away kit
+  choice on captain select, captain-only teams.
+- **F10 > Mods > Strikers Tweaks**, the pack `build.sh` installs: skip transitions with **Fast
+  menus**, boot straight to the main menu with **Skip intro**, **No Mega Strikes with controllers**
+  (on by default: defending one takes a Wii Remote pointer, so with a controller they're off for
+  both sides), the NK bug fix, unlock everything, win by 2, Blue Peach against red teams, a shot
+  counter and fast-paced stadiums. The same pack and options work in Dolphin and on a Wii.
 
 [Every tweak](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Tweaks).
 

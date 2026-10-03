@@ -39,7 +39,8 @@ mypack/sml_50_mypack.bin      code, if it has any (Code mods)
   region).
 - **`<option>`** is a switch the player sees, under its `<section>`. Each `<choice>` turns on the
   patches it names. `default` is the choice it starts on (1 is the first, 0 is off), and `id` is
-  what Riivolution remembers the choice by.
+  what Riivolution remembers the choice by. A `description` attribute is Strikers Recharged's own:
+  F10 > Mods shows it under the option, and Riivolution and Dolphin ignore it.
 - **`<patch>`** is what a choice does:
   - `<folder disc="/" external="files" create="true"/>`: every file under `files/` over the disc's;
     `create` adds the ones the disc doesn't have.
@@ -51,6 +52,26 @@ mypack/sml_50_mypack.bin      code, if it has any (Code mods)
     these; Strikers Recharged doesn't yet, so changes to the game's code or data belong in a code mod.
 
 Riivolution's own documentation covers the rest of the format.
+
+## Options that apply at once
+
+On a Wii and in Dolphin a pack's options apply at launch: the disc is put together then. Strikers
+Recharged does the same, except for an option whose choices only add new files (`<file
+create="true">`, at paths the disc doesn't have, and no code): a change to one of those in F10 > Mods
+applies at once. Every choice's files are on the disc from launch, and the game only sees the ones
+of the choices in effect.
+
+That makes options for code: a choice that adds a small file, and code that looks for it
+(`DVDConvertPathToEntrynum`) every so often. The [Strikers Tweaks](../../packs/tweaks/README.md) pack
+does this for each of its tweaks:
+
+```xml
+<option name="Fast menus" id="tweaks_fastmenus" description="Skips menu transitions.">
+  <choice name="Enabled"><patch id="fastmenus"/></choice>
+</option>
+...
+<patch id="fastmenus"><file disc="/tweaks/fastmenus" external="on" create="true"/></patch>
+```
 
 ## Building it from the player's files
 

@@ -22,6 +22,7 @@ extern "C" void GxNotifyGuestRamDmaWrite(uint32_t addr, uint32_t size);
 #include <vector>
 #include <string>
 #include <map>
+#include <set>
 #include <optional>
 #include <unordered_set>
 #include <filesystem>
@@ -959,12 +960,30 @@ extern "C" void DVDInit_80396CC0()
     // Map "<dvd_root>/sys" -> "/sys/" (e.g. main.dol, bi2.bin)
     ScanDirectory(rootPath / "sys", "/sys/");
 
+    // The files of the pack options that apply at once (RuntimeRiivolution::LiveFiles): one the disc
+    // has would replace a game file, which can't come and go, so that option applies at the next launch.
+    const auto& liveFiles = RuntimeRiivolution::LiveFiles();
+    std::set<size_t> notLive;
+    for (const auto& file : liveFiles) {
+        if (DvdEntryExists(file.discPath) && notLive.insert(file.option).second) RuntimeRiivolution::NotLive(file.option);
+    }
+
     // RegisterFileEntry lets the last registration win: the Riivolution packs go in reverse discovery
     // order, so the first root listed wins.
     const size_t vanillaEntryCount = g_fileEntries.size();
     const auto& overlays = RuntimeRiivolution::Overlays();
     for (auto overlay = overlays.rbegin(); overlay != overlays.rend(); ++overlay) {
         ScanOverlayRoot(*overlay);
+    }
+
+    // A live option's files are all on the disc: its current choice's from its pack's patches, the
+    // others' from here, which the game doesn't see until F10 > Mods chooses them (the
+    // DVDConvertPathToEntrynum wrap below).
+    for (const auto& file : liveFiles) {
+        if (notLive.count(file.option) != 0 || DvdEntryExists(file.discPath)) continue;
+        std::error_code ec;
+        const std::uintmax_t size = fs::file_size(file.hostPath, ec);
+        if (!ec) RegisterFileEntry(file.discPath, file.hostPath, static_cast<uint32_t>(size));
     }
     const size_t overlayEntryCount = g_fileEntries.size() - vanillaEntryCount;
     RT_LOG(RT_TAG_DVD) << "disc index: " << vanillaEntryCount << " disc file(s), " << overlayEntryCount
@@ -984,6 +1003,21 @@ extern "C" void DVDInit_80396CC0()
     initializing = false;
 }
 PPC_NATIVE_OVERRIDE_VOID(80396CC0, DVDInit_80396CC0, (), ());
+
+// s32 DVDConvertPathToEntrynum(const char* path). A pack option's file is there while a current choice
+// adds it: an option whose choices only add files applies at once (RuntimeRiivolution::LiveFiles), and
+// the pack's code looks for them again (the Strikers Tweaks every half second).
+extern "C" void func_8039678C(CpuContext* ctx);
+static void DvdLiveFiles(CpuContext* ctx)
+{
+    func_8039678C(ctx);
+    const int32_t entry = static_cast<int32_t>(ctx->gpr[3]);
+    if (entry >= 0 && entry < static_cast<int32_t>(g_fileEntries.size()) && !g_fileEntries[entry].isDirectory &&
+        RuntimeRiivolution::LiveFileHidden(g_fileEntries[entry].dvdPath)) {
+        ctx->gpr[3] = static_cast<uint32_t>(-1);
+    }
+}
+PPC_NATIVE_WRAP(8039678C, DvdLiveFiles);
 
 // FST-only DVD functions run translated so mods can override them safely.
 

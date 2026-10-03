@@ -30,9 +30,9 @@ gestures are buttons again:
 | R | special move |
 | Start | pause |
 
-Defending a Mega Strike takes a Wii Remote's pointer, which a GameCube controller can't give
-(Strikers Recharged has **No Mega Strikes with controllers** in **F10 > Tweaks** for this). There's
-no HOME Button menu from a GameCube controller.
+Defending a Mega Strike takes a Wii Remote's pointer, which a GameCube controller can't give: the
+[Strikers Tweaks](../tweaks/README.md) pack's **No Mega Strikes with controllers** turns them off
+while one plays. There's no HOME Button menu from a GameCube controller.
 
 ## Building it
 

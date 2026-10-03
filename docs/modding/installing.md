@@ -31,10 +31,14 @@ doesn't. Every pack here is for the USA disc, revision 1 (`R4QE01`).
    the game along with the game's own.
 3. Start the game. **F10 > Mods** lists the packs and each one's options.
 
-A change in **F10 > Mods** applies the next time the game starts, and a pack with code needs a build
-after it's added, updated, removed, or turned on or off; F10 and `console.log` say when the installed
-packs no longer match the build. The choices are saved in `riivolution/config/R4QE.xml`, the file
-Riivolution and Dolphin use.
+A change in **F10 > Mods** applies the next time the game starts, or at once for an option that only
+adds files (each of the Strikers Tweaks, say). A pack with code needs a build after it's added,
+updated, removed, or turned on or off; F10 and `console.log` say when the installed packs no longer
+match the build. The choices are saved in `riivolution/config/R4QE.xml`, the file Riivolution and
+Dolphin use.
+
+`build.sh` installs the [Strikers Tweaks](../../packs/tweaks/README.md) pack itself, and updates it
+on every build (the choices are kept): turn it off in F10 > Mods rather than deleting it.
 
 `console.log` (in the data folder's `Logs` folder) says what each pack did, on lines starting with
 `[riivolution]`, and which code mods were built in, on lines starting with `[mods]`. `[paths]

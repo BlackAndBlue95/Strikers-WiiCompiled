@@ -1220,9 +1220,10 @@ void Draw() {
 } // namespace Miis
 
 // F10 > Mods, Riivolution packs: every pack XML in the overlay roots with its options. A choice is
-// saved to the root's riivolution/config/R4QE.xml, as Riivolution and Dolphin save it, and applies at
-// the next launch (the disc is put together once, at boot). A pack's code mods are built into the
-// game, so changing one of those also takes another build.sh.
+// saved to the root's riivolution/config/R4QE.xml, as Riivolution and Dolphin save it. An option whose
+// choices only add files the disc doesn't have (each of the Strikers Tweaks, a file its code looks
+// for) applies at once; one that replaces the game's files at the next launch, the disc being put
+// together at boot; one that adds code after another build.sh too, code mods being built in.
 void DrawRiivolutionPacks() {
     static std::map<std::string, uint32_t> chosen;  // pack xml + option -> choice saved this session
     static std::string saveError;
@@ -1238,6 +1239,10 @@ void DrawRiivolutionPacks() {
         ImGui::TextDisabled("Copy a pack as it goes on an SD card (its riivolution folder and its own folder) into %s",
                             folder.c_str());
     }
+    if (!packs.empty()) {
+        ImGui::TextDisabled("Options that only add files, like each of the Strikers Tweaks, apply at once; the others "
+                            "at the next launch.");
+    }
     bool restart = false, rebuild = false;
     for (const RuntimeRiivolution::Pack& pack : packs) {
         const std::string xml = RuntimeConfigFile::PathToUtf8(pack.xml);
@@ -1249,18 +1254,26 @@ void DrawRiivolutionPacks() {
             for (const std::string& name : pack.codeModules) names += (names.empty() ? "" : ", ") + name;
             ImGui::TextDisabled("Code: %s", names.c_str());
         }
+        // One width for the pack's choice boxes, so their labels line up.
+        float width = ImGui::CalcTextSize("Disabled").x;
+        for (const RuntimeRiivolution::PackOption& option : pack.options)
+            for (const std::string& choice : option.choices) width = std::max(width, ImGui::CalcTextSize(choice.c_str()).x);
+        width += ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.x * 2.0f;
+        std::string_view section;
         for (const RuntimeRiivolution::PackOption& option : pack.options) {
+            if (option.section != section) {
+                section = option.section;
+                if (!section.empty()) ImGui::TextUnformatted(option.section.c_str());
+            }
             const std::string key = xml + "\n" + option.configId;
             const auto saved = chosen.find(key);
             const uint32_t current = saved != chosen.end() ? saved->second : option.selected;
-            const std::string label = option.section.empty() || option.section == option.name
-                                          ? option.name
-                                          : option.section + ": " + option.name;
             const char* preview = current == 0 || current > option.choices.size()
                                       ? "Disabled"
                                       : option.choices[current - 1].c_str();
-            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
-            if (ImGui::BeginCombo(label.c_str(), preview)) {
+            ImGui::PushID(option.configId.c_str());
+            ImGui::SetNextItemWidth(width);
+            if (ImGui::BeginCombo(option.name.c_str(), preview)) {
                 for (uint32_t choice = 0; choice <= option.choices.size(); ++choice) {
                     const char* name = choice == 0 ? "Disabled" : option.choices[choice - 1].c_str();
                     ImGui::PushID(static_cast<int>(choice));
@@ -1272,9 +1285,11 @@ void DrawRiivolutionPacks() {
                 }
                 ImGui::EndCombo();
             }
-            if (current != option.selected) {
+            if (!option.description.empty()) ImGui::TextDisabled("%s", option.description.c_str());
+            ImGui::PopID();
+            if (current != option.selected && !option.live) {  // a live option's choice applies at once
                 restart = true;
-                rebuild |= !pack.codeModules.empty();
+                rebuild |= option.addsCode;  // the others only change the disc's files
             }
         }
         ImGui::PopID();
@@ -1319,7 +1334,8 @@ void DrawModPackages() {
     DrawRiivolutionPacks();
 }
 
-// F10 > Tweaks: changes to the game built into the runtime ([mods] in Config.toml).
+// F10 > Tweaks: changes to the game built into the runtime ([mods] in Config.toml). The others are the
+// Strikers Tweaks pack (packs/tweaks), in F10 > Mods.
 void DrawModSettings() {
     bool navigation = RuntimeConfigFile::ModMenuNavigation();
     if (ImGui::Checkbox("Controller menu navigation", &navigation)) {
@@ -1335,19 +1351,6 @@ void DrawModSettings() {
     ImGui::TextDisabled("Mark the selected button with a badge in the player's colour.");
     ImGui::EndDisabled();
     ImGui::Separator();
-    bool noMegaStrikes = RuntimeConfigFile::ModNoMegaStrikes();
-    if (ImGui::Checkbox("No Mega Strikes with controllers", &noMegaStrikes)) {
-        RuntimeConfigFile::SetModNoMegaStrikes(noMegaStrikes);
-    }
-    ImGui::TextDisabled("Blocking a Mega Strike needs a Wii Remote pointer. While a gamepad or\n"
-                        "keyboard is in use, matches have Mega Strikes off for both sides.");
-    bool nkFix = RuntimeConfigFile::ModNkFix();
-    if (ImGui::Checkbox("Fix the NK bug", &nkFix)) {
-        RuntimeConfigFile::SetModNkFix(nkFix);
-    }
-    ImGui::TextDisabled("A deke or teleport through the goalie that gets cut short (Boo deking into\n"
-                        "his own Kritter, Dry Bones teleporting behind the goal) no longer leaves\n"
-                        "every shot passing through Kritter for the rest of the match.");
     bool kitChoice = RuntimeConfigFile::ModKitChoice();
     if (ImGui::Checkbox("Choose home/away kits on captain select", &kitChoice)) {
         RuntimeConfigFile::SetModKitChoice(kitChoice);
@@ -1356,31 +1359,6 @@ void DrawModSettings() {
                         "away kit and Y the away team (Wii Remote: - and 2). Only one team can wear\n"
                         "its away kit at a time. Mario, Luigi, Waluigi and Wario get generated away\n"
                         "kits (white, sky blue, orange, blue) recoloured from their own.");
-    ImGui::SeparatorText("Gameplay extras");
-    bool unlockEverything = RuntimeConfigFile::ModUnlockEverything();
-    if (ImGui::Checkbox("Unlock everything", &unlockEverything)) {
-        RuntimeConfigFile::SetModUnlockEverything(unlockEverything);
-    }
-    ImGui::TextDisabled("All characters, stadiums and cheats, using the game's own unlock-all\n"
-                        "switch. Your save is not changed; turn it off to see your own progress.");
-    bool winByTwo = RuntimeConfigFile::ModWinByTwo();
-    if (ImGui::Checkbox("Win by 2 (first-to-X goal matches)", &winByTwo)) {
-        RuntimeConfigFile::SetModWinByTwo(winByTwo);
-    }
-    ImGui::TextDisabled("Tied one goal short of the target, the target moves up: you have to\n"
-                        "outscore the other side by at least 2 goals to win.");
-    bool fastMenus = RuntimeConfigFile::ModFastMenus();
-    if (ImGui::Checkbox("Fast menus", &fastMenus)) {
-        RuntimeConfigFile::SetModFastMenus(fastMenus);
-    }
-    ImGui::TextDisabled("Skips menu transitions: panels sliding in and out, and camera moves such as\n"
-                        "the zoom from the main menu. Idle animations and matches are unchanged.");
-    bool skipIntro = RuntimeConfigFile::ModSkipIntro();
-    if (ImGui::Checkbox("Skip intro", &skipIntro)) {
-        RuntimeConfigFile::SetModSkipIntro(skipIntro);
-    }
-    ImGui::TextDisabled("Boots straight to the main menu: no notice screens, intro movie or title\n"
-                        "screen (the studio logo still shows). Takes effect from the next launch.");
     bool allCaptains = RuntimeConfigFile::ModAllCaptains();
     if (ImGui::Checkbox("Captain-only teams", &allCaptains)) {
         RuntimeConfigFile::SetModAllCaptains(allCaptains);
@@ -1389,24 +1367,10 @@ void DrawModSettings() {
                         "sidekick screen, pick a slot then a captain from the grid; - and + switch to\n"
                         "the sidekicks, so teams can mix both. On captain select, - and + let a sidekick\n"
                         "lead a team in a captain's colours (X/Y cycle them).");
-    bool bluePeach = RuntimeConfigFile::ModBluePeach();
-    if (ImGui::Checkbox("Blue Peach against red teams", &bluePeach)) {
-        RuntimeConfigFile::SetModBluePeach(bluePeach);
-    }
-    ImGui::TextDisabled("Peach wears her blue kit against red captains (Mario, Bowser, Bowser Jr.,\n"
-                        "Petey, Daisy, Diddy Kong) so the teams are easy to tell apart.");
-    bool shotCounter = RuntimeConfigFile::ModShotCounter();
-    if (ImGui::Checkbox("Shot counter on the results screen", &shotCounter)) {
-        RuntimeConfigFile::SetModShotCounter(shotCounter);
-    }
-    ImGui::TextDisabled("The Mega Strike goals / shots row shows white and yellow shots /\n"
-                        "red and orange shots instead.");
-    bool fastStadiums = RuntimeConfigFile::ModFastStadiums();
-    if (ImGui::Checkbox("All stadiums fast-paced", &fastStadiums)) {
-        RuntimeConfigFile::SetModFastStadiums(fastStadiums);
-    }
-    ImGui::TextDisabled("Every pitch plays like the fast, dry ones such as Bowser Stadium (the game's\n"
-                        "DryTerrain surface). Takes effect from the next match when turned off.");
+    ImGui::SeparatorText("More tweaks");
+    ImGui::TextDisabled("Skip intro, fast menus, unlock everything, win by 2, the NK bug fix and the\n"
+                        "rest are the Strikers Tweaks pack, in Mods: the same pack and options as in\n"
+                        "Dolphin and on a Wii.");
 }
 
 // Dolphin-style custom textures (aurora's texture_replacement.cpp): the renderer indexes the folder

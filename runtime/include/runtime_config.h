@@ -783,10 +783,26 @@ inline bool SetControllerExpression(const std::string& key, const std::string& v
     return WriteSetting("controller", key, FormatString(value));
 }
 
-// Tweaks (F10 > Tweaks, [mods] in Config.toml).
+// The tweaks that became the Strikers Tweaks pack (packs/tweaks) were [mods] settings here: the old
+// setting by the pack's option ("tweaks_winbytwo"), nullopt when Config.toml never set it. The first
+// time the pack is loaded, each option the config file doesn't name yet takes it (riivolution.cpp).
+inline std::optional<bool> LegacyTweak(std::string_view option) {
+    const RuntimeUserConfig& c = Get();
+    if (option == "tweaks_skipintro") return c.modSkipIntro;
+    if (option == "tweaks_fastmenus") return c.modFastMenus;
+    if (option == "tweaks_faststadiums") return c.modFastStadiums;
+    if (option == "tweaks_nomegastrikes") return c.modNoMegaStrikes;
+    if (option == "tweaks_unlockall") return c.modUnlockEverything;
+    if (option == "tweaks_winbytwo") return c.modWinByTwo;
+    if (option == "tweaks_nkfix") return c.modNkFix;
+    if (option == "tweaks_bluepeach") return c.modBluePeach;
+    if (option == "tweaks_shotcounter") return c.modShotCounter;
+    return std::nullopt;
+}
+
+// Tweaks that stay built in (F10 > Tweaks, [mods] in Config.toml).
 inline bool ModMenuNavigation() { return Get().modMenuNavigation.value_or(true); }
 inline bool ModSelectionBadge() { return Get().modSelectionBadge.value_or(false); }
-inline bool ModNoMegaStrikes() { return Get().modNoMegaStrikes.value_or(true); }
 inline bool SetModMenuNavigation(bool value) {
     Mutable().modMenuNavigation = value;
     return WriteSetting("mods", "menu_navigation", value ? "true" : "false");
@@ -795,31 +811,10 @@ inline bool SetModSelectionBadge(bool value) {
     Mutable().modSelectionBadge = value;
     return WriteSetting("mods", "selection_badge", value ? "true" : "false");
 }
-inline bool SetModNoMegaStrikes(bool value) {
-    Mutable().modNoMegaStrikes = value;
-    return WriteSetting("mods", "no_mega_strikes", value ? "true" : "false");
-}
-// Gameplay extras, off unless enabled.
-inline bool ModUnlockEverything() { return Get().modUnlockEverything.value_or(false); }
-inline bool ModWinByTwo() { return Get().modWinByTwo.value_or(false); }
-inline bool SetModUnlockEverything(bool value) {
-    Mutable().modUnlockEverything = value;
-    return WriteSetting("mods", "unlock_everything", value ? "true" : "false");
-}
 inline bool ModKitChoice() { return Get().modKitChoice.value_or(true); }
 inline bool SetModKitChoice(bool value) {
     Mutable().modKitChoice = value;
     return WriteSetting("mods", "kit_choice", value ? "true" : "false");
-}
-inline bool ModFastMenus() { return Get().modFastMenus.value_or(false); }
-inline bool SetModFastMenus(bool value) {
-    Mutable().modFastMenus = value;
-    return WriteSetting("mods", "fast_menus", value ? "true" : "false");
-}
-inline bool ModSkipIntro() { return Get().modSkipIntro.value_or(false); }
-inline bool SetModSkipIntro(bool value) {
-    Mutable().modSkipIntro = value;
-    return WriteSetting("mods", "skip_intro", value ? "true" : "false");
 }
 inline bool ModAllCaptains() { return Get().modAllCaptains.value_or(false); }
 inline bool SetModAllCaptains(bool value) {
@@ -859,30 +854,6 @@ inline bool SetModCaptainTeammates(int side, const std::array<int, 3>& slots) {
     const std::string text = std::to_string(slots[0]) + "," + std::to_string(slots[1]) + "," + std::to_string(slots[2]);
     Mutable().modCaptainTeammates[side & 1] = text;
     return WriteSetting("mods", side == 0 ? "captain_teammates_home" : "captain_teammates_away", FormatString(text));
-}
-inline bool ModBluePeach() { return Get().modBluePeach.value_or(false); }
-inline bool SetModBluePeach(bool value) {
-    Mutable().modBluePeach = value;
-    return WriteSetting("mods", "blue_peach", value ? "true" : "false");
-}
-inline bool ModShotCounter() { return Get().modShotCounter.value_or(false); }
-inline bool SetModShotCounter(bool value) {
-    Mutable().modShotCounter = value;
-    return WriteSetting("mods", "shot_counter", value ? "true" : "false");
-}
-inline bool ModFastStadiums() { return Get().modFastStadiums.value_or(false); }
-inline bool SetModFastStadiums(bool value) {
-    Mutable().modFastStadiums = value;
-    return WriteSetting("mods", "fast_stadiums", value ? "true" : "false");
-}
-inline bool ModNkFix() { return Get().modNkFix.value_or(true); }
-inline bool SetModNkFix(bool value) {
-    Mutable().modNkFix = value;
-    return WriteSetting("mods", "nk_fix", value ? "true" : "false");
-}
-inline bool SetModWinByTwo(bool value) {
-    Mutable().modWinByTwo = value;
-    return WriteSetting("mods", "win_by_two", value ? "true" : "false");
 }
 
 inline int32_t MuteHotkey(int32_t fallback) {
