@@ -381,11 +381,27 @@ void DrawWiiRemoteSettings() {
         }
         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 34.0f);
         ImGui::TextDisabled("How dim a light a real Wii Remote's camera still takes for a sensor bar dot (%u "
-                            "connected; a controller's pointer doesn't use it). It doesn't change the pointer's "
-                            "speed: with a sensor bar or DolphinBar at a normal distance every setting sees it the "
-                            "same, so it only matters far away or with other lights about.",
+                            "connected; a controller's pointer doesn't use it). With a sensor bar or DolphinBar at a "
+                            "normal distance every setting sees it the same, so it only matters far away or with "
+                            "other lights about. How far the pointer moves is Pointer speed, below.",
                             WiimoteHid::ConnectedCount());
         ImGui::PopTextWrapPos();
+    }
+    {
+        float speed = static_cast<float>(RuntimeConfigFile::WiiPointerSpeed());
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::SliderFloat("Pointer speed##wiiremote", &speed, 0.5f, 2.0f, "%.2fx")) {
+            const double value = std::round(speed * 20.0) / 20.0;
+            if (value != RuntimeConfigFile::WiiPointerSpeed()) {
+                RuntimeConfigFile::SetWiiPointerSpeed(value);
+                WiimoteHid::SetPointerSpeed(value);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("How far the pointer moves when you move a Wii Remote. Above 1, a small move\n"
+                              "covers the screen; below 1, it takes a bigger one. 1.00x is the Wii's.\n"
+                              "(A controller's stick pointer has its own, under Controllers.)");
+        }
     }
     if (ImGui::Checkbox("Keep scanning for Wii Remotes (like Dolphin's Continuous Scanning)",
                         &g_wiiContinuousScan)) {

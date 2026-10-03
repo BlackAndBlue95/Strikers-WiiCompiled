@@ -79,6 +79,7 @@ struct RuntimeUserConfig {
     std::optional<bool> rumbleEnabled;     // the game's vibration on controllers
     std::optional<bool> wiiRemoteRumble;   // ... on real Wii Remotes (unset: as on controllers)
     std::optional<double> irSensitivity;   // the Wii's IR sensitivity setting, 1.0-5.0 in tenths, for real remotes
+    std::optional<double> wiiPointerSpeed; // how far real remotes' pointer moves, 0.5-2.0 (1: the Wii's)
     std::optional<double> pointerSpeed;    // the stick-driven pointer's speed (controllers), x1
     // Accelerometer zero-point correction for the Bluetooth Wii Remote, in g and in
     // SDL's sensor frame (x right, y out of the button face, z towards the user).
@@ -539,6 +540,8 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.wiiRemoteRumble = FindConfigValue<bool>(document, "controller", "wii_remote_rumble");
     if (auto value = FindConfigFloat(document, "controller", "ir_sensitivity"); value && *value >= 1.0f && *value <= 5.0f)
         config.irSensitivity = std::round(*value * 10.0) / 10.0;
+    if (auto value = FindConfigFloat(document, "controller", "wii_pointer_speed"); value && *value >= 0.5f && *value <= 2.0f)
+        config.wiiPointerSpeed = *value;
     if (auto value = FindConfigFloat(document, "controller", "pointer_speed"); value && *value >= 0.25f && *value <= 4.0f)
         config.pointerSpeed = *value;
     config.wiiAccelOffsetX = FindConfigValue<double>(document, "controller", "wii_accel_offset_x");
@@ -999,6 +1002,16 @@ inline bool SetIrSensitivity(double value) {
     std::ostringstream formatted;
     formatted << std::fixed << std::setprecision(1) << value;
     return WriteSetting("controller", "ir_sensitivity", formatted.str());
+}
+
+// How far a real Wii Remote's pointer moves for a move of the remote, as a multiple of the Wii's.
+inline double WiiPointerSpeed() { return Get().wiiPointerSpeed.value_or(1.0); }
+inline bool SetWiiPointerSpeed(double value) {
+    value = std::clamp(std::round(value * 20.0) / 20.0, 0.5, 2.0);
+    Mutable().wiiPointerSpeed = value;
+    std::ostringstream formatted;
+    formatted << std::fixed << std::setprecision(2) << value;
+    return WriteSetting("controller", "wii_pointer_speed", formatted.str());
 }
 
 // How fast a controller's stick moves the pointer, as a multiple of the normal speed.

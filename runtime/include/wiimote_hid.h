@@ -57,6 +57,9 @@ void SetRumble(uint32_t chan, bool on);
 // The IR camera sensitivity (the Wii's setting, 1.0-5.0 in tenths; wiimote_ir_sensitivity.h);
 // connected remotes are reprogrammed.
 void SetIrSensitivity(double level);
+// How far the pointer moves for a move of the remote (0.5-2.0, 1 the Wii's): KPAD's position
+// scaled about the screen's centre.
+void SetPointerSpeed(double speed);
 // KPAD's pointer position (KPADStatus.pos) for a sensor-bar midpoint in raw camera pixels with
 // the remote's roll already undone, and the midpoint that gives a pointer position.
 void MidpointToPointer(float mx, float my, float pos[2]);

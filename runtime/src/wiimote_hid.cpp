@@ -112,6 +112,7 @@ struct Remote {
 
 std::array<std::atomic<bool>, 4> g_rumbleWanted{};  // per channel, set by the game thread
 std::atomic<int> g_irSensitivity{30};  // tenths
+std::atomic<int> g_pointerSpeed{100};   // hundredths: the pointer's position scaled about the centre
 
 std::mutex g_mutex;                         // guards g_samples and g_owned
 std::array<Sample, kMaxRemotes> g_samples{};
@@ -346,8 +347,10 @@ float AccelG(const AccelCalibration& cal, int axis, float raw) {
 }
 
 // The KPAD pointer from the sensor bar's two dots: their midpoint, with the remote's roll taken
-// out using the dots themselves (the bar is level).
+// out using the dots themselves (the bar is level), times the pointer speed (about the centre, so
+// aiming at the middle of the screen stays the middle).
 void UpdatePointer(Remote& r, Sample& s) {
+    const float speed = static_cast<float>(g_pointerSpeed.load(std::memory_order_relaxed)) / 100.f;
     float x[4], y[4];
     int n = 0;
     for (int i = 0; i < 4; ++i) {
@@ -381,7 +384,8 @@ void UpdatePointer(Remote& r, Sample& s) {
         const float ax = x[0] + dx * 0.5f, ay = y[0] + dy * 0.5f;
         const float bx = x[0] - dx * 0.5f, by = y[0] - dy * 0.5f;
         float px = kDpdCentreX, py = kDpdCentreY;
-        PointerToMidpoint(r.smoothed, px, py);
+        const float last[2] = {r.smoothed[0] / speed, r.smoothed[1] / speed};
+        PointerToMidpoint(last, px, py);
         const bool useA = (ax - px) * (ax - px) + (ay - py) * (ay - py) <= (bx - px) * (bx - px) + (by - py) * (by - py);
         mx = useA ? ax : bx;
         my = useA ? ay : by;
@@ -396,7 +400,7 @@ void UpdatePointer(Remote& r, Sample& s) {
     const float ox = mx - kDpdCentreX, oy = my - kDpdCentreY;
     float target[2];
     MidpointToPointer(kDpdCentreX + ox * c - oy * sn, kDpdCentreY + ox * sn + oy * c, target);
-    for (float& v : target) v = std::clamp(v, -3.f, 3.f);  // a misread single dot, not a pointer
+    for (float& v : target) v = std::clamp(v * speed, -3.f, 3.f);  // past 3: a misread single dot, not a pointer
     if (!r.smoothedValid) {
         r.smoothed[0] = target[0];
         r.smoothed[1] = target[1];
@@ -869,6 +873,10 @@ bool SensorBarAbove() { return g_sensorBarAbove.load(std::memory_order_relaxed);
 
 void SetRumble(uint32_t chan, bool on) {
     if (chan < g_rumbleWanted.size()) g_rumbleWanted[chan].store(on, std::memory_order_relaxed);
+}
+
+void SetPointerSpeed(double speed) {
+    g_pointerSpeed.store(std::clamp(static_cast<int>(std::lround(speed * 100.0)), 50, 200), std::memory_order_relaxed);
 }
 
 void SetIrSensitivity(double level) {
