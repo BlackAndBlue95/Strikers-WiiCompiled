@@ -1,0 +1,14 @@
+<wiidisc version="1" root="/gamecube">
+  <id game="R4QE"/>
+  <options>
+    <section name="GameCube controllers">
+      <option name="GameCube controllers" id="gamecube" default="1">
+        <choice name="Enabled"><patch id="gamecube"/></choice>
+      </option>
+    </section>
+  </options>
+  <patch id="gamecube">
+    <!-- The code: a Kamek module at the disc root, which the Strikers Mod Loader loads. -->
+    <file disc="/sml_10_gamecube.bin" external="sml_10_gamecube.bin" create="true"/>
+  </patch>
+</wiidisc>
