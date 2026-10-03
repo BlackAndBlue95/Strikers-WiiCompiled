@@ -264,6 +264,11 @@ target_include_directories(msc_sha1_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/inc
 target_compile_features(msc_sha1_tests PRIVATE cxx_std_17)
 add_test(NAME msc_sha1_tests COMMAND msc_sha1_tests)
 
+add_executable(msc_wiimote_ir_tests "${CMAKE_CURRENT_LIST_DIR}/tests/wiimote_ir_tests.cpp")
+target_include_directories(msc_wiimote_ir_tests PRIVATE "${CMAKE_CURRENT_LIST_DIR}/include")
+target_compile_features(msc_wiimote_ir_tests PRIVATE cxx_std_17)
+add_test(NAME msc_wiimote_ir_tests COMMAND msc_wiimote_ir_tests)
+
 # HostContext deliberately keeps the platform-specific context primitive out
 # of fiber_manager.cpp. Exercise the Linux libco handoff directly so future
 # refactors cannot silently remove its headers, implementation, or link edge.

@@ -7,6 +7,7 @@
 #include "hle/controller_status_contract.h"
 #include "wii_remote_input.h"
 
+#include <cmath>
 #include <cstdint>
 
 void NandQueueIosCallback(uint32_t callbackPtr, int32_t result, uint32_t callbackArg);
@@ -62,7 +63,7 @@ PPC_NATIVE_OVERRIDE(803CBD68, WPADGetStatus_HLE, int32_t, (), ());
 
 extern "C" uint32_t WPADGetDpdSensitivity_HLE()
 {
-    return static_cast<uint32_t>(RuntimeConfigFile::IrSensitivity());
+    return static_cast<uint32_t>(std::lround(RuntimeConfigFile::IrSensitivity()));  // the Wii's levels are whole
 }
 PPC_NATIVE_OVERRIDE(803CF954, WPADGetDpdSensitivity_HLE, uint32_t, (), ());
 
@@ -90,7 +91,7 @@ void SeedWpadSettings()
     constexpr uint32_t kSpeakerVolume = 0x806E2BFEu;   // _speakerVolume: the Wii's default
     Memory::Write32(kMotorEnabled, 1);  // the F10 switch decides in WPADControlMotor, so it can change live
     Memory::Write8(kSensorBarPos, RuntimeConfigFile::SensorBarAbove() ? 1 : 0);
-    Memory::Write8(kDpdSensitivity, static_cast<uint8_t>(RuntimeConfigFile::IrSensitivity()));
+    Memory::Write8(kDpdSensitivity, static_cast<uint8_t>(std::lround(RuntimeConfigFile::IrSensitivity())));
     Memory::Write8(kSpeakerVolume, 89);
 }
 
@@ -173,16 +174,16 @@ PPC_NATIVE_OVERRIDE(803CCFE8, WPADProbe_HLE, int32_t, (uint32_t chan, uint32_t t
 
 // WPADControlMotor(chan, command): 1 starts the remote's motor, 0 stops it. The game times its
 // pulses itself (RumbleActions: 111-666 ms, 45 ms on / 150 ms off while the pointer hovers). A real
-// remote gets it over Bluetooth; an emulated one (a gamepad or GameCube controller on that port) on
-// the controller, as SDL rumble.
+// remote gets it over Bluetooth, unless its Rumble switch (Settings > Wii Remotes) is off; an
+// emulated one (a gamepad or GameCube controller on that port) on the controller, as SDL rumble,
+// unless the controllers' is.
 extern "C" void WPADControlMotor_HLE(uint32_t chan, uint32_t command)
 {
     if (chan >= WpadContract::kChannelCount) return;
-    const bool on = command != 0 && RuntimeConfigFile::RumbleEnabled();
     if (WiimoteHid::Present(chan)) {
-        WiimoteHid::SetRumble(chan, on);
+        WiimoteHid::SetRumble(chan, command != 0 && RuntimeConfigFile::WiiRemoteRumbleEnabled());
     } else {
-        PADControlMotor(chan, on ? PAD_MOTOR_RUMBLE : PAD_MOTOR_STOP);
+        PADControlMotor(chan, command != 0 && RuntimeConfigFile::RumbleEnabled() ? PAD_MOTOR_RUMBLE : PAD_MOTOR_STOP);
     }
 }
 PPC_NATIVE_OVERRIDE(803CD57C, WPADControlMotor_HLE, void, (uint32_t chan, uint32_t command), (chan, command));

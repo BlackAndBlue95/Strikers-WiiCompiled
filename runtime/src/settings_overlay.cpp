@@ -341,6 +341,20 @@ void DrawWiiRemoteSettings() {
     ImGui::TextDisabled("(or the red SYNC button) on it. Leave the PIN empty.");
     ImGui::TextDisabled("A remote that was paired before also needs to be turned on with 1+2/SYNC.");
 #endif
+    {
+        bool rumble = RuntimeConfigFile::WiiRemoteRumbleEnabled();
+        if (ImGui::Checkbox("Rumble", &rumble)) {
+            RuntimeConfigFile::SetWiiRemoteRumbleEnabled(rumble);
+            // Stop whatever is running now: the game won't send another stop until its pulse ends.
+            if (!rumble) {
+                for (uint32_t chan = 0; chan < PAD_MAX_CONTROLLERS; ++chan) WiimoteHid::SetRumble(chan, false);
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("The game's vibration on Wii Remotes. Controllers have their own switch, under\n"
+                              "Controllers.");
+        }
+    }
     if (ImGui::Checkbox("Sensor bar is above the screen", &g_sensorBarAbove)) {
         RuntimeConfigFile::SetSensorBarAbove(g_sensorBarAbove);
         WiimoteHid::SetSensorBarAbove(g_sensorBarAbove);
@@ -350,16 +364,28 @@ void DrawWiiRemoteSettings() {
                           "sits, so the pointer lines up with where the remote points. Off = below the screen.");
     }
     {
-        int irSensitivity = RuntimeConfigFile::IrSensitivity();
+        // The Wii's five levels, and tenths in between (wiimote_ir_sensitivity.h).
+        float irSensitivity = static_cast<float>(RuntimeConfigFile::IrSensitivity());
         ImGui::SetNextItemWidth(160.0f);
-        if (ImGui::SliderInt("IR sensitivity", &irSensitivity, 1, 5)) {
-            RuntimeConfigFile::SetIrSensitivity(irSensitivity);
-            WiimoteHid::SetIrSensitivity(irSensitivity);
+        if (ImGui::SliderFloat("IR sensitivity", &irSensitivity, 1.0f, 5.0f, "%.1f")) {
+            const double level = std::round(irSensitivity * 10.0) / 10.0;
+            if (level != RuntimeConfigFile::IrSensitivity()) {
+                RuntimeConfigFile::SetIrSensitivity(level);
+                WiimoteHid::SetIrSensitivity(level);
+            }
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Like the Wii's IR Sensitivity setting: raise it if the pointer drops out far from\n"
-                              "the sensor bar, lower it if lamps or reflections throw it off.");
+            ImGui::SetTooltip("Like the Wii's IR Sensitivity setting (its five levels are the whole numbers):\n"
+                              "raise it if the pointer drops out far from the sensor bar, lower it if lamps,\n"
+                              "sunlight or reflections throw it off.");
         }
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 34.0f);
+        ImGui::TextDisabled("How dim a light a real Wii Remote's camera still takes for a sensor bar dot (%u "
+                            "connected; a controller's pointer doesn't use it). It doesn't change the pointer's "
+                            "speed: with a sensor bar or DolphinBar at a normal distance every setting sees it the "
+                            "same, so it only matters far away or with other lights about.",
+                            WiimoteHid::ConnectedCount());
+        ImGui::PopTextWrapPos();
     }
     if (ImGui::Checkbox("Keep scanning for Wii Remotes (like Dolphin's Continuous Scanning)",
                         &g_wiiContinuousScan)) {
@@ -1080,12 +1106,11 @@ void DrawRumbleAndPointerSettings() {
                 PAD_MOTOR_STOP_HARD, PAD_MOTOR_STOP_HARD, PAD_MOTOR_STOP_HARD, PAD_MOTOR_STOP_HARD,
             };
             PADControlAllMotors(stopAll.data());
-            for (uint32_t chan = 0; chan < PAD_MAX_CONTROLLERS; ++chan) WiimoteHid::SetRumble(chan, false);
         }
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("The game's vibration, on Wii Remotes and on controllers that can rumble\n"
-                          "(GameCube controllers on the adapter too).");
+        ImGui::SetTooltip("The game's vibration on controllers that can rumble (GameCube controllers on the\n"
+                          "adapter too). Wii Remotes have their own switch, under Wii Remotes.");
     }
     float pointerSpeed = static_cast<float>(RuntimeConfigFile::PointerSpeed());
     ImGui::SetNextItemWidth(160.0f);

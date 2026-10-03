@@ -76,8 +76,9 @@ struct RuntimeUserConfig {
     // The sensor bar (or DolphinBar) sits above the screen rather than below it. KPAD aims the
     // pointer relative to it (KPADCalibrateDPD), like the Wii's sensor bar position setting.
     std::optional<bool> sensorBarAbove;
-    std::optional<bool> rumbleEnabled;     // the game's vibration, on remotes and controllers
-    std::optional<int32_t> irSensitivity;  // the Wii's IR sensitivity setting, 1-5, for real remotes
+    std::optional<bool> rumbleEnabled;     // the game's vibration on controllers
+    std::optional<bool> wiiRemoteRumble;   // ... on real Wii Remotes (unset: as on controllers)
+    std::optional<double> irSensitivity;   // the Wii's IR sensitivity setting, 1.0-5.0 in tenths, for real remotes
     std::optional<double> pointerSpeed;    // the stick-driven pointer's speed (controllers), x1
     // Accelerometer zero-point correction for the Bluetooth Wii Remote, in g and in
     // SDL's sensor frame (x right, y out of the button face, z towards the user).
@@ -535,8 +536,9 @@ inline RuntimeUserConfig ParseConfigDocument(const toml::value& document) {
     config.wiiContinuousScan = FindConfigValue<bool>(document, "controller", "wii_continuous_scan");
     config.sensorBarAbove = FindConfigValue<bool>(document, "controller", "sensor_bar_above");
     config.rumbleEnabled = FindConfigValue<bool>(document, "controller", "rumble");
-    if (auto value = FindConfigInt(document, "controller", "ir_sensitivity"); value && *value >= 1 && *value <= 5)
-        config.irSensitivity = *value;
+    config.wiiRemoteRumble = FindConfigValue<bool>(document, "controller", "wii_remote_rumble");
+    if (auto value = FindConfigFloat(document, "controller", "ir_sensitivity"); value && *value >= 1.0f && *value <= 5.0f)
+        config.irSensitivity = std::round(*value * 10.0) / 10.0;
     if (auto value = FindConfigFloat(document, "controller", "pointer_speed"); value && *value >= 0.25f && *value <= 4.0f)
         config.pointerSpeed = *value;
     config.wiiAccelOffsetX = FindConfigValue<double>(document, "controller", "wii_accel_offset_x");
@@ -971,19 +973,32 @@ inline bool SetWiiContinuousScanEnabled(bool value) {
 // Whether the sensor bar sits above the screen (default: below).
 inline bool SensorBarAbove() { return Get().sensorBarAbove.value_or(false); }
 
-// The game's vibration (on unless turned off).
+// The game's vibration on controllers (on unless turned off).
 inline bool RumbleEnabled() { return Get().rumbleEnabled.value_or(true); }
 inline bool SetRumbleEnabled(bool value) {
     Mutable().rumbleEnabled = value;
     return WriteSetting("controller", "rumble", value ? "true" : "false");
 }
 
-// The Wii's IR sensitivity (1-5, default 3): how bright a dot real remotes' cameras report.
-inline int32_t IrSensitivity() { return Get().irSensitivity.value_or(3); }
-inline bool SetIrSensitivity(int32_t value) {
-    value = std::clamp(value, 1, 5);
+// ... and on real Wii Remotes, a switch of their own that starts as the controllers' one.
+inline bool WiiRemoteRumbleEnabled() {
+    const RuntimeUserConfig& config = Get();
+    return config.wiiRemoteRumble.value_or(config.rumbleEnabled.value_or(true));
+}
+inline bool SetWiiRemoteRumbleEnabled(bool value) {
+    Mutable().wiiRemoteRumble = value;
+    return WriteSetting("controller", "wii_remote_rumble", value ? "true" : "false");
+}
+
+// The Wii's IR sensitivity (1.0-5.0 in tenths, default 3): how dim a light real remotes' cameras
+// still see as a sensor bar dot. Whole numbers are the Wii's five levels.
+inline double IrSensitivity() { return Get().irSensitivity.value_or(3.0); }
+inline bool SetIrSensitivity(double value) {
+    value = std::clamp(std::round(value * 10.0) / 10.0, 1.0, 5.0);
     Mutable().irSensitivity = value;
-    return WriteSetting("controller", "ir_sensitivity", std::to_string(value));
+    std::ostringstream formatted;
+    formatted << std::fixed << std::setprecision(1) << value;
+    return WriteSetting("controller", "ir_sensitivity", formatted.str());
 }
 
 // How fast a controller's stick moves the pointer, as a multiple of the normal speed.

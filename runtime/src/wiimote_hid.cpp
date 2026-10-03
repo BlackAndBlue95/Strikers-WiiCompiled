@@ -1,4 +1,5 @@
 #include "wiimote_hid.h"
+#include "wiimote_ir_sensitivity.h"
 
 #include "runtime_log.h"
 
@@ -104,11 +105,13 @@ struct Remote {
     bool smoothedValid = false;
     bool rumbleOn = false;        // the motor state every output report carries (byte 1, bit 0)
     uint64_t rumbleSinceMs = 0;
-    int irSensitivity = 0;        // the camera level SetupIr last programmed
+    int irSensitivity = 0;        // the camera sensitivity SetupIr last programmed, in tenths; -1 failed
+    uint64_t irRetryMs = 0;       // after a failed setup: when to try again,
+    uint64_t irRetryDelayMs = 0;  // backing off (a camera left mid-setup sees no dots)
 };
 
 std::array<std::atomic<bool>, 4> g_rumbleWanted{};  // per channel, set by the game thread
-std::atomic<int> g_irSensitivity{3};
+std::atomic<int> g_irSensitivity{30};  // tenths
 
 std::mutex g_mutex;                         // guards g_samples and g_owned
 std::array<Sample, kMaxRemotes> g_samples{};
@@ -298,29 +301,33 @@ bool EnableFeature(Remote& r, uint8_t report) {
     return false;
 }
 
-// IR camera in basic mode (10 bytes for 4 dots), at the Wii's sensitivity setting. The camera only
-// answers on its bus once report 0x13 enabled it, and only produces dots while 0x30 holds 0x08; the
-// console writes 0x01 there before changing sensitivity and mode (WiimoteEmu/Camera.cpp).
+// IR camera in basic mode (10 bytes for 4 dots), at the Wii's sensitivity setting (in tenths:
+// wiimote_ir_sensitivity.h). The camera only answers on its bus once report 0x13 enabled it, and only
+// produces dots while 0x30 holds 0x08; the console writes 0x01 there before changing sensitivity and
+// mode (WiimoteEmu/Camera.cpp). Run again when the setting changes, so the log says each time.
 bool SetupIr(Remote& r) {
-    // The two sensitivity blocks the Wii writes for its levels 1-5 (wiibrew, IR camera).
-    static constexpr uint8_t kSensitivity1[5][9] = {
-        {0x02, 0x00, 0x00, 0x71, 0x01, 0x00, 0x64, 0x00, 0xFE},
-        {0x02, 0x00, 0x00, 0x71, 0x01, 0x00, 0x96, 0x00, 0xB4},
-        {0x02, 0x00, 0x00, 0x71, 0x01, 0x00, 0xAA, 0x00, 0x64},
-        {0x02, 0x00, 0x00, 0x71, 0x01, 0x00, 0xC8, 0x00, 0x36},
-        {0x07, 0x00, 0x00, 0x71, 0x01, 0x00, 0x72, 0x00, 0x20},
-    };
-    static constexpr uint8_t kSensitivity2[5][2] = {{0xFD, 0x05}, {0xB3, 0x04}, {0x63, 0x03}, {0x35, 0x03}, {0x1F, 0x03}};
-    const int level = std::clamp(g_irSensitivity.load(), 1, 5);
-    r.irSensitivity = level;
+    const int tenths = std::clamp(g_irSensitivity.load(), WiimoteIr::kMinTenths, WiimoteIr::kMaxTenths);
+    uint8_t block1[9], block2[2];
+    WiimoteIr::SensitivityBlocks(tenths, block1, block2);
+    r.irSensitivity = tenths;
     bool ok = EnableFeature(r, kOutIrPixelClock);
     ok = ok && EnableFeature(r, kOutIrLogic);
     ok = ok && WriteRegister8(r, 0xB00030, 0x01);
-    ok = ok && WriteRegister(r, 0xB00000, kSensitivity1[level - 1], sizeof(kSensitivity1[0]));
-    ok = ok && WriteRegister(r, 0xB0001A, kSensitivity2[level - 1], sizeof(kSensitivity2[0]));
+    ok = ok && WriteRegister(r, 0xB00000, block1, sizeof(block1));
+    ok = ok && WriteRegister(r, 0xB0001A, block2, sizeof(block2));
     ok = ok && WriteRegister8(r, 0xB00033, 0x01);
     ok = ok && WriteRegister8(r, 0xB00030, 0x08);
-    if (!ok) RT_LOGF(RT_TAG_CONFIG, "Wii Remote %u: IR camera setup failed\n", r.chan + 1);
+    if (ok) {
+        RT_LOGF(RT_TAG_CONFIG, "Wii Remote %u: IR sensitivity %d.%d (a dot needs brightness %u)\n", r.chan + 1,
+                tenths / 10, tenths % 10, block1[8]);
+        r.irRetryDelayMs = 0;
+    } else {
+        r.irRetryDelayMs = std::min<uint64_t>(r.irRetryDelayMs != 0 ? r.irRetryDelayMs * 2 : 1000, 30000);
+        RT_LOGF(RT_TAG_CONFIG, "Wii Remote %u: IR camera setup failed, trying again in %llu s\n", r.chan + 1,
+                static_cast<unsigned long long>(r.irRetryDelayMs / 1000));
+        r.irSensitivity = -1;
+        r.irRetryMs = SDL_GetTicks() + r.irRetryDelayMs;
+    }
     return ok;
 }
 
@@ -772,7 +779,10 @@ void ReadThreadMain() {
                 if (!wantRumble) g_rumbleWanted[r.chan].store(false, std::memory_order_relaxed);
                 if (!Send(r, {kOutRumble, 0x00})) dead = true;
             }
-            if (!dead && r.irSensitivity != 0 && r.irSensitivity != g_irSensitivity.load()) SetupIr(r);
+            // The camera reprogrammed when the IR sensitivity changes, or again after a failed setup.
+            if (!dead && r.irSensitivity != 0 && r.irSensitivity != g_irSensitivity.load() && nowMs >= r.irRetryMs) {
+                SetupIr(r);
+            }
             // Connected but no data reports: the reporting mode never took (logged every 3 s).
             if (!dead && r.dataReports == 0 && SDL_GetTicks() - r.lastLogMs >= 3000) {
                 RT_LOGF(RT_TAG_CONFIG, "Wii Remote %u: connected, but no data reports (0x37) arriving\n", r.chan + 1);
@@ -861,7 +871,9 @@ void SetRumble(uint32_t chan, bool on) {
     if (chan < g_rumbleWanted.size()) g_rumbleWanted[chan].store(on, std::memory_order_relaxed);
 }
 
-void SetIrSensitivity(int level) { g_irSensitivity.store(std::clamp(level, 1, 5)); }
+void SetIrSensitivity(double level) {
+    g_irSensitivity.store(std::clamp(static_cast<int>(std::lround(level * 10.0)), WiimoteIr::kMinTenths, WiimoteIr::kMaxTenths));
+}
 
 void MidpointToPointer(float mx, float my, float pos[2]) {
     pos[0] = -(mx - kDpdCentreX) / kDpdUnit * kDpdToPos;
