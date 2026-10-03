@@ -27,8 +27,9 @@ The [wiki](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki) has the 
 [building](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Building),
 [controls](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Controls),
 [Wii Remotes](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Wii-Remotes),
-[graphics options](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Graphics) and
-[every tweak](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Tweaks).
+[graphics options](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Graphics),
+[every tweak](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Tweaks) and
+[mods](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Mods).
 
 ## Status
 
@@ -79,12 +80,18 @@ once with [Zadig](https://zadig.akeo.ie/)).
 
 ## Mods and tweaks
 
-Mods are Riivolution packs, the format Wii mods use, so the same pack runs on a Wii, in Dolphin and
-here. Put them in the `Riivolution` folder of the data folder and pick their options in
-**F10 > Mods**. A pack can replace and add game files, and add code (Kamek modules, which build.sh
-builds into the game). The Super Team pack (`packs/superteam`) puts SMS's robot team on a second
-page of captain select. [docs/modding](docs/modding/README.md) explains how packs work and how to
-make one.
+Mods are Riivolution packs, the format Wii mods use, so the same pack runs here, in Dolphin and on a
+Wii. Put them in the data folder's `Riivolution` folder and pick their options in **F10 > Mods**. A
+pack can replace and add game files, and add code (Kamek modules, which build.sh builds into the
+game). This repository has two:
+
+- **[Super Team](packs/superteam/README.md):** Super Mario Strikers' robot team as a captain of its
+  own, on a second page of captain select, with its SMS cutscenes, effects and Super Strike.
+- **[GameCube controllers](packs/gamecube/README.md):** this port's GameCube controller support, for
+  a Wii and Dolphin.
+
+[Mods](https://github.com/BlackAndBlue95/Strikers-WiiCompiled/wiki/Mods) has installing and playing
+them; [docs/modding](docs/modding/README.md) has making them.
 
 **F10 > Tweaks** has quality-of-life switches:
 
