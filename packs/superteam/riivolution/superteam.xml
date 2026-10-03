@@ -1,0 +1,20 @@
+<wiidisc version="1" root="/superteam">
+  <id game="R4QE"/>
+  <options>
+    <section name="Super Team">
+      <option name="Super Team" id="superteam" default="1">
+        <choice name="Enabled"><patch id="superteam"/></choice>
+      </option>
+    </section>
+  </options>
+  <patch id="superteam">
+    <!-- The code: a Kamek module at the disc root, which the Strikers Mod Loader loads on a console
+         and build.sh builds into Strikers Recharged. -->
+    <file disc="/sml_50_superteam.bin" external="sml_50_superteam.bin" create="true"/>
+    <!-- The files: superteam/files is laid out like the disc. -->
+    <folder disc="/" external="files" create="true"/>
+    <!-- Its cutscene audio, after the game's own in the cutscene stream bank (build-pack.sh fills in
+         the offset: the game's .nlxwb's size). -->
+    <file disc="/audio/STREAM_GEN_NIS.nlxwb" external="STREAM_GEN_NIS.nlxwb.append" offset="@NLXWB_SIZE@"/>
+  </patch>
+</wiidisc>
