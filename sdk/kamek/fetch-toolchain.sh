@@ -16,7 +16,7 @@ BINUTILS_TAG=2.42-2
 # The Mario Strikers Charged decomp (CC0, github.com/yannicksuter/mscharged-decomp): its headers are
 # the game's own classes, so mods use them; its symbol map makes externals-R4QE01.txt.
 DECOMP_REPO=yannicksuter/mscharged-decomp
-DECOMP_COMMIT=936868b
+DECOMP_COMMIT=b036be4
 
 here=$(cd "$(dirname "$0")" && pwd)
 dest="$here/.toolchain"
