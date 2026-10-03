@@ -1,0 +1,16 @@
+<wiidisc version="1" root="/strikersloader">
+  <id game="R4QE"/>
+  <options>
+    <section name="Strikers Mod Loader">
+      <option name="Code mods" id="strikersloader" default="1">
+        <choice name="Enabled"><patch id="strikersloader"/></choice>
+      </option>
+    </section>
+  </options>
+  <patch id="strikersloader">
+    <!-- The loader (sdk/kamek/loader, built for R4QE01): its code where MetroTRK's interrupt table
+         would be copied from under a debugger, and its call, in place of nlInit's call to
+         nlInitFileSystem (bl 0x803675E0), which it makes first. build-pack.sh fills these in. -->
+@LOADER_PATCHES@
+  </patch>
+</wiidisc>
