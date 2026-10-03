@@ -50,11 +50,13 @@ python3 "$here/tools/team_art.py" --logo "$here/art/super_omega.png" --extra "$e
     --out-news "$files/mods/superteam/news_superteam.gxt" \
     --out-icon "$files/mods/superteam/captain_icons_superteam.gxt" \
     --out-board "$files/mods/superteam/logos_TEAM_superteam_bg.gxt" >/dev/null
-# Its crowd: the game reads ini/CrowdCharacterLists/<name>.ini for the stands; Waluigi's crowd.
+# Its crowd: the game reads ini/CrowdCharacterLists/<name>.ini for the stands, <name>Alt.ini when the
+# home team wears its away kit (a list that isn't there crashes the match load); Waluigi's crowd, both.
 mkdir -p "$files/ini/CrowdCharacterLists"
 crowd=$(find "$game/files/ini/CrowdCharacterLists" -maxdepth 1 -iname waluigi.ini | head -n 1)
 need "${crowd:-$game/files/ini/CrowdCharacterLists/Waluigi.ini}"
 cp "$crowd" "$files/ini/CrowdCharacterLists/superteam.ini"
+cp "$crowd" "$files/ini/CrowdCharacterLists/superteamAlt.ini"
 # Its hologram before a match: framed as Waluigi's (ini/ImpostorCharacterTweaks.ini, by name).
 tweaks=$(find "$game/files/ini" -maxdepth 1 -iname impostorcharactertweaks.ini | head -n 1)
 need "${tweaks:-$game/files/ini/ImpostorCharacterTweaks.ini}"

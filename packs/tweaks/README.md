@@ -42,6 +42,7 @@ works that way (see [Making a pack](../../docs/modding/making-packs.md#options-t
 | `code/options.cpp` | reads the options |
 | `code/frame.cpp` | the tweaks that act once a frame, from the game's main loop (`nlTaskManager::RunAllTasks`) |
 | `code/menus.cpp` | fast menus and skip intro, on the front end's slides, presentations and boot screens |
+| `code/fixes.cpp` | Peach's away kit, which the game never uses: her home kit's crowd, sidekick portraits, banners and Mega Strike hand where the away kit has none (without them the match load and sidekick select crashed, and the banners were black) |
 | `riivolution/tweaks.xml` | the options; each one's `description` is what F10 shows under it |
 | `sml_20_tweaks.bin` | the built code |
 

@@ -897,6 +897,41 @@ static void CompleteDvdCancelState()
     Memory::Write32(0x806E2728, 0); // executing command block
 }
 
+// The match's crowd is the home captain's list, ini/CrowdCharacterLists/<name>.ini, or its Alt list
+// when the home team wears its away kit. Mario, Luigi, Peach, Wario and Waluigi have no Alt list (their
+// teams never switch kits in the game) and a list that isn't there crashes the match load: for kit
+// choice and Blue Peach, each gets its home list as its Alt list. (On a console, the Strikers Tweaks
+// pack's code does the same for Blue Peach.)
+static void AliasAwayCrowdLists()
+{
+    static const std::string kFolder = "/ini/crowdcharacterlists/";
+    std::vector<std::pair<std::string, int32_t>> aliases;
+    for (const auto& [path, index] : g_pathToEntry) {
+        if (index < 0 || index >= static_cast<int32_t>(g_fileEntries.size()) || g_fileEntries[index].isDirectory ||
+            path.compare(0, kFolder.size(), kFolder) != 0 || path.size() < kFolder.size() + 5 ||
+            path.compare(path.size() - 4, 4, ".ini") != 0 || path.find('/', kFolder.size()) != std::string::npos) {
+            continue;
+        }
+        const std::string name = path.substr(kFolder.size(), path.size() - kFolder.size() - 4);
+        if (name.size() > 3 && name.compare(name.size() - 3, 3, "alt") == 0 &&
+            g_pathToEntry.count(kFolder + name.substr(0, name.size() - 3) + ".ini") != 0) {
+            continue;  // an away list
+        }
+        const std::string& home = g_fileEntries[index].dvdPath;
+        const std::string away = home.substr(0, home.size() - 4) + "Alt.ini";
+        if (!DvdEntryExists(away)) aliases.emplace_back(away, index);
+    }
+    for (const auto& [away, index] : aliases) {
+        const fs::path host = g_fileEntries[index].hostPath;
+        const uint32_t size = g_fileEntries[index].size;
+        RegisterFileEntry(away, host, size);
+    }
+    if (!aliases.empty()) {
+        RT_LOG(RT_TAG_DVD) << "crowd lists: " << aliases.size() << " captain(s) without an away list get their home list"
+                           << std::endl;
+    }
+}
+
 // 0x80396CC0 -> DVDInit
 // MSC: the runtime runs DVDInit before __start, and __start then clears .sbss
 // (FstStart, DVD flags). When the game calls DVDInit itself, re-seed the guest-side
@@ -985,6 +1020,7 @@ extern "C" void DVDInit_80396CC0()
         const std::uintmax_t size = fs::file_size(file.hostPath, ec);
         if (!ec) RegisterFileEntry(file.discPath, file.hostPath, static_cast<uint32_t>(size));
     }
+    AliasAwayCrowdLists();
     const size_t overlayEntryCount = g_fileEntries.size() - vanillaEntryCount;
     RT_LOG(RT_TAG_DVD) << "disc index: " << vanillaEntryCount << " disc file(s), " << overlayEntryCount
               << " Riivolution registration(s) from " << overlays.size() << " root(s)" << std::endl;
